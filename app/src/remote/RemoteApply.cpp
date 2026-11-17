@@ -44,7 +44,9 @@ bool parseNumber(const std::string& raw, double& out) {
 	return end == raw.c_str() + raw.size() && std::isfinite(out);
 }
 
-ApplyResult rejected(const char* reason) { return {true, reason, false, 0.0f}; }
+ApplyResult rejected(const char* reason) {
+	return {true, reason, false, 0.0f};
+}
 
 } // namespace
 
@@ -80,7 +82,7 @@ GateState combineHolds(GateInputs in) {
 }
 
 std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const std::vector<std::string>& videos,
-                           const std::vector<std::string>& folders) {
+                           const std::vector<std::string>& folders, bool catalog) {
 	std::string out = "{\"t\":\"snapshot\"";
 	for (const Control& c : kControls) {
 		out += ",\"";
@@ -105,10 +107,14 @@ std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const
 	if (params.getInt("source_kind") == 1) video = std::filesystem::path(params.getString("file_path")).filename();
 	out += ",\"loop\":" + jsonNumber(live.loop) + ",\"envelope\":" + jsonNumber(live.envelope) +
 	       ",\"stage\":" + std::to_string(live.stage) + ",\"gate\":" + (live.gate ? "true" : "false") +
-	       ",\"cue\":" + (live.cue ? "true" : "false") + ",\"video\":" + jsonString(video) + ",\"videos\":[";
-	for (size_t i = 0; i < videos.size(); ++i) out += (i ? "," : "") + jsonString(videos[i]);
+	       ",\"cue\":" + (live.cue ? "true" : "false") + ",\"video\":" + jsonString(video);
+	if (!catalog) return out + "}";
+	out += ",\"videos\":[";
+	for (size_t i = 0; i < videos.size(); ++i)
+		out += (i ? "," : "") + jsonString(videos[i]);
 	out += "],\"folders\":[";
-	for (size_t i = 0; i < folders.size(); ++i) out += (i ? "," : "") + jsonString(folders[i]);
+	for (size_t i = 0; i < folders.size(); ++i)
+		out += (i ? "," : "") + jsonString(folders[i]);
 	return out + "]}";
 }
 

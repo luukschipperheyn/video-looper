@@ -48,7 +48,8 @@ static std::string readAll(int fd) {
 	std::string out;
 	char buf[4096];
 	ssize_t n;
-	while ((n = recv(fd, buf, sizeof buf, 0)) > 0) out.append(buf, size_t(n));
+	while ((n = recv(fd, buf, sizeof buf, 0)) > 0)
+		out.append(buf, size_t(n));
 	return out;
 }
 
@@ -103,7 +104,8 @@ static bool readFrame(Ws& ws, int& opcode, std::string& payload) {
 		size_t extra = len == 126 ? 2 : 8;
 		if (!fill(ws, 2 + extra)) return false;
 		len = 0;
-		for (size_t i = 0; i < extra; ++i) len = (len << 8) | static_cast<unsigned char>(ws.buf[2 + i]);
+		for (size_t i = 0; i < extra; ++i)
+			len = (len << 8) | static_cast<unsigned char>(ws.buf[2 + i]);
 		offset += extra;
 	}
 	if (!fill(ws, offset + len)) return false;
@@ -131,10 +133,12 @@ static void sendFrame(int fd, int opcode, const std::string& payload, size_t spl
 		frame += char(n & 0xff);
 	} else {
 		frame += char(0x80 | 127);
-		for (int i = 7; i >= 0; --i) frame += char((n >> (8 * i)) & 0xff);
+		for (int i = 7; i >= 0; --i)
+			frame += char((n >> (8 * i)) & 0xff);
 	}
 	frame.append(reinterpret_cast<const char*>(mask), 4);
-	for (size_t i = 0; i < payload.size(); ++i) frame += char(payload[i] ^ mask[i % 4]);
+	for (size_t i = 0; i < payload.size(); ++i)
+		frame += char(payload[i] ^ mask[i % 4]);
 	if (split == 0 || split >= frame.size()) split = frame.size();
 	send(fd, frame.data(), split, 0);
 	if (split == frame.size()) return;
@@ -155,7 +159,9 @@ static std::string field(const std::string& json, const std::string& name) {
 	return json.substr(at, json.find_first_of(",}", at) - at);
 }
 
-static bool isSnapshot(const std::string& payload) { return payload.rfind("{\"t\":\"snapshot\"", 0) == 0; }
+static bool isSnapshot(const std::string& payload) {
+	return payload.rfind("{\"t\":\"snapshot\"", 0) == 0;
+}
 
 static std::vector<RemoteSet> waitDrain(RemoteSession& session) {
 	for (int i = 0; i < 100; ++i) {
@@ -203,7 +209,9 @@ static bool waitPads(const RemoteSession& session, bool gate, bool cue) {
 }
 
 static std::atomic<RemoteSession::TimePoint> fakeNow{RemoteSession::TimePoint(std::chrono::hours(1))};
-static RemoteSession::TimePoint fakeClock() { return fakeNow.load(); }
+static RemoteSession::TimePoint fakeClock() {
+	return fakeNow.load();
+}
 
 static Ws openClient(uint16_t port, const std::string& token) {
 	Ws ws{connectTo(port), {}};
@@ -594,8 +602,7 @@ int main() {
 		LoadRequest none = sets.size() == 1 ? onLoad(sets[0]) : LoadRequest{1, false, {}, 0};
 		payload = readText(client);
 		check(none.id == 0 && field(payload, "name") == "\"source\"" &&
-		          field(payload, "reason") == "\"no such video\"" && !load.busy() &&
-		          load.committedPath() == videos[0],
+		          field(payload, "reason") == "\"no such video\"" && !load.busy() && load.committedPath() == videos[0],
 		      "30. a load of an unknown name is rejected as no such video and keeps the committed Video");
 
 		const std::string jpeg("\xff\xd8\0\r\n\r\nthumb\xff\xd9", 14);
@@ -633,8 +640,7 @@ int main() {
 	const std::vector<std::string> abc = {"a", "b", "c"};
 	check(!stillSourceCancelsLoad(0, 0) && !stillSourceCancelsLoad(2, 2),
 	      "34. staying on Shader or Black does not cancel a load");
-	check(stillSourceCancelsLoad(0, 1) && stillSourceCancelsLoad(2, 3),
-	      "34. choosing Shader or Black cancels a load");
+	check(stillSourceCancelsLoad(0, 1) && stillSourceCancelsLoad(2, 3), "34. choosing Shader or Black cancels a load");
 	check(!stillSourceCancelsLoad(1, 0) && !stillSourceCancelsLoad(3, 0),
 	      "34. choosing a Video or the webcam does not cancel a load");
 	check(stepVideo(abc, "a", 1) == "b" && stepVideo(abc, "b", -1) == "a", "27. next and prev step one Video");
@@ -658,8 +664,10 @@ int main() {
 		const auto a = dir / "set-a", b = dir / "set-b";
 		std::filesystem::create_directories(a / "sub.mov");
 		std::filesystem::create_directories(b);
-		for (const char* name : {"b.mov", "A.MP4", "notes.txt", "c.mkv"}) std::ofstream{a / name};
-		for (const char* name : {"z.m4v", "y.avi"}) std::ofstream{b / name};
+		for (const char* name : {"b.mov", "A.MP4", "notes.txt", "c.mkv"})
+			std::ofstream{a / name};
+		for (const char* name : {"z.m4v", "y.avi"})
+			std::ofstream{b / name};
 		const std::vector<std::string> aVideos = {(a / "A.MP4").string(), (a / "b.mov").string(),
 		                                          (a / "c.mkv").string()};
 		const std::vector<std::string> bVideos = {(b / "y.avi").string(), (b / "z.m4v").string()};
@@ -704,7 +712,8 @@ int main() {
 		      "37. the switch shows the second folder's Videos and keeps the Source");
 
 		std::vector<std::string> names;
-		for (const std::string& p : shown) names.push_back(std::filesystem::path(p).filename());
+		for (const std::string& p : shown)
+			names.push_back(std::filesystem::path(p).filename());
 		session.send(remoteSnapshot(params, {}, names, folders.paths()));
 		std::string payload = readText(client);
 		check(payload.find("\"folders\":[\"" + a.string() + "\",\"" + b.string() + "\"]") != std::string::npos,
@@ -722,6 +731,83 @@ int main() {
 		          folders.current()->path == b.string() && shown == bVideos,
 		      "39. an unknown folder is rejected as no such folder and the Videos folder stays");
 		close(client.fd);
+	}
+	{
+		ParamBus params;
+		std::string hot = remoteSnapshot(params, {}, {"a.mov"}, {"/v"}, false);
+		check(hot.find("\"videos\"") == std::string::npos && hot.find("\"folders\"") == std::string::npos &&
+		          hot.rfind("{\"t\":\"snapshot\"", 0) == 0,
+		      "40. a per-frame snapshot omits the Videos and the Folder list");
+	}
+	{
+		RemoteSession session(tokenFile, "127.0.0.1", 0);
+		session.setEnabled(true);
+		session.setSilenceWindow(300);
+		Ws client = openClient(session.port(), session.token());
+		timeval sendTimeout{0, 200000};
+		setsockopt(client.fd, SOL_SOCKET, SO_SNDTIMEO, &sendTimeout, sizeof sendTimeout);
+		std::atomic<bool> run{true};
+		std::thread holder([&] {
+			while (run) {
+				sendFrame(client.fd, 0x1, R"({"t":"hold","name":"gate"})");
+				std::this_thread::sleep_for(std::chrono::milliseconds(40));
+			}
+		});
+		check(waitPads(session, true, false), "41. the gate pad opens before the snapshot flood");
+		ParamBus params;
+		std::vector<std::string> many;
+		for (int i = 0; i < 102; ++i)
+			many.push_back("openvid-1m_clip_" + std::to_string(i) + "_0123456789abcdef.mp4");
+		int off = 0, samples = 0, frame = 0;
+		auto start = std::chrono::steady_clock::now();
+		while (std::chrono::steady_clock::now() - start < std::chrono::seconds(2)) {
+			RemoteLive live;
+			live.loop = frame++ / 200.f;
+			session.send(remoteSnapshot(params, live, many));
+			if (std::chrono::steady_clock::now() - start > std::chrono::seconds(1)) {
+				if (!session.pads().gate) ++off;
+				++samples;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(16));
+		}
+		check(samples > 10 && off == 0, "41. a folder of Videos does not drop the gate while the page is slow to read");
+		run = false;
+		holder.join();
+		close(client.fd);
+	}
+	{
+		RemoteSession session(tokenFile, "127.0.0.1", 0);
+		session.setEnabled(true);
+		uint16_t port = session.port();
+		const std::string token = session.token();
+		check(session.tokenRequired() && session.url().find("?token=" + token) != std::string::npos,
+		      "42. the URL carries the token while it is required");
+
+		session.setTokenRequired(false);
+		check(!session.tokenRequired() && session.url().find("token=") == std::string::npos,
+		      "42. the URL drops the token when it is off");
+		std::string res = httpGet(port, "/");
+		check(res.rfind("HTTP/1.1 200", 0) == 0 && res.find("id=\"connection\"") != std::string::npos,
+		      "42. GET / without a token returns the page when the token is off");
+		check(httpGet(port, "/?token=" + token).rfind("HTTP/1.1 200", 0) == 0,
+		      "42. GET / with the token still returns the page when the token is off");
+		int fd = connectTo(port);
+		std::string req = upgradeRequest("/ws");
+		send(fd, req.data(), req.size(), 0);
+		Ws ws{fd, {}};
+		std::string head, payload;
+		int opcode = 0;
+		bool got = readHead(ws, head) && readFrame(ws, opcode, payload);
+		check(got && head.rfind("HTTP/1.1 101", 0) == 0,
+		      "42. a WebSocket upgrade without a token returns 101 when the token is off");
+		close(fd);
+		check(httpGet(port, "/thumb?name=missing").rfind("HTTP/1.1 404", 0) == 0,
+		      "42. GET /thumb without a token is no longer refused when the token is off");
+
+		session.setTokenRequired(true);
+		check(session.tokenRequired() && httpGet(port, "/").rfind("HTTP/1.1 403", 0) == 0,
+		      "42. GET / without a token returns 403 when the token is back on");
+		check(session.url().find("?token=" + token) != std::string::npos, "42. the URL carries the token again");
 	}
 	std::filesystem::remove_all(dir);
 	std::printf("%s (%d failures)\n", failures ? "FAILED" : "ALL PASSED", failures);

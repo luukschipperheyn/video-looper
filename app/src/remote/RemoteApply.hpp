@@ -52,7 +52,8 @@ struct GateState {
 ApplyResult applyRemoteSet(ParamBus& params, const RemoteSet& set);
 GateState combineHolds(GateInputs in);
 // videos are the filenames of the Videos in the current Videos folder; folders are the Folder list's full paths.
+// catalog false omits those lists, for the per-frame update. A new client still gets them from the stored snapshot.
 std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live = {},
-                           const std::vector<std::string>& videos = {},
-                           const std::vector<std::string>& folders = {});
+                           const std::vector<std::string>& videos = {}, const std::vector<std::string>& folders = {},
+                           bool catalog = true);
 std::string rejectFrame(const std::string& name, const std::string& reason);
