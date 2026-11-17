@@ -7,10 +7,10 @@
 #include "util/GlUtils.hpp"
 
 SourceController::SourceController()
-	: w(0), h(0), previewTex(0), previewFbo(0), webcamActive(false), fileActive(false), seenKind(-1),
-	  seenWebcamIndex(-1), spareW(0), spareH(0), job{0, false, {}, 0}, retire(false), quit(false),
-	  commitRequested(false), committing(false), commitStartTime(0.0), commitNominalFps(0.0f), commitFramesWritten(0),
-	  savedLoopSetting(true) {
+	: w(0), h(0), previewTex(0), previewFbo(0), frameTex(0), frameW(0), frameH(0), webcamActive(false),
+	  fileActive(false), seenKind(-1), seenWebcamIndex(-1), spareW(0), spareH(0), job{0, false, {}, 0}, retire(false),
+	  quit(false), commitRequested(false), committing(false), commitStartTime(0.0), commitNominalFps(0.0f),
+	  commitFramesWritten(0), savedLoopSetting(true) {
 	worker = std::thread(&SourceController::runLoads, this);
 }
 
@@ -50,6 +50,12 @@ void SourceController::shutdown() {
 		fileActive = false;
 	}
 	destroyPreview();
+	if (frameTex) {
+		glDeleteTextures(1, &frameTex);
+		frameTex = 0;
+	}
+	frameW = 0;
+	frameH = 0;
 }
 
 bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus& params) {
@@ -60,8 +66,11 @@ bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus
 	ensureSource(params);
 
 	if (srcKind == (int)SourceKind::Webcam) {
+		ensureFrameTexture();
 		int sw = 0, sh = 0;
-		if (webcam.grab(previewTex, sw, sh)) {
+		if (webcam.grab(frameTex, sw, sh)) {
+			frameW = sw;
+			frameH = sh;
 			updatedPreviewTex = true;
 		}
 	} else if (srcKind == (int)SourceKind::File) {
@@ -75,8 +84,11 @@ bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus
 		float loopEnd = std::clamp(loopStart + loopLen, loopStart + 0.001f, 1.0f);
 		fileSrc.setLoopRange(loopStart, loopEnd);
 		fileSrc.tick(dtSeconds);
+		ensureFrameTexture();
 		int sw = 0, sh = 0;
-		if (fileSrc.grab(previewTex, sw, sh)) {
+		if (fileSrc.grab(frameTex, sw, sh)) {
+			frameW = sw;
+			frameH = sh;
 			updatedPreviewTex = true;
 		}
 	}
@@ -144,9 +156,12 @@ bool SourceController::swapInLoaded(ParamBus& params) {
 	}
 	params.setBool("commit_active", false);
 	params.setString("commit_current_file", "");
-	glBindTexture(GL_TEXTURE_2D, previewTex);
+	ensureFrameTexture();
+	glBindTexture(GL_TEXTURE_2D, frameTex);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, spareW, spareH, 0, GL_BGRA, GL_UNSIGNED_BYTE, spareFrame.data());
 	glBindTexture(GL_TEXTURE_2D, 0);
+	frameW = spareW;
+	frameH = spareH;
 	{
 		std::lock_guard<std::mutex> lock(jobMutex);
 		retire = true;
@@ -194,6 +209,17 @@ std::string SourceController::openSpare(const LoadRequest& request) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 	return "no frame from webcam";
+}
+
+void SourceController::ensureFrameTexture() {
+	if (frameTex) return;
+	glGenTextures(1, &frameTex);
+	glBindTexture(GL_TEXTURE_2D, frameTex);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void SourceController::allocatePreview(int width, int height) {

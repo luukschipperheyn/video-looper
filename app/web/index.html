@@ -41,6 +41,13 @@
 	#videos button.current { border-color: #4af; }
 	#videos img { width: 160px; height: 100px; object-fit: contain; background: #000; }
 	#videos span { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#source-transform { margin-top: 8px; }
+	#trackpad { height: 240px; background: #181818; border: 2px solid #555; border-radius: 12px; touch-action: none;
+		position: relative; }
+	#trackpad span { position: absolute; left: 16px; right: 16px; bottom: 16px; color: #888; font-size: 14px;
+		pointer-events: none; }
+	#transform-reset { margin-top: 12px; font-size: 18px; padding: 12px 20px; color: #eee; background: #333;
+		border: 2px solid #555; border-radius: 8px; }
 </style>
 </head>
 <body>
@@ -91,6 +98,8 @@
 		]],
 		["Source", [
 			["source_kind", "Source", ["Shader", "Video", "Black", "Webcam"]],
+			["video_bars", "Black bars"],
+			["video_aspect", "Preserve aspect"],
 			["webcam_index", "Webcam"],
 			["file_loop", "Video loop"],
 			["file_paused", "Video paused"],
@@ -132,6 +141,7 @@
 		const { el, out, type } = controls[name];
 		const value = type === "bool" ? el.checked : type === "int" ? parseInt(el.value, 10) : parseFloat(el.value);
 		if (out) out.textContent = format(value);
+		if (name === "video_aspect" && value === true) xf.video_sy = xf.video_sx;
 		if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ t: "set", name, value }));
 	}
 
@@ -166,11 +176,115 @@
 		return row;
 	}
 
+	const xf = { video_tx: 0, video_ty: 0, video_sx: 1, video_sy: 1, video_rot: 0 };
+	const transformNames = ["video_tx", "video_ty", "video_sx", "video_sy", "video_rot"];
+	let padDown = false;
+	let transformSend = 0;
+
+	function lim(name, value) {
+		const c = schema[name];
+		return Math.min(c.max, Math.max(c.min, value));
+	}
+	function sendTransform() {
+		if (socket.readyState !== WebSocket.OPEN) return;
+		for (const name of transformNames) socket.send(JSON.stringify({ t: "set", name, value: xf[name] }));
+	}
+	function queueTransform() {
+		if (transformSend) return;
+		transformSend = requestAnimationFrame(() => {
+			transformSend = 0;
+			sendTransform();
+		});
+	}
+	function adoptTransform() {
+		if (padDown) return;
+		for (const name of transformNames) if (typeof state[name] === "number") xf[name] = state[name];
+	}
+
+	function buildTrackpad() {
+		const wrap = document.createElement("div");
+		wrap.id = "source-transform";
+		const pad = wrap.appendChild(document.createElement("div"));
+		pad.id = "trackpad";
+		pad.appendChild(document.createElement("span")).textContent = "Drag to move. Pinch to scale and rotate.";
+		const reset = wrap.appendChild(document.createElement("button"));
+		reset.type = "button";
+		reset.id = "transform-reset";
+		reset.textContent = "Reset";
+		const pts = new Map();
+		const shot = () => [...pts].map(([id, p]) => ({ id, x: p.x, y: p.y }));
+		const spanScale = (oldSpan, newSpan) => {
+			const floor = 16;
+			if (oldSpan < floor && newSpan < floor) return 1;
+			return newSpan / Math.max(oldSpan, floor);
+		};
+		const wrapAngle = (d) => {
+			if (d > Math.PI) d -= Math.PI * 2;
+			if (d < -Math.PI) d += Math.PI * 2;
+			return d;
+		};
+		pad.addEventListener("contextmenu", (event) => event.preventDefault());
+		pad.addEventListener("pointerdown", (event) => {
+			pad.setPointerCapture(event.pointerId);
+			pts.set(event.pointerId, { x: event.clientX, y: event.clientY });
+			padDown = true;
+		});
+		pad.addEventListener("pointermove", (event) => {
+			if (!pts.has(event.pointerId) || pad.clientWidth < 1 || pad.clientHeight < 1) return;
+			const before = shot();
+			const point = pts.get(event.pointerId);
+			point.x = event.clientX;
+			point.y = event.clientY;
+			const after = shot();
+			if (after.length === 1 && before.length === 1) {
+				xf.video_tx = lim("video_tx", xf.video_tx + (after[0].x - before[0].x) / pad.clientWidth);
+				xf.video_ty = lim("video_ty", xf.video_ty - (after[0].y - before[0].y) / pad.clientHeight);
+				queueTransform();
+				return;
+			}
+			if (after.length < 2 || before.length < 2) return;
+			const oldA = before[0], oldB = before[1], newA = after[0], newB = after[1];
+			const oldDx = Math.abs(oldB.x - oldA.x), oldDy = Math.abs(oldB.y - oldA.y);
+			const newDx = Math.abs(newB.x - newA.x), newDy = Math.abs(newB.y - newA.y);
+			const oldDist = Math.hypot(oldB.x - oldA.x, oldB.y - oldA.y);
+			const newDist = Math.hypot(newB.x - newA.x, newB.y - newA.y);
+			if (controls.video_aspect.el.checked) {
+				if (oldDist > 1) {
+					xf.video_sx = lim("video_sx", xf.video_sx * (newDist / oldDist));
+					xf.video_sy = xf.video_sx;
+				}
+			} else {
+				xf.video_sx = lim("video_sx", xf.video_sx * spanScale(oldDx, newDx));
+				xf.video_sy = lim("video_sy", xf.video_sy * spanScale(oldDy, newDy));
+			}
+			const oldAng = Math.atan2(oldB.y - oldA.y, oldB.x - oldA.x);
+			const newAng = Math.atan2(newB.y - newA.y, newB.x - newA.x);
+			xf.video_rot = lim("video_rot", xf.video_rot - wrapAngle(newAng - oldAng));
+			queueTransform();
+		});
+		const lift = (event) => {
+			pts.delete(event.pointerId);
+			if (pts.size === 0) padDown = false;
+		};
+		pad.addEventListener("pointerup", lift);
+		pad.addEventListener("pointercancel", lift);
+		reset.addEventListener("click", () => {
+			xf.video_tx = 0;
+			xf.video_ty = 0;
+			xf.video_sx = 1;
+			xf.video_sy = 1;
+			xf.video_rot = 0;
+			sendTransform();
+		});
+		return wrap;
+	}
+
 	const root = document.getElementById("controls");
 	for (const [title, rows] of sections) {
 		const section = root.appendChild(document.createElement("section"));
 		section.appendChild(document.createElement("h2")).textContent = title;
 		for (const [name, label, options] of rows) section.appendChild(build(name, label, options));
+		if (title === "Source") section.appendChild(buildTrackpad());
 	}
 
 	function release() {
@@ -286,6 +400,7 @@
 		if (msg.t === "snapshot") {
 			Object.assign(state, msg);
 			for (const name in controls) if (!busy(controls[name].el)) show(name);
+			adoptTransform();
 			live("loop", `${Math.round(state.loop * 100)}%`);
 			live("envelope", state.envelope.toFixed(2));
 			live("stage", stages[state.stage] || String(state.stage));

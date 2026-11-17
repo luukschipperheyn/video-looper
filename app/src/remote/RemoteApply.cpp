@@ -57,6 +57,7 @@ ApplyResult applyRemoteSet(ParamBus& params, const RemoteSet& set) {
 		if (set.name == "record_enabled" && on && params.getString("record_path").empty())
 			return rejected("no export path");
 		params.setBool(set.name, on);
+		if (set.name == "video_aspect" && on) params.setFloat("video_sy", params.getFloat("video_sx", 1.0f));
 		return {};
 	}
 	double n;

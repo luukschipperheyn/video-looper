@@ -59,6 +59,13 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 					params.setInt("source_kind", kind);
 			}
 			if (ImGui::InputInt("Webcam Index", &camIndex)) params.setInt("webcam_index", camIndex);
+			bool bars = params.getBool("video_bars", true);
+			if (ImGui::Checkbox("Black bars", &bars)) params.setBool("video_bars", bars);
+			bool aspect = params.getBool("video_aspect", true);
+			if (ImGui::Checkbox("Preserve aspect", &aspect)) {
+				params.setBool("video_aspect", aspect);
+				if (aspect) params.setFloat("video_sy", params.getFloat("video_sx", 1.0f));
+			}
 			if (kind == (int)SourceKind::File) {
 				static char buf[512];
 				std::string cur = params.getString("file_path", "");

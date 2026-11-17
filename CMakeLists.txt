@@ -80,6 +80,9 @@ add_executable(remote_session_test
 target_include_directories(remote_session_test PRIVATE app/src)
 target_compile_definitions(remote_session_test PRIVATE WEB_DIR="${CMAKE_SOURCE_DIR}/app/web")
 
+add_executable(contain_rect_test app/tests/contain_rect_test.cpp)
+target_include_directories(contain_rect_test PRIVATE app/src)
+
 if(APPLE)
   # Provide Info.plist for bundle (required for camera privacy and Continuity Camera)
   set_target_properties(video_looper PROPERTIES

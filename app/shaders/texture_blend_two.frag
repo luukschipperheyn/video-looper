@@ -5,7 +5,7 @@ uniform sampler2D uTex0;
 uniform sampler2D uTex1;
 uniform float uMix; // 0..1
 uniform int uMode; // 0: Mix, 1: Add, 2: Multiply, 3: Screen, 4: Overlay, 5: Difference, 6: Lighten, 7: Darken, 8: HardLight, 9: SoftLight, 10: ColorDodge, 11: ColorBurn
-// Blend helpers operate on RGB; alpha is set to 1.0
+// Blend helpers operate on RGB. Overlay alpha masks the mix; the written alpha stays 1.
 vec3 blendAdd(vec3 a, vec3 b) {
     return clamp(a + b, 0.0, 1.0);
 }
@@ -67,7 +67,7 @@ vec3 blendColorBurn(vec3 a, vec3 b) {
 void main(){
     vec4 base = texture(uTex0, vUv);
     vec4 over = texture(uTex1, vUv);
-    float t = clamp(uMix, 0.0, 1.0);
+    float t = clamp(uMix, 0.0, 1.0) * over.a;
 
     vec3 result;
     if (uMode == 1) {
