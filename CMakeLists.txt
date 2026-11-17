@@ -46,6 +46,7 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/io/AVFRecorder.mm
   app/src/io/SourceController.cpp
   app/src/io/SourceLoad.cpp
+  app/src/io/FolderList.cpp
   app/src/io/VideoThumbs.mm
   app/src/util/MacFileDialog.mm
   app/src/remote/RemoteSession.cpp
@@ -74,6 +75,7 @@ add_executable(remote_session_test
   app/src/remote/RemoteApply.cpp
   app/src/ui/ParamBus.cpp
   app/src/io/SourceLoad.cpp
+  app/src/io/FolderList.cpp
 )
 target_include_directories(remote_session_test PRIVATE app/src)
 target_compile_definitions(remote_session_test PRIVATE WEB_DIR="${CMAKE_SOURCE_DIR}/app/web")

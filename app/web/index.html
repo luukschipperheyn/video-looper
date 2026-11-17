@@ -31,6 +31,10 @@
 	#source-load button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
 		border-radius: 8px; }
 	#source-reason { color: #fa0; }
+	#folders { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+	#folders button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
+		border-radius: 8px; }
+	#folders button.current { border-color: #4af; }
 	#videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
 	#videos button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px; color: #eee;
 		background: #222; border: 2px solid #444; border-radius: 8px; font-size: 14px; }
@@ -56,6 +60,7 @@
 	<button id="source-webcam">Webcam</button>
 	<span id="source-reason"></span>
 </p>
+<div id="folders"></div>
 <div id="videos"></div>
 <div id="controls"></div>
 <script>
@@ -249,6 +254,25 @@
 		}
 	}
 
+	const foldersRow = document.getElementById("folders");
+	let shownFolders = "";
+	function showFolders(paths) {
+		const key = JSON.stringify(paths);
+		if (key === shownFolders) return;
+		shownFolders = key;
+		foldersRow.replaceChildren();
+		for (const path of paths) {
+			const button = foldersRow.appendChild(document.createElement("button"));
+			button.dataset.path = path;
+			button.textContent = path.replace(/\/+$/, "").split("/").pop() || path;
+			button.addEventListener("click", () => {
+				if (socket.readyState !== WebSocket.OPEN) return;
+				sourceReason.textContent = "";
+				socket.send(JSON.stringify({ t: "folder", name: path }));
+			});
+		}
+	}
+
 	const stages = ["idle", "attack", "decay", "sustain", "release"];
 	const live = (id, text) => { document.getElementById(`live-${id}`).textContent = text; };
 
@@ -268,6 +292,9 @@
 			live("gate", state.gate ? "open" : "closed");
 			live("cue", state.cue ? "open" : "closed");
 			live("video", state.video || "none");
+			showFolders(state.folders || []);
+			for (const button of foldersRow.children)
+				button.classList.toggle("current", button.dataset.path === state.videos_folder);
 			showVideos(state.videos || []);
 			for (const button of videosGrid.children) button.classList.toggle("current", button.dataset.name === state.video);
 			pads.gate.el.classList.toggle("open", state.gate);
@@ -282,6 +309,7 @@
 				sourceReason.textContent = msg.reason;
 				show("source_kind");
 			}
+			if (msg.name === "folder") sourceReason.textContent = msg.reason;
 		}
 	};
 </script>

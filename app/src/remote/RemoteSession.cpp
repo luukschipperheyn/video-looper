@@ -432,8 +432,8 @@ bool RemoteSession::readFrames(Client& client) {
 			                                           : RemoteKind::Webcam;
 			std::lock_guard<std::mutex> lock(queueMutex);
 			inbox.push_back({{}, {}, kind});
-		} else if (msg.type == "\"load\"" && plainString(msg.name, set.name)) {
-			set.kind = RemoteKind::Load;
+		} else if ((msg.type == "\"load\"" || msg.type == "\"folder\"") && plainString(msg.name, set.name)) {
+			set.kind = msg.type == "\"load\"" ? RemoteKind::Load : RemoteKind::Folder;
 			std::lock_guard<std::mutex> lock(queueMutex);
 			inbox.push_back(std::move(set));
 		}

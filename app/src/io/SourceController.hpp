@@ -44,6 +44,9 @@ public:
 	std::string takeLoadFailure() { return load.takeFailure(); }
 	// Full paths of the Videos in the current Videos folder, as of the last scan.
 	std::vector<std::string> videos() const { return videoFiles; }
+	// Makes path the current Videos folder with videos as its Videos, without reading the disk. The live Source
+	// keeps playing.
+	void showFolder(const std::string& path, const std::vector<std::string>& videos, ParamBus& params);
 
 	// Query information for UI/debugging
 	GLuint getPreviewTexture() const { return previewTex; }

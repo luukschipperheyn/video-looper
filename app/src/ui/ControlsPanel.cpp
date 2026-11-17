@@ -5,9 +5,11 @@
 #include "remote/QrCode.hpp"
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 
 void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, float dt, float& outBpm,
-                         float& outQuantum, SourceController* source, const RemoteSession& remote) {
+                         float& outQuantum, SourceController* source, const RemoteSession& remote,
+                         FolderList& folders) {
 	if (!params.getBool("show_ui", true)) return;
 	if (!ImGui::Begin("Controls")) {
 		ImGui::End();
@@ -127,6 +129,26 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 					ll = std::clamp(ll, 0.0f, 1.0f);
 					params.setFloat("file_loop_length", ll);
 				}
+			}
+
+			ImGui::Separator();
+			ImGui::TextUnformatted("Folder list");
+			ImGui::Separator();
+			for (const std::string& p : folders.paths()) {
+				std::string label = std::filesystem::path(p).filename().string();
+				if (label.empty()) label = p;
+				label += "###" + p;
+				bool chosen = p == params.getString("videos_folder", "");
+				if (ImGui::Selectable(label.c_str(), chosen) && source && folders.select(p))
+					source->showFolder(p, folders.current()->videos, params);
+			}
+			if (ImGui::Button("Add Folder")) {
+				macOpenDirectoryDialogAsync("Add Videos Folder", [source, &folders, &params](std::string fp) {
+					if (fp.empty() || !source) return;
+					folders.add({fp, scanVideos(fp)});
+					folders.select(fp);
+					source->showFolder(fp, folders.current()->videos, params);
+				});
 			}
 
 			ImGui::Separator();

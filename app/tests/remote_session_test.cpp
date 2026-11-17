@@ -1,3 +1,4 @@
+#include "io/FolderList.hpp"
 #include "io/SourceLoad.hpp"
 #include "remote/ControlSchema.hpp"
 #include "remote/RemoteApply.hpp"
@@ -15,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -645,6 +647,75 @@ int main() {
 	}
 	check(stepVideo(abc, "x", -1) == "c" && stepVideo(abc, "x", 1) == "a",
 	      "27. from an unknown Video prev picks the last and next the first");
+	{
+		const auto a = dir / "set-a", b = dir / "set-b";
+		std::filesystem::create_directories(a / "sub.mov");
+		std::filesystem::create_directories(b);
+		for (const char* name : {"b.mov", "A.MP4", "notes.txt", "c.mkv"}) std::ofstream{a / name};
+		for (const char* name : {"z.m4v", "y.avi"}) std::ofstream{b / name};
+		const std::vector<std::string> aVideos = {(a / "A.MP4").string(), (a / "b.mov").string(),
+		                                          (a / "c.mkv").string()};
+		const std::vector<std::string> bVideos = {(b / "y.avi").string(), (b / "z.m4v").string()};
+		check(scanVideos(a.string()) == aVideos && scanVideos(b.string()) == bVideos,
+		      "35. scanVideos returns only the Videos, sorted by filename");
+
+		FolderList folders;
+		folders.add({a.string(), scanVideos(a.string())});
+		folders.add({b.string(), scanVideos(b.string())});
+		check(folders.paths() == std::vector<std::string>{a.string(), b.string()} && !folders.current(),
+		      "35. both folders are listed in order and none is current yet");
+		std::ofstream{a / "late.mov"};
+		check(folders.select(a.string()) && folders.current()->videos == aVideos,
+		      "36. selecting a folder gives the Videos captured at add, without a Video added later");
+
+		RemoteSession session(tokenFile, "127.0.0.1", 0);
+		session.setEnabled(true);
+		Ws client = openClient(session.port(), session.token());
+		ParamBus params;
+		params.setString("file_path", "/tmp/videos/clip.mov");
+		params.setInt("source_kind", 1);
+		params.setString("videos_folder", a.string());
+		// Stands in for SourceController::videos(). App's handling of a Folder: show a listed folder's stored
+		// Videos the way SourceController::showFolder does, or reject an unknown path.
+		std::vector<std::string> shown = aVideos;
+		auto onFolder = [&](const RemoteSet& set) {
+			if (!folders.select(set.name)) {
+				session.send(rejectFrame("folder", "no such folder"));
+				return;
+			}
+			shown = folders.current()->videos;
+			params.setString("videos_folder", set.name);
+			params.setInt("videos_count", int(shown.size()));
+		};
+		sendFrame(client.fd, 0x1, R"({"t":"folder","name":")" + b.string() + "\"}");
+		std::vector<RemoteSet> sets = waitDrain(session);
+		check(sets.size() == 1 && sets[0].kind == RemoteKind::Folder && sets[0].name == b.string(),
+		      "37. folder drains as one Folder item naming the second path");
+		if (sets.size() == 1) onFolder(sets[0]);
+		check(shown == bVideos && params.getString("videos_folder") == b.string() &&
+		          params.getString("file_path") == "/tmp/videos/clip.mov" && params.getInt("source_kind") == 1,
+		      "37. the switch shows the second folder's Videos and keeps the Source");
+
+		std::vector<std::string> names;
+		for (const std::string& p : shown) names.push_back(std::filesystem::path(p).filename());
+		session.send(remoteSnapshot(params, {}, names, folders.paths()));
+		std::string payload = readText(client);
+		check(payload.find("\"folders\":[\"" + a.string() + "\",\"" + b.string() + "\"]") != std::string::npos,
+		      "38. the snapshot lists both folders by full path");
+		check(payload.find(R"("videos":["y.avi","z.m4v"])") != std::string::npos &&
+		          field(payload, "videos_folder") == "\"" + b.string() + "\"",
+		      "38. the snapshot's Videos and Videos folder are the second folder's");
+
+		sendFrame(client.fd, 0x1, R"({"t":"folder","name":"/nowhere"})");
+		sets = waitDrain(session);
+		if (sets.size() == 1) onFolder(sets[0]);
+		payload = readText(client);
+		check(sets.size() == 1 && field(payload, "name") == "\"folder\"" &&
+		          field(payload, "reason") == "\"no such folder\"" && params.getString("videos_folder") == b.string() &&
+		          folders.current()->path == b.string() && shown == bVideos,
+		      "39. an unknown folder is rejected as no such folder and the Videos folder stays");
+		close(client.fd);
+	}
 	std::filesystem::remove_all(dir);
 	std::printf("%s (%d failures)\n", failures ? "FAILED" : "ALL PASSED", failures);
 	return failures ? 1 : 0;

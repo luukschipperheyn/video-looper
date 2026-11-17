@@ -19,6 +19,7 @@
 #include "ui/ControlsPanel.hpp"
 #include "clock/Clock.hpp"
 #include "io/VideoSource.hpp"
+#include "io/FolderList.hpp"
 #include "io/SourceController.hpp"
 #include "io/VideoThumbs.hpp"
 #include "link/LinkBridge.hpp"
@@ -178,6 +179,7 @@ int App::run() {
 	VideoThumbs thumbs;
 	std::vector<std::string> videoPaths;
 	std::vector<std::string> videoNames;
+	FolderList folders;
 
 	Clock clock;
 	clock.setQuantum(params.getFloat("quantum", 4.0f));
@@ -447,6 +449,12 @@ int App::run() {
 						source.loadVideo(path);
 					break;
 				}
+				case RemoteKind::Folder:
+					if (folders.select(set.name))
+						source.showFolder(set.name, folders.current()->videos, params);
+					else
+						remote.send(rejectFrame("folder", "no such folder"));
+					break;
 				case RemoteKind::Set: {
 					ApplyResult result = applyRemoteSet(params, set);
 					if (result.reject) remote.send(rejectFrame(set.name, result.reason));
@@ -808,7 +816,7 @@ int App::run() {
 
 		if (remote.enabled()) {
 			RemoteLive live{(float(idx0) + mixf) / float(ring.size()), envVal, envPhase, recGate, cueActive};
-			std::string snapshot = remoteSnapshot(params, live, videoNames);
+			std::string snapshot = remoteSnapshot(params, live, videoNames, folders.paths());
 			if (snapshot != remoteSnapshotSent) {
 				remoteSnapshotSent = snapshot;
 				remote.setSnapshot(snapshot);
@@ -822,7 +830,7 @@ int App::run() {
 		{
 			ControlsPanel panel;
 			float outBpmDummy = 0.0f, outQuantumDummy = 0.0f;
-			panel.draw(params, link, ring, dt, outBpmDummy, outQuantumDummy, &source, remote);
+			panel.draw(params, link, ring, dt, outBpmDummy, outQuantumDummy, &source, remote, folders);
 		}
 		if (params.getBool("show_playheads", true)) looper.drawHeadsOverlay(w, h);
 		ImGui::Render();

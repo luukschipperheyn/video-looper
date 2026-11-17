@@ -1,4 +1,5 @@
 #include "io/SourceController.hpp"
+#include "io/FolderList.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -240,31 +241,15 @@ void SourceController::ensureSource(ParamBus& params) {
 
 void SourceController::maybeRescanFolder(ParamBus& params) {
 	std::string folder = params.getString("videos_folder", "");
-	int existingCount = params.getInt("videos_count", 0);
-	bool needsScan = (folder != lastVideosFolder);
-	if (!needsScan) {
-		// Heuristic: UI toggled some input -> we can force a rescan when count is 0 but a folder exists
-		needsScan = (existingCount == 0 && !folder.empty());
-	}
-	if (!needsScan) return;
+	if (folder != lastVideosFolder) showFolder(folder, scanVideos(folder), params);
+}
 
-	videoFiles.clear();
-	std::error_code ec;
-	if (!folder.empty()) {
-		for (auto const& de : std::filesystem::directory_iterator(folder, ec)) {
-			if (ec) break;
-			if (!de.is_regular_file()) continue;
-			auto p = de.path();
-			std::string ext = p.extension().string();
-			for (auto& c : ext)
-				c = (char)std::tolower(c);
-			if (ext == ".mp4" || ext == ".mov" || ext == ".m4v" || ext == ".mkv" || ext == ".avi") {
-				videoFiles.push_back(p.string());
-			}
-		}
-	}
+void SourceController::showFolder(const std::string& path, const std::vector<std::string>& videos,
+                                  ParamBus& params) {
+	videoFiles = videos;
+	lastVideosFolder = path;
+	params.setString("videos_folder", path);
 	params.setInt("videos_count", (int)videoFiles.size());
-	lastVideosFolder = folder;
 }
 
 void SourceController::maybeStartRandomCommit(double nowSeconds, ParamBus& params) {

@@ -78,7 +78,8 @@ GateState combineHolds(GateInputs in) {
 	return {in.latch || in.space || in.pad, in.cueLatch || in.cueKey || in.cuePad};
 }
 
-std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const std::vector<std::string>& videos) {
+std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const std::vector<std::string>& videos,
+                           const std::vector<std::string>& folders) {
 	std::string out = "{\"t\":\"snapshot\"";
 	for (const Control& c : kControls) {
 		out += ",\"";
@@ -105,6 +106,8 @@ std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const
 	       ",\"stage\":" + std::to_string(live.stage) + ",\"gate\":" + (live.gate ? "true" : "false") +
 	       ",\"cue\":" + (live.cue ? "true" : "false") + ",\"video\":" + jsonString(video) + ",\"videos\":[";
 	for (size_t i = 0; i < videos.size(); ++i) out += (i ? "," : "") + jsonString(videos[i]);
+	out += "],\"folders\":[";
+	for (size_t i = 0; i < folders.size(); ++i) out += (i ? "," : "") + jsonString(folders[i]);
 	return out + "]}";
 }
 
