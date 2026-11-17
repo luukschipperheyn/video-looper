@@ -1,7 +1,10 @@
 #include "remote/RemoteSession.hpp"
 
+#include "remote/ControlSchema.hpp"
+
 #include <CommonCrypto/CommonDigest.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <ifaddrs.h>
 #include <mach-o/dyld.h>
 #include <net/if.h>
@@ -12,10 +15,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <climits>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <random>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -99,8 +105,8 @@ std::string acceptKey(const std::string& key) {
 	return base64(digest, sizeof digest);
 }
 
-std::string textFrame(const std::string& payload) {
-	std::string frame(1, char(0x81));
+std::string serverFrame(unsigned char opcode, const std::string& payload) {
+	std::string frame(1, char(0x80 | opcode));
 	uint64_t n = payload.size();
 	if (n < 126) {
 		frame += char(n);
@@ -113,6 +119,62 @@ std::string textFrame(const std::string& payload) {
 		for (int i = 7; i >= 0; --i) frame += char((n >> (8 * i)) & 0xff);
 	}
 	return frame + payload;
+}
+
+bool isJsonValue(const std::string& raw) {
+	if (raw == "true" || raw == "false" || raw[0] == '"') return true;
+	if (raw[0] != '-' && !std::isdigit(static_cast<unsigned char>(raw[0]))) return false;
+	char* end = nullptr;
+	std::strtod(raw.c_str(), &end);
+	return end == raw.c_str() + raw.size();
+}
+
+// Parses {"t":"set","name":"...","value":<bool|number|string>} with keys in any order.
+bool parseSet(const std::string& json, RemoteSet& out) {
+	size_t i = 0;
+	auto skipSpace = [&] {
+		while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
+	};
+	auto expect = [&](char c) {
+		skipSpace();
+		if (i >= json.size() || json[i] != c) return false;
+		++i;
+		return true;
+	};
+	auto token = [&](std::string& raw) {
+		skipSpace();
+		size_t start = i;
+		if (i < json.size() && json[i] == '"') {
+			for (++i; i < json.size() && json[i] != '"'; ++i) {
+				if (static_cast<unsigned char>(json[i]) < 0x20) return false;
+				if (json[i] == '\\') ++i;
+			}
+			if (i >= json.size()) return false;
+			++i;
+		} else {
+			while (i < json.size() && (std::isalnum(static_cast<unsigned char>(json[i])) || json[i] == '-' ||
+			                           json[i] == '+' || json[i] == '.'))
+				++i;
+		}
+		raw = json.substr(start, i - start);
+		return !raw.empty();
+	};
+
+	std::string key, raw, type, name, value;
+	if (!expect('{')) return false;
+	do {
+		if (!token(key) || key[0] != '"' || !expect(':') || !token(raw)) return false;
+		if (key == "\"t\"") type = raw;
+		if (key == "\"name\"") name = raw;
+		if (key == "\"value\"") value = raw;
+	} while (expect(','));
+	if (!expect('}')) return false;
+	skipSpace();
+	if (i != json.size() || type != "\"set\"") return false;
+	if (name.size() < 3 || name[0] != '"' || name.find('\\') != std::string::npos) return false;
+	if (value.empty() || !isJsonValue(value)) return false;
+	out = {name.substr(1, name.size() - 2), value};
+	return true;
 }
 
 std::string emptyResponse(const std::string& status) {
@@ -152,9 +214,13 @@ void RemoteSession::setEnabled(bool on) {
 	if (on == enabled()) return;
 	if (!on) {
 		stop = true;
+		shutdown(listenFd, SHUT_RDWR);
+		(void)write(wakeWrite, "x", 1);
 		thread.join();
 		close(listenFd);
-		listenFd = -1;
+		close(wakeRead);
+		close(wakeWrite);
+		listenFd = wakeRead = wakeWrite = -1;
 		return;
 	}
 	sockaddr_in addr{};
@@ -170,14 +236,19 @@ void RemoteSession::setEnabled(bool on) {
 		addr.sin_port = htons(uint16_t(bindPort + i));
 		bound = bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr) == 0;
 	}
-	if (!bound || listen(fd, 8) != 0) {
+	int wake[2];
+	if (!bound || listen(fd, 8) != 0 || pipe(wake) != 0) {
 		close(fd);
 		return;
 	}
+	fcntl(wake[0], F_SETFL, O_NONBLOCK);
+	fcntl(wake[1], F_SETFL, O_NONBLOCK);
 	socklen_t len = sizeof addr;
 	getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len);
 	boundPort = ntohs(addr.sin_port);
 	listenFd = fd;
+	wakeRead = wake[0];
+	wakeWrite = wake[1];
 	stop = false;
 	thread = std::thread(&RemoteSession::serve, this);
 }
@@ -185,6 +256,20 @@ void RemoteSession::setEnabled(bool on) {
 void RemoteSession::setSnapshot(std::string json) {
 	std::lock_guard<std::mutex> lock(snapshotMutex);
 	snapshot = std::move(json);
+}
+
+void RemoteSession::send(std::string frame) {
+	if (!enabled()) return;
+	{
+		std::lock_guard<std::mutex> lock(queueMutex);
+		outbox.push_back(std::move(frame));
+	}
+	(void)write(wakeWrite, "x", 1);
+}
+
+std::vector<RemoteSet> RemoteSession::drain() {
+	std::lock_guard<std::mutex> lock(queueMutex);
+	return std::exchange(inbox, {});
 }
 
 std::string RemoteSession::url() const {
@@ -208,37 +293,107 @@ std::string RemoteSession::url() const {
 }
 
 void RemoteSession::serve() {
-	std::vector<int> sockets;
+	std::vector<Client> sockets;
+	auto flush = [&] {
+		std::vector<std::string> frames;
+		{
+			std::lock_guard<std::mutex> lock(queueMutex);
+			frames.swap(outbox);
+		}
+		for (const std::string& f : frames) {
+			std::string frame = serverFrame(0x1, f);
+			for (const Client& c : sockets) sendAll(c.fd, frame);
+		}
+	};
 	while (!stop) {
-		std::vector<pollfd> fds{{listenFd, POLLIN, 0}};
-		for (int s : sockets) fds.push_back({s, POLLIN, 0});
-		if (poll(fds.data(), nfds_t(fds.size()), 50) <= 0) continue;
-		for (size_t i = fds.size() - 1; i >= 1; --i) {
-			if (!fds[i].revents) continue;
-			unsigned char buf[512];
-			ssize_t n = recv(fds[i].fd, buf, sizeof buf, 0);
-			if (n > 0 && (buf[0] & 0x0f) != 0x8) continue;
-			if (n > 0) sendAll(fds[i].fd, std::string("\x88\x00", 2));
+		flush();
+		std::vector<pollfd> fds{{listenFd, POLLIN, 0}, {wakeRead, POLLIN, 0}};
+		for (const Client& c : sockets) fds.push_back({c.fd, POLLIN, 0});
+		if (poll(fds.data(), nfds_t(fds.size()), -1) <= 0) continue;
+		if (fds[1].revents) clearWake();
+		for (size_t i = fds.size() - 1; i >= 2; --i) {
+			if (!fds[i].revents || readFrames(sockets[i - 2])) continue;
 			close(fds[i].fd);
-			sockets.erase(sockets.begin() + long(i - 1));
+			sockets.erase(sockets.begin() + long(i - 2));
 		}
 		if (fds[0].revents & POLLIN) {
+			// Frames queued before this client connected belong to the clients already here.
+			flush();
 			int fd = accept(listenFd, nullptr, nullptr);
 			if (fd >= 0 && handle(fd))
-				sockets.push_back(fd);
+				sockets.push_back({fd, {}});
 			else if (fd >= 0)
 				close(fd);
 		}
 		clients = int(sockets.size());
 	}
-	for (int s : sockets) close(s);
+	for (const Client& c : sockets) close(c.fd);
 	clients = 0;
+}
+
+// Consumes every complete frame buffered for client. Returns false when the client should be closed.
+bool RemoteSession::readFrames(Client& client) {
+	constexpr uint64_t maxPayload = 65536;
+	char buf[4096];
+	ssize_t n = recv(client.fd, buf, sizeof buf, 0);
+	if (n <= 0) return false;
+	std::string& in = client.in;
+	in.append(buf, size_t(n));
+	auto byte = [&](size_t i) { return static_cast<unsigned char>(in[i]); };
+	while (in.size() >= 2) {
+		bool fin = byte(0) & 0x80;
+		int opcode = byte(0) & 0x0f;
+		if (!(byte(1) & 0x80)) return false;
+		uint64_t len = byte(1) & 0x7f;
+		size_t head = 2;
+		if (len >= 126) {
+			size_t extra = len == 126 ? 2 : 8;
+			if (in.size() < head + extra) return true;
+			len = 0;
+			for (size_t i = 0; i < extra; ++i) len = (len << 8) | byte(head + i);
+			head += extra;
+		}
+		if (len > maxPayload || (opcode >= 0x8 && len > 125)) return false;
+		if (in.size() < head + 4 + len) return true;
+		std::string payload = in.substr(head + 4, size_t(len));
+		for (size_t i = 0; i < payload.size(); ++i) payload[i] ^= in[head + i % 4];
+		in.erase(0, head + 4 + size_t(len));
+		if (opcode == 0x8) {
+			sendAll(client.fd, serverFrame(0x8, ""));
+			return false;
+		}
+		if (opcode == 0x9) sendAll(client.fd, serverFrame(0xA, payload));
+		RemoteSet set;
+		if (opcode == 0x1 && fin && parseSet(payload, set)) {
+			std::lock_guard<std::mutex> lock(queueMutex);
+			inbox.push_back(std::move(set));
+		}
+	}
+	return true;
+}
+
+// Waits up to 2 s for fd to become readable. Returns false on timeout or when the session stops.
+bool RemoteSession::waitReadable(int fd) {
+	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	while (!stop) {
+		auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+		if (left.count() <= 0) return false;
+		pollfd fds[] = {{fd, POLLIN, 0}, {wakeRead, POLLIN, 0}};
+		if (poll(fds, 2, int(left.count())) < 0) return false;
+		if (fds[0].revents) return true;
+		if (fds[1].revents) clearWake();
+	}
+	return false;
+}
+
+void RemoteSession::clearWake() {
+	char buf[64];
+	while (read(wakeRead, buf, sizeof buf) > 0) {}
 }
 
 // Returns true when fd became a WebSocket client and should stay open.
 bool RemoteSession::handle(int fd) {
 	timeval timeout{2, 0};
-	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
 	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
 	int one = 1;
 	setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
@@ -246,7 +401,7 @@ bool RemoteSession::handle(int fd) {
 	std::string request;
 	char buf[1024];
 	while (request.find("\r\n\r\n") == std::string::npos) {
-		if (request.size() > 8192) return false;
+		if (request.size() > 8192 || !waitReadable(fd)) return false;
 		ssize_t n = recv(fd, buf, sizeof buf, 0);
 		if (n <= 0) return false;
 		request.append(buf, size_t(n));
@@ -277,12 +432,15 @@ bool RemoteSession::handle(int fd) {
 		}
 		return sendAll(fd, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
 		                   "Sec-WebSocket-Accept: " +
-		                       acceptKey(key) + "\r\n\r\n" + textFrame(snap));
+		                       acceptKey(key) + "\r\n\r\n" + serverFrame(0x1, snap));
 	}
 	if (method == "GET" && (path == "/" || path == "/index.html")) {
 		std::ifstream in(webDir() / "index.html", std::ios::binary);
 		if (in) {
 			std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+			const std::string placeholder = "/*CONTROL_SCHEMA*/null";
+			size_t at = body.find(placeholder);
+			if (at != std::string::npos) body.replace(at, placeholder.size(), controlSchemaJson());
 			sendAll(fd, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
 			            "Content-Length: " +
 			                std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body);

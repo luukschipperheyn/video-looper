@@ -23,6 +23,7 @@
 #include "link/LinkBridge.hpp"
 #include "util/GlUtils.hpp"
 #include "io/AVFRecorder.hpp"
+#include "remote/RemoteApply.hpp"
 #include "remote/RemoteSession.hpp"
 #include <cstdlib>
 #include <vector>
@@ -141,6 +142,9 @@ int App::run() {
 	params.setString("file_path", "");
 	params.setBool("file_loop", true);
 	params.setBool("file_paused", false);
+	params.setInt("file_run_mode", 0);
+	params.setFloat("file_loop_start", 0.0f);
+	params.setFloat("file_loop_length", 1.0f);
 	params.setBool("show_playheads", true);
 	params.setBool("debug_preview_backbuffer", false);
 	params.setString("videos_folder", "");
@@ -168,6 +172,7 @@ int App::run() {
 	const char* home = std::getenv("HOME");
 	RemoteSession remote(std::filesystem::path(home ? home : ".") /
 	                     "Library/Application Support/video-looper/remote-token");
+	std::string remoteSnapshotSent;
 
 	Clock clock;
 	clock.setQuantum(params.getFloat("quantum", 4.0f));
@@ -744,10 +749,21 @@ int App::run() {
 		}
 
 		remote.setEnabled(params.getBool("ipad_page", false));
-		if (remote.enabled())
-			remote.setSnapshot("{}");
-		else
+		if (remote.enabled()) {
+			for (const RemoteSet& set : remote.drain()) {
+				ApplyResult result = applyRemoteSet(params, set);
+				if (result.reject) remote.send(rejectFrame(set.name, result.reason));
+				if (result.tempoChanged && params.getBool("link_enabled", false)) link.setTempo(result.bpm);
+			}
+			std::string snapshot = remoteSnapshot(params);
+			if (snapshot != remoteSnapshotSent) {
+				remoteSnapshotSent = snapshot;
+				remote.setSnapshot(snapshot);
+				remote.send(std::move(snapshot));
+			}
+		} else {
 			params.setBool("ipad_page", false);
+		}
 
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();

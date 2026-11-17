@@ -47,6 +47,7 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/io/SourceController.cpp
   app/src/util/MacFileDialog.mm
   app/src/remote/RemoteSession.cpp
+  app/src/remote/RemoteApply.cpp
   app/src/remote/QrCode.cpp
   ${imgui_SOURCE_DIR}/imgui.cpp
   ${imgui_SOURCE_DIR}/imgui_draw.cpp
@@ -68,6 +69,8 @@ add_custom_command(TARGET video_looper POST_BUILD
 add_executable(remote_session_test
   app/tests/remote_session_test.cpp
   app/src/remote/RemoteSession.cpp
+  app/src/remote/RemoteApply.cpp
+  app/src/ui/ParamBus.cpp
 )
 target_include_directories(remote_session_test PRIVATE app/src)
 target_compile_definitions(remote_session_test PRIVATE WEB_DIR="${CMAKE_SOURCE_DIR}/app/web")

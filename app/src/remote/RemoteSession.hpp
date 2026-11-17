@@ -1,14 +1,17 @@
 #pragma once
 
+#include "remote/RemoteApply.hpp"
+
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
-// Serves the iPad page and its WebSocket behind a token. The network thread only
-// reads the published snapshot and the token; callers own everything else.
+// Serves the iPad page and its WebSocket behind a token. The network thread only reads the published
+// snapshot, the token, and queued frames, and queues the sets it parses; callers own everything else.
 class RemoteSession {
 public:
 	explicit RemoteSession(std::filesystem::path tokenFile);
@@ -19,24 +22,41 @@ public:
 
 	void setEnabled(bool on);
 	bool enabled() const { return listenFd >= 0; }
+	// The first frame each new client receives.
 	void setSnapshot(std::string json);
+	// Queues one text frame for every connected client.
+	void send(std::string frame);
+	std::vector<RemoteSet> drain();
 	std::string token() const { return tok; }
 	std::string url() const;
 	int clientCount() const { return clients.load(); }
 	uint16_t port() const { return boundPort; }
 
 private:
+	struct Client {
+		int fd;
+		std::string in;
+	};
+
 	void serve();
 	bool handle(int fd);
+	bool readFrames(Client& client);
+	bool waitReadable(int fd);
+	void clearWake();
 
 	std::string tok;
 	std::string bindHost;
 	uint16_t bindPort;
 	uint16_t boundPort = 0;
 	int listenFd = -1;
+	int wakeRead = -1;
+	int wakeWrite = -1;
 	std::thread thread;
 	std::atomic<bool> stop{false};
 	std::atomic<int> clients{0};
 	mutable std::mutex snapshotMutex;
 	std::string snapshot = "{}";
+	std::mutex queueMutex;
+	std::vector<RemoteSet> inbox;
+	std::vector<std::string> outbox;
 };
