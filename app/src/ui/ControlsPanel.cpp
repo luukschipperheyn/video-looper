@@ -1,0 +1,230 @@
+#include "ui/ControlsPanel.hpp"
+
+#include "imgui.h"
+#include "util/MacFileDialog.hpp"
+#include <algorithm>
+#include <cstring>
+
+void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, float dt,
+			float& outBpm, float& outQuantum, SourceController* source) {
+	if (!params.getBool("show_ui", true)) return;
+	if (!ImGui::Begin("Controls")) { ImGui::End(); return; }
+
+	if (ImGui::BeginTabBar("ControlsTabs")) {
+		if (ImGui::BeginTabItem("Live")) {
+			ImGui::TextUnformatted("Recording");
+			ImGui::Separator();
+			{
+				bool rec = params.getBool("record_enabled", false);
+				if (ImGui::Checkbox("Enable Recording", &rec)) params.setBool("record_enabled", rec);
+				static char rpath[512];
+				std::string curp = params.getString("record_path", "");
+				if (curp.size() >= sizeof(rpath)) curp.clear();
+				std::strncpy(rpath, curp.c_str(), sizeof(rpath));
+				rpath[sizeof(rpath)-1] = '\0';
+				if (ImGui::InputText("Output Path", rpath, sizeof(rpath))) {
+					params.setString("record_path", std::string(rpath));
+				}
+				if (ImGui::Button("Save As...")) {
+					std::string picked = macSaveFileDialog("Save Recording", "recording.mov");
+					if (!picked.empty()) params.setString("record_path", picked);
+				}
+				float rfps = params.getFloat("record_fps", 60.0f);
+				if (ImGui::SliderFloat("Record FPS", &rfps, 1.0f, 240.0f)) params.setFloat("record_fps", rfps);
+			}
+
+			ImGui::TextUnformatted("Record & Cue");
+			ImGui::Separator();
+			bool arm = params.getBool("arm_record", false);
+			if (ImGui::Checkbox("Arm Record", &arm)) params.setBool("arm_record", arm);
+			bool cue = params.getBool("cue_active", false);
+			if (ImGui::Checkbox("Cue", &cue)) params.setBool("cue_active", cue);
+
+			ImGui::Separator();
+			ImGui::TextUnformatted("Source");
+			ImGui::Separator();
+			int kind = params.getInt("source_kind", (int)SourceKind::Shader);
+			const char* kinds[] = { "Shader", "File", "Black", "Webcam" };
+			if (ImGui::Combo("Source", &kind, kinds, 4)) params.setInt("source_kind", kind);
+			int camIndex = params.getInt("webcam_index", 0);
+			if (ImGui::InputInt("Webcam Index", &camIndex)) params.setInt("webcam_index", camIndex);
+			if (kind == (int)SourceKind::File) {
+				static char buf[512];
+				std::string cur = params.getString("file_path", "");
+				if (cur.size() >= sizeof(buf)) cur.clear();
+				std::strncpy(buf, cur.c_str(), sizeof(buf));
+				buf[sizeof(buf)-1] = '\0';
+				if (ImGui::InputText("File Path", buf, sizeof(buf))) {
+					params.setString("file_path", std::string(buf));
+				}
+				if (ImGui::Button("Browse...")) {
+					macOpenFileDialogAsync("Select Video File", [&](std::string p){
+						if (!p.empty()) params.setString("file_path", p);
+					});
+				}
+				static char fbuf[512];
+				std::string fcur = params.getString("videos_folder", "");
+				if (fcur.size() >= sizeof(fbuf)) fcur.clear();
+				std::strncpy(fbuf, fcur.c_str(), sizeof(fbuf));
+				fbuf[sizeof(fbuf)-1] = '\0';
+				if (ImGui::InputText("Videos Folder", fbuf, sizeof(fbuf))) {
+					params.setString("videos_folder", std::string(fbuf));
+				}
+				// ImGui::SameLine();
+				if (ImGui::Button("Choose Folder")) {
+					macOpenDirectoryDialogAsync("Select Videos Folder", [&](std::string fp){
+						if (!fp.empty()) { params.setString("videos_folder", fp); }
+					});
+				}
+				ImGui::Text("Folder Clips: %d", params.getInt("videos_count", 0));
+				if (params.getBool("commit_active", false)) {
+					std::string curf = params.getString("commit_current_file", "");
+					if (!curf.empty()) {
+						ImGui::Text("Committing: %s", curf.c_str());
+					}
+				}
+                // ImGui::SameLine();
+                if (ImGui::Button("Load Random File")) { if (source) source->triggerLoadRandomFile(); }
+                if (ImGui::Button("Prev File")) { if (source) source->loadPrevFile(params); }
+                if (ImGui::Button("Next File")) { if (source) source->loadNextFile(params); }
+				bool loop = params.getBool("file_loop", true);
+				if (ImGui::Checkbox("Loop File", &loop)) params.setBool("file_loop", loop);
+				bool paused = params.getBool("file_paused", false);
+				if (ImGui::Checkbox("Pause File", &paused)) params.setBool("file_paused", paused);
+				if (source) ImGui::Text("Source FPS: %.2f", source->getFileNominalFps());
+
+				// Run Mode: 0 = Free, 1 = Trigger
+				int runMode = params.getInt("file_run_mode", 0);
+				const char* runModes[] = { "Free", "Trigger" };
+				if (ImGui::Combo("File Run Mode", &runMode, runModes, 2)) params.setInt("file_run_mode", runMode);
+
+				// Loop range controls: Start and Length (normalized 0..1)
+				float ls = params.getFloat("file_loop_start", 0.0f);
+				float ll = params.getFloat("file_loop_length", 1.0f);
+				if (ImGui::SliderFloat("Loop Start", &ls, 0.0f, 1.0f)) {
+					// Ensure start is not exactly at the end to allow a minimal range
+					ls = std::clamp(ls, 0.0f, 0.999f);
+					params.setFloat("file_loop_start", ls);
+				}
+				if (ImGui::SliderFloat("Loop Length", &ll, 0.0f, 1.0f)) {
+					ll = std::clamp(ll, 0.0f, 1.0f);
+					params.setFloat("file_loop_length", ll);
+				}
+			}
+
+			ImGui::Separator();
+			ImGui::TextUnformatted("Blending");
+			ImGui::Separator();
+			float gain = params.getFloat("gain_mix", 1.0f);
+			if (ImGui::SliderFloat("Blend Gain", &gain, 0.0f, 1.0f)) params.setFloat("gain_mix", gain);
+			int rbm = params.getInt("record_blend_mode", 0);
+			const char* blendModes[] = { "Mix", "Add", "Multiply", "Screen", "Overlay", "Difference", "Lighten", "Darken", "Hard Light", "Soft Light", "Color Dodge", "Color Burn" };
+			if (ImGui::Combo("Record Blend Mode", &rbm, blendModes, 12)) params.setInt("record_blend_mode", rbm);
+			float rop = params.getFloat("record_blend_opacity", 1.0f);
+			if (ImGui::SliderFloat("Record Opacity", &rop, 0.0f, 1.0f)) params.setFloat("record_blend_opacity", rop);
+
+			ImGui::Separator();
+			ImGui::TextUnformatted("Envelope (ADSR)");
+			ImGui::Separator();
+			bool envEn = params.getBool("env_enabled", true);
+			if (ImGui::Checkbox("Use Envelope (ADSR)", &envEn)) params.setBool("env_enabled", envEn);
+			float att = params.getFloat("env_attack", 0.05f);
+			if (ImGui::SliderFloat("Attack (s)", &att, 0.0f, 5.0f)) params.setFloat("env_attack", att);
+			float dec = params.getFloat("env_decay", 0.20f);
+			if (ImGui::SliderFloat("Decay (s)", &dec, 0.0f, 5.0f)) params.setFloat("env_decay", dec);
+			float sus = params.getFloat("env_sustain", 1.0f);
+			if (ImGui::SliderFloat("Sustain", &sus, 0.0f, 1.0f)) params.setFloat("env_sustain", sus);
+			float rel = params.getFloat("env_release", 0.30f);
+			if (ImGui::SliderFloat("Release (s)", &rel, 0.0f, 5.0f)) params.setFloat("env_release", rel);
+
+			ImGui::Separator();
+			ImGui::TextUnformatted("FX");
+			ImGui::Separator();
+			bool fxEn = params.getBool("fx_enabled", false);
+			if (ImGui::Checkbox("FX Enabled", &fxEn)) params.setBool("fx_enabled", fxEn);
+			bool fxC = params.getBool("fx_commit", false);
+			if (ImGui::Checkbox("Commit FX to Loop", &fxC)) params.setBool("fx_commit", fxC);
+			int fxMode = params.getInt("fx_mode", 0);
+			const char* fxModes[] = { "Feedback", "Difference", "Chromatic", "Kaleido", "Blur" };
+			if (ImGui::Combo("FX Mode", &fxMode, fxModes, 5)) params.setInt("fx_mode", fxMode);
+			float p1 = params.getFloat("fx_param1", 0.8f);
+			float p2 = params.getFloat("fx_param2", 0.985f);
+			float p3 = params.getFloat("fx_param3", 0.0f);
+			if (ImGui::SliderFloat("Param 1", &p1, 0.0f, 1.0f)) params.setFloat("fx_param1", p1);
+			if (ImGui::SliderFloat("Param 2", &p2, 0.0f, 1.0f)) params.setFloat("fx_param2", p2);
+			if (ImGui::SliderFloat("Param 3", &p3, -0.05f, 0.05f)) params.setFloat("fx_param3", p3);
+
+			ImGui::Separator();
+			ImGui::Text("FPS: %.1f", 1.0f / std::max(1e-6f, dt));
+
+			ImGui::EndTabItem();
+		}
+
+		if (ImGui::BeginTabItem("Settings")) {
+			ImGui::TextUnformatted("UI");
+			ImGui::Separator();
+			bool show = params.getBool("show_ui", true);
+			if (ImGui::Checkbox("Show UI", &show)) params.setBool("show_ui", show);
+			bool separate = params.getBool("preview_window", false);
+			if (ImGui::Checkbox("Separate Preview Window", &separate)) params.setBool("preview_window", separate);
+			float pscale = params.getFloat("preview_scale", 0.3f);
+			if (ImGui::SliderFloat("Preview Scale", &pscale, 0.1f, 0.6f)) params.setFloat("preview_scale", pscale);
+			bool showPrev = params.getBool("show_preview", true);
+			if (ImGui::Checkbox("Show Preview", &showPrev)) params.setBool("show_preview", showPrev);
+			bool showHeads = params.getBool("show_playheads", true);
+			if (ImGui::Checkbox("Show Playheads", &showHeads)) params.setBool("show_playheads", showHeads);
+			bool previewBack = params.getBool("debug_preview_backbuffer", false);
+			if (ImGui::Checkbox("Preview Backbuffer", &previewBack)) params.setBool("debug_preview_backbuffer", previewBack);
+
+			ImGui::Separator();
+			ImGui::TextUnformatted("Link");
+			ImGui::Separator();
+			bool linkEnabledUi = params.getBool("link_enabled", false);
+			if (ImGui::Checkbox("Ableton Link", &linkEnabledUi)) params.setBool("link_enabled", linkEnabledUi);
+			int peers = link.getNumPeers();
+			ImGui::Text("Link Peers: %d", peers);
+			bool ss = params.getBool("link_startstop", false);
+			if (ImGui::Checkbox("Link Start/Stop Sync", &ss)) params.setBool("link_startstop", ss);
+			bool lpUi = params.getBool("link_playing", false);
+			if (ImGui::Checkbox("Link Playing", &lpUi)) params.setBool("link_playing", lpUi);
+
+			ImGui::Separator();
+			ImGui::TextUnformatted("Tempo & Speed");
+			ImGui::Separator();
+			float bpmVal = params.getFloat("bpm", 120.0f);
+			if (ImGui::SliderFloat("BPM", &bpmVal, 40.0f, 240.0f)) {
+				params.setFloat("bpm", bpmVal);
+				if (params.getBool("link_enabled", false)) {
+					link.setTempo(bpmVal);
+				}
+			}
+			float qVal = params.getFloat("quantum", 4.0f);
+			if (ImGui::SliderFloat("Quantum", &qVal, 1.0f, 16.0f)) params.setFloat("quantum", qVal);
+			bool tempo = params.getBool("tempo_coupled", false);
+			if (ImGui::Checkbox("Tempo Coupled Read", &tempo)) params.setBool("tempo_coupled", tempo);
+			float mult = params.getFloat("read_speed_mult", 1.0f);
+			if (ImGui::SliderFloat("Read Speed Mult", &mult, 0.25f, 4.0f)) params.setFloat("read_speed_mult", mult);
+
+			ImGui::Separator();
+			ImGui::TextUnformatted("Debug");
+			ImGui::Separator();
+			int readBank = ring.getReadBank();
+			int writeBank = ring.getWriteBank();
+			ImGui::Text("Current Read Buffer: %c", readBank == 0 ? 'A' : 'B');
+			ImGui::Text("Current Write Buffer: %c", writeBank == 0 ? 'A' : 'B');
+			ImGui::Separator();
+			ImGui::Text("Ableton Link SDK: %s", link.isAvailable() ? "Loaded" : "Not compiled in");
+
+			ImGui::EndTabItem();
+		}
+
+		ImGui::EndTabBar();
+	}
+
+	outBpm = params.getFloat("bpm", 120.0f);
+	outQuantum = params.getFloat("quantum", 4.0f);
+
+	ImGui::End();
+}
+
+
