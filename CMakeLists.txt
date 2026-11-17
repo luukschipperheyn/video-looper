@@ -46,6 +46,8 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/io/AVFRecorder.mm
   app/src/io/SourceController.cpp
   app/src/util/MacFileDialog.mm
+  app/src/remote/RemoteSession.cpp
+  app/src/remote/QrCode.cpp
   ${imgui_SOURCE_DIR}/imgui.cpp
   ${imgui_SOURCE_DIR}/imgui_draw.cpp
   ${imgui_SOURCE_DIR}/imgui_tables.cpp
@@ -55,9 +57,20 @@ add_executable(video_looper MACOSX_BUNDLE
 )
 
 target_include_directories(video_looper PRIVATE app/src ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-target_compile_definitions(video_looper PRIVATE SHADER_DIR="${CMAKE_SOURCE_DIR}/app/shaders")
+target_compile_definitions(video_looper PRIVATE SHADER_DIR="${CMAKE_SOURCE_DIR}/app/shaders" WEB_DIR="${CMAKE_SOURCE_DIR}/app/web")
 
 target_link_libraries(video_looper PRIVATE glfw)
+
+add_custom_command(TARGET video_looper POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/app/web $<TARGET_BUNDLE_CONTENT_DIR:video_looper>/Resources/web
+)
+
+add_executable(remote_session_test
+  app/tests/remote_session_test.cpp
+  app/src/remote/RemoteSession.cpp
+)
+target_include_directories(remote_session_test PRIVATE app/src)
+target_compile_definitions(remote_session_test PRIVATE WEB_DIR="${CMAKE_SOURCE_DIR}/app/web")
 
 if(APPLE)
   # Provide Info.plist for bundle (required for camera privacy and Continuity Camera)

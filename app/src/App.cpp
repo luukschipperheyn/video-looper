@@ -23,6 +23,8 @@
 #include "link/LinkBridge.hpp"
 #include "util/GlUtils.hpp"
 #include "io/AVFRecorder.hpp"
+#include "remote/RemoteSession.hpp"
+#include <cstdlib>
 #include <vector>
 
 static void glfwErrorCallback(int code, const char* desc) {
@@ -161,6 +163,11 @@ int App::run() {
 	params.setBool("record_enabled", false);
 	params.setFloat("record_fps", 60.0f);
 	params.setString("record_path", "");
+	params.setBool("ipad_page", false);
+
+	const char* home = std::getenv("HOME");
+	RemoteSession remote(std::filesystem::path(home ? home : ".") /
+	                     "Library/Application Support/video-looper/remote-token");
 
 	Clock clock;
 	clock.setQuantum(params.getFloat("quantum", 4.0f));
@@ -736,13 +743,19 @@ int App::run() {
 			params.setBool("preview_window", false);
 		}
 
+		remote.setEnabled(params.getBool("ipad_page", false));
+		if (remote.enabled())
+			remote.setSnapshot("{}");
+		else
+			params.setBool("ipad_page", false);
+
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 		{
 			ControlsPanel panel;
 			float outBpmDummy = 0.0f, outQuantumDummy = 0.0f;
-			panel.draw(params, link, ring, dt, outBpmDummy, outQuantumDummy, &source);
+			panel.draw(params, link, ring, dt, outBpmDummy, outQuantumDummy, &source, remote);
 		}
 		if (params.getBool("show_playheads", true)) looper.drawHeadsOverlay(w, h);
 		ImGui::Render();

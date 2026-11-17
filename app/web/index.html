@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Video Looper</title>
+<style>
+	body { margin: 0; padding: 24px; background: #111; color: #eee; font: 18px -apple-system, sans-serif; }
+	#connection { font-weight: 600; }
+	#snapshot { margin-top: 16px; padding: 12px; background: #222; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<p>iPad page: <span id="connection">connecting</span></p>
+<pre id="snapshot"></pre>
+<script>
+	const token = new URLSearchParams(location.search).get("token") || "";
+	const connection = document.getElementById("connection");
+	const snapshot = document.getElementById("snapshot");
+	const socket = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
+	socket.onopen = () => { connection.textContent = "connected"; };
+	socket.onmessage = (event) => { snapshot.textContent = event.data; };
+	socket.onclose = () => { connection.textContent = "disconnected"; };
+</script>
+</body>
+</html>

@@ -2,11 +2,12 @@
 
 #include "imgui.h"
 #include "util/MacFileDialog.hpp"
+#include "remote/QrCode.hpp"
 #include <algorithm>
 #include <cstring>
 
 void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, float dt, float& outBpm,
-                         float& outQuantum, SourceController* source) {
+                         float& outQuantum, SourceController* source, const RemoteSession& remote) {
 	if (!params.getBool("show_ui", true)) return;
 	if (!ImGui::Begin("Controls")) {
 		ImGui::End();
@@ -165,6 +166,39 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			if (ImGui::SliderFloat("Param 1", &p1, 0.0f, 1.0f)) params.setFloat("fx_param1", p1);
 			if (ImGui::SliderFloat("Param 2", &p2, 0.0f, 1.0f)) params.setFloat("fx_param2", p2);
 			if (ImGui::SliderFloat("Param 3", &p3, -0.05f, 0.05f)) params.setFloat("fx_param3", p3);
+
+			ImGui::Separator();
+			ImGui::TextUnformatted("iPad");
+			ImGui::Separator();
+			bool ipad = params.getBool("ipad_page", false);
+			if (ImGui::Checkbox("iPad page", &ipad)) params.setBool("ipad_page", ipad);
+			if (ipad && remote.enabled()) {
+				std::string url = remote.url();
+				ImGui::InputText("URL", url.data(), url.size() + 1, ImGuiInputTextFlags_ReadOnly);
+				static std::string qrUrl;
+				static std::vector<std::vector<bool>> qr;
+				if (url != qrUrl) {
+					qrUrl = url;
+					qr = qrEncode(url);
+				}
+				if (!qr.empty()) {
+					const float cell = 4.0f;
+					const float quiet = 4.0f;
+					const float side = cell * (float(qr.size()) + 2.0f * quiet);
+					ImVec2 origin = ImGui::GetCursorScreenPos();
+					ImDrawList* draw = ImGui::GetWindowDrawList();
+					draw->AddRectFilled(origin, ImVec2(origin.x + side, origin.y + side), IM_COL32_WHITE);
+					for (size_t y = 0; y < qr.size(); ++y) {
+						for (size_t x = 0; x < qr.size(); ++x) {
+							if (!qr[y][x]) continue;
+							ImVec2 p(origin.x + (float(x) + quiet) * cell, origin.y + (float(y) + quiet) * cell);
+							draw->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), IM_COL32_BLACK);
+						}
+					}
+					ImGui::Dummy(ImVec2(side, side));
+				}
+				ImGui::TextUnformatted(remote.clientCount() > 0 ? "iPad connected" : "iPad not connected");
+			}
 
 			ImGui::Separator();
 			ImGui::Text("FPS: %.1f", 1.0f / std::max(1e-6f, dt));
