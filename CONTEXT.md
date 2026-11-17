@@ -12,6 +12,8 @@ Target use is **live VJ performance**: steady frame rate and no hitches or lost 
 
 GPU memory is dominated by the ring: `2 banks × 120 frames × fbW × fbH × 4 bytes`. Framebuffer size is in physical pixels, so a 1280×720 window on Retina (2560×1440) costs ~3.5 GB; fullscreen 4K costs ~8 GB. Any feature that adds per-frame GPU storage multiplies against this.
 
+Test clips for the File source and folder/commit paths: `~/Movies/video-datasets/vids` (~100 `.mp4`, mixed sizes up to ~100 MB; `.json` manifests in the folder are skipped by the scan). No `.mkv`/`.avi` samples, so those extensions are untested.
+
 ---
 
 ## Platforms / deps / build
@@ -234,7 +236,7 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 1. **Bank coherence** — non-recording path copies unread-back slots so after a wrap the new front is a complete loop; recording overdubs into those slots.  
 2. **Cue never mutates the ring** — audition only.  
 3. **Commit** forces recording-active writes at opacity 1 and bypasses ADSR; ends when file stops producing frames while non-looping.  
-4. **Resize invalidates** ring contents (full `setup` destroy/recreate) and aborts disk recording.  
+4. **Resize invalidates** ring contents (full `setup` destroy/recreate) and aborts disk recording. Accepted for now by the owner; don't change it as a side effect.  
 5. **Read interpolation** — present mixes `idx0`/`idx1` with `gain_mix`; write path uses integer slot indices.  
 6. **FX present vs commit** — live FX is a present-path effect unless `fx_commit` bakes last FX texture into the loop.  
 7. **Preview vs main** — inset/separate preview shows `auditionTexB` (loop + live overlay); debug toggle shows the back-bank slot instead.
