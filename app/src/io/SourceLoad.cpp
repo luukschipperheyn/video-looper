@@ -1,6 +1,7 @@
 #include "io/SourceLoad.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <utility>
 
 LoadRequest SourceLoad::requestVideo(std::string p) {
@@ -88,4 +89,15 @@ std::string stepVideo(const std::vector<std::string>& files, const std::string& 
 	auto it = std::find(files.begin(), files.end(), current);
 	long long from = it != files.end() ? it - files.begin() : (delta < 0 ? n : -1);
 	return files[static_cast<size_t>(((from + delta) % n + n) % n)];
+}
+
+bool stillSourceCancelsLoad(int kind, int previousKind) {
+	bool still = kind != 1 && kind != 3;
+	return still && kind != previousKind;
+}
+
+std::string videoByName(const std::vector<std::string>& files, const std::string& name) {
+	auto it = std::find_if(files.begin(), files.end(),
+	                       [&](const std::string& f) { return std::filesystem::path(f).filename() == name; });
+	return it != files.end() ? *it : std::string();
 }

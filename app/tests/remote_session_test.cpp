@@ -550,11 +550,84 @@ int main() {
 		check(!result.reject && result.startWebcam && params.getInt("source_kind") == 1,
 		      "26. a set of source_kind 3 asks for a webcam load and leaves the param alone");
 
+		// App's handling of a Load: look the name up in the folder, reject an unknown one, otherwise start a load.
+		auto onLoad = [&](const RemoteSet& set) {
+			std::string hit = videoByName(videos, set.name);
+			if (hit.empty()) {
+				session.send(rejectFrame("source", "no such video"));
+				return LoadRequest{0, false, {}, 0};
+			}
+			return load.requestVideo(hit);
+		};
+		const std::string committed = load.committedPath();
+		sendFrame(client.fd, 0x1, R"({"t":"load","name":"b.mov"})");
+		sets = waitDrain(session);
+		check(sets.size() == 1 && sets[0].kind == RemoteKind::Load && sets[0].name == "b.mov",
+		      "29. load drains as one Load item naming b.mov");
+		LoadRequest toB = sets.size() == 1 ? onLoad(sets[0]) : LoadRequest{0, false, {}, 0};
+		check(toB.path == videos[1] && load.inflight() == toB.id && load.committedPath() == committed &&
+		          load.committedWebcam() && !params.getBool("commit_active"),
+		      "29. a tap starts a load of b.mov, keeps the committed Source, and does not start a Commit");
+		sendFrame(client.fd, 0x1, R"({"t":"load","name":"a.mov"})");
+		sets = waitDrain(session);
+		LoadRequest toA = sets.size() == 1 ? onLoad(sets[0]) : LoadRequest{0, false, {}, 0};
+		check(toA.path == videos[0] && load.inflight() == toA.id, "29. a second tap starts a load of a.mov");
+		load.resolve(toB.id, true, {});
+		check(!swapIn() && load.busy() && load.committedPath() == committed,
+		      "29. resolving the first tap swaps nothing");
+		load.resolve(toA.id, true, {});
+		check(swapIn() && !isWebcam && path == videos[0] && load.committedPath() == videos[0] &&
+		          !params.getBool("commit_active"),
+		      "29. resolving the second tap swaps a.mov in");
+
+		sendFrame(client.fd, 0x1, R"({"t":"load","name":"zzz.mov"})");
+		sets = waitDrain(session);
+		LoadRequest none = sets.size() == 1 ? onLoad(sets[0]) : LoadRequest{1, false, {}, 0};
+		payload = readText(client);
+		check(none.id == 0 && field(payload, "name") == "\"source\"" &&
+		          field(payload, "reason") == "\"no such video\"" && !load.busy() &&
+		          load.committedPath() == videos[0],
+		      "30. a load of an unknown name is rejected as no such video and keeps the committed Video");
+
+		const std::string jpeg("\xff\xd8\0\r\n\r\nthumb\xff\xd9", 14);
+		session.setThumbs({{"a.mov", jpeg}, {"my clip.mov", "x"}});
+		std::string res = httpGet(port, "/thumb?name=a.mov&token=" + session.token());
+		size_t bodyAt = res.find("\r\n\r\n");
+		check(res.rfind("HTTP/1.1 200", 0) == 0 && res.find("Content-Type: image/jpeg") != std::string::npos &&
+		          bodyAt != std::string::npos && res.substr(bodyAt + 4) == jpeg,
+		      "31. GET /thumb returns the registered bytes as image/jpeg");
+		check(httpGet(port, "/thumb?name=a.mov").rfind("HTTP/1.1 403", 0) == 0,
+		      "31. GET /thumb without a token returns 403");
+		check(httpGet(port, "/thumb?name=b.mov&token=" + session.token()).rfind("HTTP/1.1 404", 0) == 0,
+		      "31. GET /thumb for an unknown name returns 404");
+		res = httpGet(port, "/thumb?name=my%20clip.mov&token=" + session.token());
+		check(res.rfind("HTTP/1.1 200", 0) == 0 && res.substr(res.find("\r\n\r\n") + 4) == "x",
+		      "31. a percent-encoded name finds its thumbnail");
+
 		close(client.fd);
 	}
 
+	{
+		ParamBus params;
+		std::string snapshot = remoteSnapshot(params, {}, {"a.mov", "b.mov"});
+		check(snapshot.find(R"("videos":["a.mov","b.mov"])") != std::string::npos,
+		      "32. the snapshot lists the folder's Videos by filename");
+		check(remoteSnapshot(params).find(R"("videos":[])") != std::string::npos,
+		      "32. with no Videos the snapshot lists none");
+	}
+	const std::vector<std::string> folder = {"/v/a.mov", "/v/b.mov"};
+	check(videoByName(folder, "b.mov") == "/v/b.mov", "33. videoByName finds a path by filename");
+	check(videoByName(folder, "c.mov").empty() && videoByName(folder, "v/b.mov").empty(),
+	      "33. videoByName returns empty for an unknown name");
+
 	check(stepVideo({}, "/v/a.mov", 1).empty() && stepVideo({}, "", -1).empty(), "27. an empty list steps to nothing");
 	const std::vector<std::string> abc = {"a", "b", "c"};
+	check(!stillSourceCancelsLoad(0, 0) && !stillSourceCancelsLoad(2, 2),
+	      "34. staying on Shader or Black does not cancel a load");
+	check(stillSourceCancelsLoad(0, 1) && stillSourceCancelsLoad(2, 3),
+	      "34. choosing Shader or Black cancels a load");
+	check(!stillSourceCancelsLoad(1, 0) && !stillSourceCancelsLoad(3, 0),
+	      "34. choosing a Video or the webcam does not cancel a load");
 	check(stepVideo(abc, "a", 1) == "b" && stepVideo(abc, "b", -1) == "a", "27. next and prev step one Video");
 	check(stepVideo(abc, "c", 1) == "a" && stepVideo(abc, "a", -1) == "c", "27. stepping wraps at both ends");
 	{

@@ -53,9 +53,9 @@ void SourceController::shutdown() {
 
 bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus& params) {
 	int srcKind = params.getInt("source_kind", (int)SourceKind::Shader);
-	bool showLive = srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam;
-	if (!showLive && load.busy()) load.cancel();
-	bool updatedPreviewTex = showLive && swapInLoaded(params);
+	bool justChoseStill = stillSourceCancelsLoad(srcKind, seenKind);
+	if (justChoseStill && load.busy()) load.cancel();
+	bool updatedPreviewTex = !justChoseStill && swapInLoaded(params);
 	ensureSource(params);
 
 	if (srcKind == (int)SourceKind::Webcam) {

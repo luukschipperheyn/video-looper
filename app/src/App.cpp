@@ -20,6 +20,7 @@
 #include "clock/Clock.hpp"
 #include "io/VideoSource.hpp"
 #include "io/SourceController.hpp"
+#include "io/VideoThumbs.hpp"
 #include "link/LinkBridge.hpp"
 #include "util/GlUtils.hpp"
 #include "io/AVFRecorder.hpp"
@@ -174,6 +175,9 @@ int App::run() {
 	RemoteSession remote(std::filesystem::path(home ? home : ".") /
 	                     "Library/Application Support/video-looper/remote-token");
 	std::string remoteSnapshotSent;
+	VideoThumbs thumbs;
+	std::vector<std::string> videoPaths;
+	std::vector<std::string> videoNames;
 
 	Clock clock;
 	clock.setQuantum(params.getFloat("quantum", 4.0f));
@@ -407,6 +411,15 @@ int App::run() {
 		float gainMix = params.getFloat("gain_mix", 1.0f);
 
 		remote.setEnabled(params.getBool("ipad_page", false));
+		std::vector<std::string> videos = source.videos();
+		if (videos != videoPaths) {
+			videoPaths = std::move(videos);
+			videoNames.clear();
+			for (const std::string& p : videoPaths) videoNames.push_back(std::filesystem::path(p).filename());
+			thumbs.setVideos(videoPaths);
+		}
+		std::vector<std::pair<std::string, std::string>> madeThumbs;
+		if (thumbs.take(madeThumbs)) remote.setThumbs(std::move(madeThumbs));
 		std::string loadFailure = source.takeLoadFailure();
 		if (remote.enabled()) {
 			remote.setSilenceWindow(int(params.getFloat("silence_ms", 300.0f)));
@@ -426,6 +439,14 @@ int App::run() {
 				case RemoteKind::Webcam:
 					source.loadWebcam(params.getInt("webcam_index", 0));
 					break;
+				case RemoteKind::Load: {
+					std::string path = videoByName(videoPaths, set.name);
+					if (path.empty())
+						remote.send(rejectFrame("source", "no such video"));
+					else
+						source.loadVideo(path);
+					break;
+				}
 				case RemoteKind::Set: {
 					ApplyResult result = applyRemoteSet(params, set);
 					if (result.reject) remote.send(rejectFrame(set.name, result.reason));
@@ -787,7 +808,7 @@ int App::run() {
 
 		if (remote.enabled()) {
 			RemoteLive live{(float(idx0) + mixf) / float(ring.size()), envVal, envPhase, recGate, cueActive};
-			std::string snapshot = remoteSnapshot(params, live);
+			std::string snapshot = remoteSnapshot(params, live, videoNames);
 			if (snapshot != remoteSnapshotSent) {
 				remoteSnapshotSent = snapshot;
 				remote.setSnapshot(snapshot);

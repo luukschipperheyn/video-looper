@@ -66,6 +66,20 @@ std::string queryParam(const std::string& query, const std::string& key) {
 	return {};
 }
 
+std::string percentDecode(const std::string& s) {
+	std::string out;
+	for (size_t i = 0; i < s.size(); ++i) {
+		if (s[i] == '%' && i + 2 < s.size() && std::isxdigit(static_cast<unsigned char>(s[i + 1])) &&
+		    std::isxdigit(static_cast<unsigned char>(s[i + 2]))) {
+			out += char(std::stoi(s.substr(i + 1, 2), nullptr, 16));
+			i += 2;
+		} else {
+			out += s[i];
+		}
+	}
+	return out;
+}
+
 std::string lower(std::string s) {
 	for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 	return s;
@@ -180,11 +194,16 @@ bool parseMessage(const std::string& json, Message& out) {
 	return i == json.size();
 }
 
+// A non-empty JSON string token with no escapes, without its quotes.
+bool plainString(const std::string& raw, std::string& out) {
+	if (raw.size() < 3 || raw[0] != '"' || raw.find('\\') != std::string::npos) return false;
+	out = raw.substr(1, raw.size() - 2);
+	return true;
+}
+
 bool toSet(const Message& msg, RemoteSet& out) {
-	const std::string& name = msg.name;
-	if (name.size() < 3 || name[0] != '"' || name.find('\\') != std::string::npos) return false;
-	if (msg.value.empty() || !isJsonValue(msg.value)) return false;
-	out = {name.substr(1, name.size() - 2), msg.value};
+	if (!plainString(msg.name, out.name) || msg.value.empty() || !isJsonValue(msg.value)) return false;
+	out.raw = msg.value;
 	return true;
 }
 
@@ -276,6 +295,13 @@ void RemoteSession::send(std::string frame) {
 		outbox.push_back(std::move(frame));
 	}
 	(void)write(wakeWrite, "x", 1);
+}
+
+void RemoteSession::setThumbs(std::vector<std::pair<std::string, std::string>> nameAndBytes) {
+	std::map<std::string, std::string> next(std::make_move_iterator(nameAndBytes.begin()),
+	                                        std::make_move_iterator(nameAndBytes.end()));
+	std::lock_guard<std::mutex> lock(thumbMutex);
+	thumbs.swap(next);
 }
 
 std::vector<RemoteSet> RemoteSession::drain() {
@@ -406,6 +432,10 @@ bool RemoteSession::readFrames(Client& client) {
 			                                           : RemoteKind::Webcam;
 			std::lock_guard<std::mutex> lock(queueMutex);
 			inbox.push_back({{}, {}, kind});
+		} else if (msg.type == "\"load\"" && plainString(msg.name, set.name)) {
+			set.kind = RemoteKind::Load;
+			std::lock_guard<std::mutex> lock(queueMutex);
+			inbox.push_back(std::move(set));
 		}
 	}
 	return true;
@@ -483,6 +513,23 @@ bool RemoteSession::handle(int fd) {
 		return sendAll(fd, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
 		                   "Sec-WebSocket-Accept: " +
 		                       acceptKey(key) + "\r\n\r\n" + serverFrame(0x1, snap));
+	}
+	if (method == "GET" && path == "/thumb") {
+		std::string body;
+		bool found = false;
+		{
+			std::lock_guard<std::mutex> lock(thumbMutex);
+			auto it = thumbs.find(percentDecode(queryParam(query, "name")));
+			if (it != thumbs.end()) {
+				body = it->second;
+				found = true;
+			}
+		}
+		sendAll(fd, found ? "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nCache-Control: no-store\r\n"
+		                    "Content-Length: " +
+		                        std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body
+		                  : emptyResponse("404 Not Found"));
+		return false;
 	}
 	if (method == "GET" && (path == "/" || path == "/index.html")) {
 		std::ifstream in(webDir() / "index.html", std::ios::binary);

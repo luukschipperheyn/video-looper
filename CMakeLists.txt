@@ -46,6 +46,7 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/io/AVFRecorder.mm
   app/src/io/SourceController.cpp
   app/src/io/SourceLoad.cpp
+  app/src/io/VideoThumbs.mm
   app/src/util/MacFileDialog.mm
   app/src/remote/RemoteSession.cpp
   app/src/remote/RemoteApply.cpp

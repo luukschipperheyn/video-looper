@@ -53,3 +53,8 @@ private:
 
 // The Video delta steps away from current, wrapping. An unknown current steps from just outside the list.
 std::string stepVideo(const std::vector<std::string>& files, const std::string& current, int delta);
+// The path in files whose filename is name, or empty.
+std::string videoByName(const std::vector<std::string>& files, const std::string& name);
+
+// True only on the frame a still Source (shader 0 or black 2) is chosen. Staying there must not cancel a Video load.
+bool stillSourceCancelsLoad(int kind, int previousKind);

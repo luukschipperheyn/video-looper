@@ -31,6 +31,12 @@
 	#source-load button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
 		border-radius: 8px; }
 	#source-reason { color: #fa0; }
+	#videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+	#videos button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px; color: #eee;
+		background: #222; border: 2px solid #444; border-radius: 8px; font-size: 14px; }
+	#videos button.current { border-color: #4af; }
+	#videos img { width: 160px; height: 100px; object-fit: contain; background: #000; }
+	#videos span { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -50,6 +56,7 @@
 	<button id="source-webcam">Webcam</button>
 	<span id="source-reason"></span>
 </p>
+<div id="videos"></div>
 <div id="controls"></div>
 <script>
 	const schema = /*CONTROL_SCHEMA*/null;
@@ -214,6 +221,34 @@
 		});
 	}
 
+	const videosGrid = document.getElementById("videos");
+	let shownVideos = "";
+	function showVideos(names) {
+		const key = JSON.stringify(names);
+		if (key === shownVideos) return;
+		shownVideos = key;
+		videosGrid.replaceChildren();
+		for (const name of names) {
+			const button = videosGrid.appendChild(document.createElement("button"));
+			button.dataset.name = name;
+			const img = button.appendChild(document.createElement("img"));
+			const src = `/thumb?name=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`;
+			let tries = 0;
+			// Thumbnails are made after the folder scan, so one may not exist yet when the grid appears.
+			img.onerror = () => {
+				if (++tries <= 30) setTimeout(() => { img.src = `${src}&try=${tries}`; }, 1000);
+			};
+			img.src = src;
+			img.alt = "";
+			button.appendChild(document.createElement("span")).textContent = name;
+			button.addEventListener("click", () => {
+				if (socket.readyState !== WebSocket.OPEN) return;
+				sourceReason.textContent = "";
+				socket.send(JSON.stringify({ t: "load", name }));
+			});
+		}
+	}
+
 	const stages = ["idle", "attack", "decay", "sustain", "release"];
 	const live = (id, text) => { document.getElementById(`live-${id}`).textContent = text; };
 
@@ -233,6 +268,8 @@
 			live("gate", state.gate ? "open" : "closed");
 			live("cue", state.cue ? "open" : "closed");
 			live("video", state.video || "none");
+			showVideos(state.videos || []);
+			for (const button of videosGrid.children) button.classList.toggle("current", button.dataset.name === state.video);
 			pads.gate.el.classList.toggle("open", state.gate);
 			pads.cue.el.classList.toggle("open", state.cue);
 			exportState.textContent = state.record_enabled ? "running" : "stopped";

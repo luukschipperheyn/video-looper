@@ -1,13 +1,14 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 class ParamBus;
 
-enum class RemoteKind { Set, Panic, Prev, Next, Webcam };
+enum class RemoteKind { Set, Panic, Prev, Next, Webcam, Load };
 
 // One message from the iPad for the main thread. For a Set, raw is the JSON value token as sent: true, false,
-// 140, or "x". The other kinds carry no name or value.
+// 140, or "x". A Load carries the Video's filename as name. The other kinds carry no name or value.
 struct RemoteSet {
 	std::string name;
 	std::string raw;
@@ -49,5 +50,7 @@ struct GateState {
 // source_kind 3 (webcam) is not written; startWebcam asks the caller to load the webcam instead.
 ApplyResult applyRemoteSet(ParamBus& params, const RemoteSet& set);
 GateState combineHolds(GateInputs in);
-std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live = {});
+// videos are the filenames of the Videos in the current Videos folder.
+std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live = {},
+                           const std::vector<std::string>& videos = {});
 std::string rejectFrame(const std::string& name, const std::string& reason);

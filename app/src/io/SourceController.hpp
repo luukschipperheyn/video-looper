@@ -42,6 +42,8 @@ public:
 	void loadWebcam(int index);
 	// Why the latest load failed, once. Empty if none.
 	std::string takeLoadFailure() { return load.takeFailure(); }
+	// Full paths of the Videos in the current Videos folder, as of the last scan.
+	std::vector<std::string> videos() const { return videoFiles; }
 
 	// Query information for UI/debugging
 	GLuint getPreviewTexture() const { return previewTex; }

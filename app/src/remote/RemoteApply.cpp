@@ -78,7 +78,7 @@ GateState combineHolds(GateInputs in) {
 	return {in.latch || in.space || in.pad, in.cueLatch || in.cueKey || in.cuePad};
 }
 
-std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live) {
+std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const std::vector<std::string>& videos) {
 	std::string out = "{\"t\":\"snapshot\"";
 	for (const Control& c : kControls) {
 		out += ",\"";
@@ -103,8 +103,9 @@ std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live) {
 	if (params.getInt("source_kind") == 1) video = std::filesystem::path(params.getString("file_path")).filename();
 	out += ",\"loop\":" + jsonNumber(live.loop) + ",\"envelope\":" + jsonNumber(live.envelope) +
 	       ",\"stage\":" + std::to_string(live.stage) + ",\"gate\":" + (live.gate ? "true" : "false") +
-	       ",\"cue\":" + (live.cue ? "true" : "false") + ",\"video\":" + jsonString(video);
-	return out + "}";
+	       ",\"cue\":" + (live.cue ? "true" : "false") + ",\"video\":" + jsonString(video) + ",\"videos\":[";
+	for (size_t i = 0; i < videos.size(); ++i) out += (i ? "," : "") + jsonString(videos[i]);
+	return out + "]}";
 }
 
 std::string rejectFrame(const std::string& name, const std::string& reason) {
