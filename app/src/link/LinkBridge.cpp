@@ -8,15 +8,15 @@
 struct LinkBridge::Impl {
 	ableton::Link link;
 
-	Impl(double initialTempo)
-    	: link(initialTempo) {}
+	Impl(double initialTempo) : link(initialTempo) {}
 };
 #endif
 
 LinkBridge::LinkBridge()
 	: enabled(false), tempoBpm(120.0), quantumBeats(4.0), startStopSync(false), playing(false), stubBeats(0.0)
 #ifdef USE_ABLETON_LINK
-	, impl(new Impl(tempoBpm))
+	  ,
+	  impl(new Impl(tempoBpm))
 #endif
 {
 #ifdef USE_ABLETON_LINK
@@ -36,7 +36,7 @@ void LinkBridge::tick(double dt) {
 LinkBridge::~LinkBridge() {
 #ifdef USE_ABLETON_LINK
 	delete impl;
-    impl = nullptr;
+	impl = nullptr;
 #endif
 }
 
@@ -129,5 +129,3 @@ bool LinkBridge::isAvailable() const {
 	return false;
 #endif
 }
-
-

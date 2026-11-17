@@ -19,5 +19,3 @@ private:
 		return 0;
 	}
 };
-
-

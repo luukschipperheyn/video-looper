@@ -43,5 +43,3 @@ private:
 	std::vector<GLuint> textures[2];
 	std::vector<GLuint> fbos[2];
 };
-
-

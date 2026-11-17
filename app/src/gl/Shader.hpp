@@ -27,5 +27,3 @@ private:
 
 	GLuint programId;
 };
-
-

@@ -17,5 +17,3 @@ void macOpenDirectoryDialogAsync(const char* title, std::function<void(std::stri
 std::string macSaveFileDialog(const char* title = "Save File", const char* defaultName = "output.mov");
 // Non-blocking variant for save dialog
 void macSaveFileDialogAsync(const char* title, const char* defaultName, std::function<void(std::string)> onPick);
-
-

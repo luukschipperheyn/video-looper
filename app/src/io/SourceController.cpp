@@ -5,10 +5,9 @@
 #include "util/GlUtils.hpp"
 
 SourceController::SourceController()
-	: w(0), h(0), previewTex(0), previewFbo(0),
-	  webcamActive(false), currentWebcamIndex(-1), fileActive(false),
-	  commitRequested(false), committing(false), commitStartTime(0.0),
-	  commitNominalFps(0.0f), commitFramesWritten(0), savedLoopSetting(true) {}
+	: w(0), h(0), previewTex(0), previewFbo(0), webcamActive(false), currentWebcamIndex(-1), fileActive(false),
+	  commitRequested(false), committing(false), commitStartTime(0.0), commitNominalFps(0.0f), commitFramesWritten(0),
+	  savedLoopSetting(true) {}
 
 SourceController::~SourceController() {
 	shutdown();
@@ -29,8 +28,14 @@ void SourceController::resize(int width, int height) {
 }
 
 void SourceController::shutdown() {
-	if (webcamActive) { webcam.stop(); webcamActive = false; }
-	if (fileActive) { fileSrc.stop(); fileActive = false; }
+	if (webcamActive) {
+		webcam.stop();
+		webcamActive = false;
+	}
+	if (fileActive) {
+		fileSrc.stop();
+		fileActive = false;
+	}
 	destroyPreview();
 }
 
@@ -38,28 +43,28 @@ bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus
 	ensureSource(params);
 	bool updatedPreviewTex = false;
 
-    int srcKind = params.getInt("source_kind", (int)SourceKind::Shader);
-    if (srcKind == (int)SourceKind::Webcam) {
-		int sw=0, sh=0;
+	int srcKind = params.getInt("source_kind", (int)SourceKind::Shader);
+	if (srcKind == (int)SourceKind::Webcam) {
+		int sw = 0, sh = 0;
 		if (webcam.grab(previewTex, sw, sh)) {
 			updatedPreviewTex = true;
 		}
-    } else if (srcKind == (int)SourceKind::File) {
-        fileSrc.setLoop(params.getBool("file_loop", true));
-        fileSrc.setPaused(params.getBool("file_paused", false));
-        // Apply normalized loop range using start + length
-        float loopStart = params.getFloat("file_loop_start", 0.0f);
-        float loopLen = params.getFloat("file_loop_length", 1.0f);
-        loopStart = std::clamp(loopStart, 0.0f, 1.0f);
-        loopLen = std::clamp(loopLen, 0.0f, 1.0f);
-        float loopEnd = std::clamp(loopStart + loopLen, loopStart + 0.001f, 1.0f);
-        fileSrc.setLoopRange(loopStart, loopEnd);
-        fileSrc.tick(dtSeconds);
-        int sw=0, sh=0;
-        if (fileSrc.grab(previewTex, sw, sh)) {
-            updatedPreviewTex = true;
-    }
-    }
+	} else if (srcKind == (int)SourceKind::File) {
+		fileSrc.setLoop(params.getBool("file_loop", true));
+		fileSrc.setPaused(params.getBool("file_paused", false));
+		// Apply normalized loop range using start + length
+		float loopStart = params.getFloat("file_loop_start", 0.0f);
+		float loopLen = params.getFloat("file_loop_length", 1.0f);
+		loopStart = std::clamp(loopStart, 0.0f, 1.0f);
+		loopLen = std::clamp(loopLen, 0.0f, 1.0f);
+		float loopEnd = std::clamp(loopStart + loopLen, loopStart + 0.001f, 1.0f);
+		fileSrc.setLoopRange(loopStart, loopEnd);
+		fileSrc.tick(dtSeconds);
+		int sw = 0, sh = 0;
+		if (fileSrc.grab(previewTex, sw, sh)) {
+			updatedPreviewTex = true;
+		}
+	}
 
 	maybeRescanFolder(params);
 	maybeStartRandomCommit(nowSeconds, params);
@@ -73,52 +78,65 @@ void SourceController::triggerLoadRandomFile() {
 }
 
 void SourceController::restartFileAtLoopStart() {
-    if (fileActive) {
-        fileSrc.restartAtLoopStart();
-    }
+	if (fileActive) {
+		fileSrc.restartAtLoopStart();
+	}
 }
 
 static size_t wrapIndex(long long value, size_t size) {
-    if (size == 0) return 0;
-    long long mod = value % static_cast<long long>(size);
-    if (mod < 0) mod += static_cast<long long>(size);
-    return static_cast<size_t>(mod);
+	if (size == 0) return 0;
+	long long mod = value % static_cast<long long>(size);
+	if (mod < 0) mod += static_cast<long long>(size);
+	return static_cast<size_t>(mod);
 }
 
 void SourceController::loadPrevFile(ParamBus& params) {
-    maybeRescanFolder(params);
-    if (videoFiles.empty()) return;
-    std::string current = params.getString("file_path", "");
-    long long idx = -1;
-    for (size_t i = 0; i < videoFiles.size(); ++i) {
-        if (videoFiles[i] == current) { idx = static_cast<long long>(i); break; }
-    }
-    size_t nextIdx = wrapIndex((idx == -1 ? static_cast<long long>(videoFiles.size()) - 1 : idx - 1), videoFiles.size());
-    std::string pick = videoFiles[nextIdx];
-    params.setInt("source_kind", (int)SourceKind::File);
-    params.setString("file_path", pick);
-    params.setBool("commit_active", false);
-    params.setString("commit_current_file", "");
-    if (fileActive) { fileSrc.stop(); fileActive = false; }
-    fileActive = fileSrc.startFile(pick);
+	maybeRescanFolder(params);
+	if (videoFiles.empty()) return;
+	std::string current = params.getString("file_path", "");
+	long long idx = -1;
+	for (size_t i = 0; i < videoFiles.size(); ++i) {
+		if (videoFiles[i] == current) {
+			idx = static_cast<long long>(i);
+			break;
+		}
+	}
+	size_t nextIdx =
+		wrapIndex((idx == -1 ? static_cast<long long>(videoFiles.size()) - 1 : idx - 1), videoFiles.size());
+	std::string pick = videoFiles[nextIdx];
+	params.setInt("source_kind", (int)SourceKind::File);
+	params.setString("file_path", pick);
+	params.setBool("commit_active", false);
+	params.setString("commit_current_file", "");
+	if (fileActive) {
+		fileSrc.stop();
+		fileActive = false;
+	}
+	fileActive = fileSrc.startFile(pick);
 }
 
 void SourceController::loadNextFile(ParamBus& params) {
-    maybeRescanFolder(params);
-    if (videoFiles.empty()) return;
-    std::string current = params.getString("file_path", "");
-    long long idx = -1;
-    for (size_t i = 0; i < videoFiles.size(); ++i) {
-        if (videoFiles[i] == current) { idx = static_cast<long long>(i); break; }
-    }
-    size_t nextIdx = wrapIndex((idx == -1 ? 0 : idx + 1), videoFiles.size());
-    std::string pick = videoFiles[nextIdx];
-    params.setInt("source_kind", (int)SourceKind::File);
-    params.setString("file_path", pick);
-    params.setBool("commit_active", false);
-    params.setString("commit_current_file", "");
-    if (fileActive) { fileSrc.stop(); fileActive = false; }
-    fileActive = fileSrc.startFile(pick);
+	maybeRescanFolder(params);
+	if (videoFiles.empty()) return;
+	std::string current = params.getString("file_path", "");
+	long long idx = -1;
+	for (size_t i = 0; i < videoFiles.size(); ++i) {
+		if (videoFiles[i] == current) {
+			idx = static_cast<long long>(i);
+			break;
+		}
+	}
+	size_t nextIdx = wrapIndex((idx == -1 ? 0 : idx + 1), videoFiles.size());
+	std::string pick = videoFiles[nextIdx];
+	params.setInt("source_kind", (int)SourceKind::File);
+	params.setString("file_path", pick);
+	params.setBool("commit_active", false);
+	params.setString("commit_current_file", "");
+	if (fileActive) {
+		fileSrc.stop();
+		fileActive = false;
+	}
+	fileActive = fileSrc.startFile(pick);
 }
 
 void SourceController::allocatePreview(int width, int height) {
@@ -128,31 +146,52 @@ void SourceController::allocatePreview(int width, int height) {
 }
 
 void SourceController::destroyPreview() {
-	if (previewFbo) { glDeleteFramebuffers(1, &previewFbo); previewFbo = 0; }
-	if (previewTex) { glDeleteTextures(1, &previewTex); previewTex = 0; }
+	if (previewFbo) {
+		glDeleteFramebuffers(1, &previewFbo);
+		previewFbo = 0;
+	}
+	if (previewTex) {
+		glDeleteTextures(1, &previewTex);
+		previewTex = 0;
+	}
 }
 
 void SourceController::ensureSource(ParamBus& params) {
-    int srcKind = params.getInt("source_kind", (int)SourceKind::Shader);
-    if (srcKind == (int)SourceKind::Webcam) {
+	int srcKind = params.getInt("source_kind", (int)SourceKind::Shader);
+	if (srcKind == (int)SourceKind::Webcam) {
 		int desiredIndex = params.getInt("webcam_index", 0);
 		bool needsReinit = (!webcamActive) || (currentWebcamIndex != desiredIndex);
 		if (needsReinit) {
-			if (webcamActive) { webcam.stop(); webcamActive = false; }
+			if (webcamActive) {
+				webcam.stop();
+				webcamActive = false;
+			}
 			printf("(Re)starting webcam %d\n", desiredIndex);
 			webcamActive = webcam.start(desiredIndex);
 			currentWebcamIndex = desiredIndex;
 		}
-		if (fileActive) { fileSrc.stop(); fileActive = false; }
+		if (fileActive) {
+			fileSrc.stop();
+			fileActive = false;
+		}
 	} else if (srcKind == (int)SourceKind::File) {
 		if (!fileActive) {
 			std::string p = params.getString("file_path", "");
 			if (!p.empty()) fileActive = fileSrc.startFile(p);
 		}
-		if (webcamActive) { webcam.stop(); webcamActive = false; }
-    } else {
-		if (webcamActive) { webcam.stop(); webcamActive = false; }
-		if (fileActive) { fileSrc.stop(); fileActive = false; }
+		if (webcamActive) {
+			webcam.stop();
+			webcamActive = false;
+		}
+	} else {
+		if (webcamActive) {
+			webcam.stop();
+			webcamActive = false;
+		}
+		if (fileActive) {
+			fileSrc.stop();
+			fileActive = false;
+		}
 	}
 }
 
@@ -174,7 +213,8 @@ void SourceController::maybeRescanFolder(ParamBus& params) {
 			if (!de.is_regular_file()) continue;
 			auto p = de.path();
 			std::string ext = p.extension().string();
-			for (auto& c : ext) c = (char)std::tolower(c);
+			for (auto& c : ext)
+				c = (char)std::tolower(c);
 			if (ext == ".mp4" || ext == ".mov" || ext == ".m4v" || ext == ".mkv" || ext == ".avi") {
 				videoFiles.push_back(p.string());
 			}
@@ -202,7 +242,10 @@ void SourceController::maybeStartRandomCommit(double nowSeconds, ParamBus& param
 	params.setBool("file_loop", false);
 	params.setBool("file_paused", false);
 
-	if (fileActive) { fileSrc.stop(); fileActive = false; }
+	if (fileActive) {
+		fileSrc.stop();
+		fileActive = false;
+	}
 	fileActive = fileSrc.startFile(pick);
 	commitFramesWritten = 0;
 	committing = true;
@@ -225,5 +268,3 @@ void SourceController::updateCommitProgress(bool updatedPreviewTex, ParamBus& pa
 		committing = false;
 	}
 }
-
-

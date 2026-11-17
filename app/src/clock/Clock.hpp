@@ -1,6 +1,10 @@
 #pragma once
 
-struct BeatTime { double beats; double phase; double bpm; };
+struct BeatTime {
+	double beats;
+	double phase;
+	double bpm;
+};
 
 class Clock {
 public:
@@ -18,5 +22,3 @@ private:
 	double quantum;
 	double beats;
 };
-
-

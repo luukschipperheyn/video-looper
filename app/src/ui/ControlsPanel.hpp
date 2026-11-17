@@ -7,8 +7,6 @@
 
 class ControlsPanel {
 public:
-	void draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, float dt,
-			float& outBpm, float& outQuantum, SourceController* source);
+	void draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, float dt, float& outBpm, float& outQuantum,
+	          SourceController* source);
 };
-
-

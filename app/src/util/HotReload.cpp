@@ -18,5 +18,3 @@ bool HotReload::changed(const std::string& path) {
 	}
 	return false;
 }
-
-

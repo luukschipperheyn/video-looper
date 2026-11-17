@@ -7,7 +7,9 @@
 
 ShaderProgram::ShaderProgram() : programId(0) {}
 
-ShaderProgram::~ShaderProgram() { destroy(); }
+ShaderProgram::~ShaderProgram() {
+	destroy();
+}
 
 void ShaderProgram::destroy() {
 	if (programId != 0) {
@@ -81,7 +83,9 @@ bool ShaderProgram::loadFromFiles(const std::string& vertexPath, const std::stri
 	return true;
 }
 
-void ShaderProgram::use() const { glUseProgram(programId); }
+void ShaderProgram::use() const {
+	glUseProgram(programId);
+}
 
 GLint ShaderProgram::getUniformLocation(const char* name) const {
 	return glGetUniformLocation(programId, name);
@@ -98,5 +102,3 @@ void ShaderProgram::setUniform(const char* name, float value) const {
 void ShaderProgram::setUniform(const char* name, float x, float y) const {
 	glUniform2f(getUniformLocation(name), x, y);
 }
-
-

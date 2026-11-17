@@ -22,5 +22,3 @@ inline GLuint createFbo(GLuint colorTex) {
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTex, 0);
 	return fbo;
 }
-
-

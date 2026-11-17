@@ -2,24 +2,25 @@
 
 #include <cassert>
 
-RingBuffer::RingBuffer()
-	: texWidth(0), texHeight(0), frameCount(0), writeIndex(0), frontBank(0) {}
+RingBuffer::RingBuffer() : texWidth(0), texHeight(0), frameCount(0), writeIndex(0), frontBank(0) {}
 
-RingBuffer::~RingBuffer() { destroy(); }
+RingBuffer::~RingBuffer() {
+	destroy();
+}
 
 void RingBuffer::destroy() {
-    for (int b = 0; b < 2; ++b) {
-        if (!fbos[b].empty()) {
-            glDeleteFramebuffers(static_cast<GLsizei>(fbos[b].size()), fbos[b].data());
-            fbos[b].clear();
-        }
-        if (!textures[b].empty()) {
-            glDeleteTextures(static_cast<GLsizei>(textures[b].size()), textures[b].data());
-            textures[b].clear();
-        }
-    }
-    texWidth = texHeight = frameCount = writeIndex = 0;
-    frontBank = 0;
+	for (int b = 0; b < 2; ++b) {
+		if (!fbos[b].empty()) {
+			glDeleteFramebuffers(static_cast<GLsizei>(fbos[b].size()), fbos[b].data());
+			fbos[b].clear();
+		}
+		if (!textures[b].empty()) {
+			glDeleteTextures(static_cast<GLsizei>(textures[b].size()), textures[b].data());
+			textures[b].clear();
+		}
+	}
+	texWidth = texHeight = frameCount = writeIndex = 0;
+	frontBank = 0;
 }
 
 void RingBuffer::setup(int width, int height, int frames) {
@@ -29,12 +30,12 @@ void RingBuffer::setup(int width, int height, int frames) {
 	frameCount = frames;
 	createStorage();
 	writeIndex = 0;
-    frontBank = 0;
+	frontBank = 0;
 }
 
 void RingBuffer::createStorage() {
 	assert(texWidth > 0 && texHeight > 0 && frameCount > 0);
-    for (int b = 0; b < 2; ++b) {
+	for (int b = 0; b < 2; ++b) {
 		textures[b].resize(frameCount, 0);
 		fbos[b].resize(frameCount, 0);
 		glGenTextures(frameCount, textures[b].data());
@@ -58,7 +59,7 @@ void RingBuffer::createStorage() {
 
 void RingBuffer::bindWriteFboAt(int index) {
 	assert(frameCount > 0);
-    int backBank = 1 - frontBank;
+	int backBank = 1 - frontBank;
 	int idx = index % frameCount;
 	if (idx < 0) idx += frameCount;
 	writeIndex = idx;
@@ -70,31 +71,29 @@ void RingBuffer::unbindWriteFbo() {
 }
 
 void RingBuffer::commitWrite() {
-    // No-op for global A/B scheme; flipping happens via swapBanks() on wrap
+	// No-op for global A/B scheme; flipping happens via swapBanks() on wrap
 }
 
 void RingBuffer::swapBanks() {
-    frontBank = 1 - frontBank;
+	frontBank = 1 - frontBank;
 }
 
 GLuint RingBuffer::textureAt(int index) const {
-    if (frameCount <= 0) return 0;
-    int idx = index % frameCount;
-    if (idx < 0) idx += frameCount;
-    return textures[frontBank][idx];
+	if (frameCount <= 0) return 0;
+	int idx = index % frameCount;
+	if (idx < 0) idx += frameCount;
+	return textures[frontBank][idx];
 }
 
 GLuint RingBuffer::textureAtBack(int index) const {
-    if (frameCount <= 0) return 0;
-    int idx = index % frameCount;
-    if (idx < 0) idx += frameCount;
-    int backBank = 1 - frontBank;
-    return textures[backBank][idx];
+	if (frameCount <= 0) return 0;
+	int idx = index % frameCount;
+	if (idx < 0) idx += frameCount;
+	int backBank = 1 - frontBank;
+	return textures[backBank][idx];
 }
 
 GLuint RingBuffer::sampleNearest(double frameIndex) const {
 	int idx = static_cast<int>(frameIndex + 0.5);
 	return textureAt(idx);
 }
-
-

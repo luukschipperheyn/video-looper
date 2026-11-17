@@ -21,7 +21,7 @@ struct AVFFileSource::Impl {
 	int width = 0;
 	int height = 0;
 	bool newFrame = false;
-    float fps = 0.0f;
+	float fps = 0.0f;
 	// Playback timing state (nominal-fps gating)
 	double timeAccumulatorSeconds = 0.0;
 	double framePeriodSeconds = 0.0;
@@ -37,11 +37,14 @@ bool AVFFileSource::recreateReaderAtRangeStart() {
 	if (!impl || !impl->asset) return false;
 	// Clamp and compute time range
 	float s = std::max(0.0f, std::min(impl->loopStartPct, 1.0f));
-	float e = std::max(0.0f, std::min(impl->loopEndPct,   1.0f));
+	float e = std::max(0.0f, std::min(impl->loopEndPct, 1.0f));
 	if (e <= s + 0.0005f) e = std::min(1.0f, s + 0.0005f); // minimal duration
 
 	NSError* error = nil;
-	if (impl->reader) { [impl->reader cancelReading]; impl->reader = nil; }
+	if (impl->reader) {
+		[impl->reader cancelReading];
+		impl->reader = nil;
+	}
 	impl->output = nil;
 
 	impl->reader = [[AVAssetReader alloc] initWithAsset:impl->asset error:&error];
@@ -51,7 +54,7 @@ bool AVFFileSource::recreateReaderAtRangeStart() {
 	if (tracks.count == 0) return false;
 	AVAssetTrack* track = tracks.firstObject;
 
-	NSDictionary* settings = @{ (NSString*)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA) };
+	NSDictionary* settings = @{(NSString*)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA)};
 	AVAssetReaderTrackOutput* out = [[AVAssetReaderTrackOutput alloc] initWithTrack:track outputSettings:settings];
 	if ([impl->reader canAddOutput:out]) [impl->reader addOutput:out];
 
@@ -68,8 +71,13 @@ bool AVFFileSource::recreateReaderAtRangeStart() {
 	return true;
 }
 
-AVFFileSource::AVFFileSource() { impl = new Impl(); }
-AVFFileSource::~AVFFileSource() { stop(); delete impl; }
+AVFFileSource::AVFFileSource() {
+	impl = new Impl();
+}
+AVFFileSource::~AVFFileSource() {
+	stop();
+	delete impl;
+}
 
 bool AVFFileSource::startFile(const std::string& path) {
 	stop();
@@ -82,9 +90,12 @@ bool AVFFileSource::startFile(const std::string& path) {
 	NSArray<AVAssetTrack*>* tracks = [impl->asset tracksWithMediaType:AVMediaTypeVideo];
 	if (tracks.count == 0) return false;
 	AVAssetTrack* track = tracks.firstObject;
-    // Estimate nominal fps
-    if (track.nominalFrameRate > 0.0f) impl->fps = track.nominalFrameRate; else impl->fps = 0.0f;
-	NSDictionary* settings = @{ (NSString*)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA) };
+	// Estimate nominal fps
+	if (track.nominalFrameRate > 0.0f)
+		impl->fps = track.nominalFrameRate;
+	else
+		impl->fps = 0.0f;
+	NSDictionary* settings = @{(NSString*)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA)};
 	impl->output = [[AVAssetReaderTrackOutput alloc] initWithTrack:track outputSettings:settings];
 	if ([impl->reader canAddOutput:impl->output]) [impl->reader addOutput:impl->output];
 	impl->duration = impl->asset.duration;
@@ -100,8 +111,12 @@ bool AVFFileSource::startFile(const std::string& path) {
 	return true;
 }
 
-void AVFFileSource::setPaused(bool p) { impl->paused = p; }
-void AVFFileSource::setLoop(bool l) { impl->loop = l; }
+void AVFFileSource::setPaused(bool p) {
+	impl->paused = p;
+}
+void AVFFileSource::setLoop(bool l) {
+	impl->loop = l;
+}
 void AVFFileSource::tick(double dt) {
 	if (!impl->reader) return;
 	if (impl->paused) return;
@@ -110,7 +125,10 @@ void AVFFileSource::tick(double dt) {
 }
 
 void AVFFileSource::stop() {
-	if (impl->reader) { [impl->reader cancelReading]; impl->reader = nil; }
+	if (impl->reader) {
+		[impl->reader cancelReading];
+		impl->reader = nil;
+	}
 	impl->output = nil;
 	impl->asset = nil;
 	impl->frameData.clear();
@@ -118,9 +136,11 @@ void AVFFileSource::stop() {
 	impl->newFrame = false;
 }
 
-bool AVFFileSource::isOpen() const { return impl->reader != nil; }
+bool AVFFileSource::isOpen() const {
+	return impl->reader != nil;
+}
 
-bool AVFFileSource::grab(GLuint destTex, int &outW, int &outH) {
+bool AVFFileSource::grab(GLuint destTex, int& outW, int& outH) {
 	if (!impl->reader || impl->paused) return false;
 
 	// If we know the nominal fps, only advance when enough time has elapsed.
@@ -135,15 +155,19 @@ bool AVFFileSource::grab(GLuint destTex, int &outW, int &outH) {
 		for (int i = 0; i < framesToAdvance; ++i) {
 			CMSampleBufferRef s = [impl->output copyNextSampleBuffer];
 			if (!s) {
-					// End of stream or reached end of selected range
-					if (impl->loop) {
-						// Restart at loop start within selected range
-						recreateReaderAtRangeStart();
-					}
-				if (sample) { CFRelease(sample); }
+				// End of stream or reached end of selected range
+				if (impl->loop) {
+					// Restart at loop start within selected range
+					recreateReaderAtRangeStart();
+				}
+				if (sample) {
+					CFRelease(sample);
+				}
 				return false;
 			}
-			if (sample) { CFRelease(sample); }
+			if (sample) {
+				CFRelease(sample);
+			}
 			sample = s;
 		}
 		// We have the latest sample to present
@@ -167,7 +191,8 @@ bool AVFFileSource::grab(GLuint destTex, int &outW, int &outH) {
 				memcpy(dst + dstOffset, src + srcOffset, w * 4);
 			}
 			glBindTexture(GL_TEXTURE_2D, destTex);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, impl->width, impl->height, 0, GL_BGRA, GL_UNSIGNED_BYTE, impl->frameData.data());
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, impl->width, impl->height, 0, GL_BGRA, GL_UNSIGNED_BYTE,
+			             impl->frameData.data());
 			glBindTexture(GL_TEXTURE_2D, 0);
 			outW = impl->width;
 			outH = impl->height;
@@ -176,10 +201,10 @@ bool AVFFileSource::grab(GLuint destTex, int &outW, int &outH) {
 		CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
 		CFRelease(sample);
 		return true;
-    }
+	}
 
-    // Fallback: unknown fps, behave as before (grab every time)
-    CMSampleBufferRef sample = [impl->output copyNextSampleBuffer];
+	// Fallback: unknown fps, behave as before (grab every time)
+	CMSampleBufferRef sample = [impl->output copyNextSampleBuffer];
 	if (!sample) {
 		if (impl->loop) {
 			// restart at loop start within selected range
@@ -199,13 +224,14 @@ bool AVFFileSource::grab(GLuint destTex, int &outW, int &outH) {
 		impl->frameData.resize(h * w * 4);
 		unsigned char* dst = impl->frameData.data();
 		unsigned char* src = (unsigned char*)base;
-        for (size_t y = 0; y < h; ++y) {
-            size_t srcOffset = y * stride;
-            size_t dstOffset = (h - 1 - y) * w * 4;
-            memcpy(dst + dstOffset, src + srcOffset, w * 4);
-        }
+		for (size_t y = 0; y < h; ++y) {
+			size_t srcOffset = y * stride;
+			size_t dstOffset = (h - 1 - y) * w * 4;
+			memcpy(dst + dstOffset, src + srcOffset, w * 4);
+		}
 		glBindTexture(GL_TEXTURE_2D, destTex);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, impl->width, impl->height, 0, GL_BGRA, GL_UNSIGNED_BYTE, impl->frameData.data());
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, impl->width, impl->height, 0, GL_BGRA, GL_UNSIGNED_BYTE,
+		             impl->frameData.data());
 		glBindTexture(GL_TEXTURE_2D, 0);
 		outW = impl->width;
 		outH = impl->height;
@@ -216,12 +242,14 @@ bool AVFFileSource::grab(GLuint destTex, int &outW, int &outH) {
 	return true;
 }
 
-float AVFFileSource::nominalFps() const { return impl->fps; }
+float AVFFileSource::nominalFps() const {
+	return impl->fps;
+}
 
 void AVFFileSource::setLoopRange(float startPct, float endPct) {
 	// Clamp and ensure minimal duration
 	float s = std::max(0.0f, std::min(startPct, 1.0f));
-	float e = std::max(0.0f, std::min(endPct,   1.0f));
+	float e = std::max(0.0f, std::min(endPct, 1.0f));
 	if (e <= s + 0.0005f) e = std::min(1.0f, s + 0.0005f);
 
 	// Avoid unnecessary resets
@@ -239,5 +267,3 @@ void AVFFileSource::restartAtLoopStart() {
 	if (!impl || !impl->asset) return;
 	recreateReaderAtRangeStart();
 }
-
-

@@ -23,8 +23,8 @@ public:
 	// Advance sources and populate preview texture. Returns true if a new frame was uploaded.
 	bool tickAndGrab(double nowSeconds, double dtSeconds, ParamBus& params);
 
-    // Load a random file from the current folder selection immediately
-    void triggerLoadRandomFile();
+	// Load a random file from the current folder selection immediately
+	void triggerLoadRandomFile();
 
 	// Restart file playback at current loop start if file source is active
 	void restartFileAtLoopStart();
@@ -66,5 +66,3 @@ private:
 	int commitFramesWritten;
 	bool savedLoopSetting;
 };
-
-

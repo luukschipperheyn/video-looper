@@ -4,8 +4,7 @@
 #include "imgui.h"
 
 LooperEngine::LooperEngine(RingBuffer& ringBuffer)
-	: ring(ringBuffer), fbWidth(0), fbHeight(0), readFrame(0.0f), lastWriteIdx(-1) {
-}
+	: ring(ringBuffer), fbWidth(0), fbHeight(0), readFrame(0.0f), lastWriteIdx(-1) {}
 
 void LooperEngine::init(int width, int height) {
 	fbWidth = width;
@@ -40,13 +39,11 @@ ReadState LooperEngine::advanceRead(float dtSeconds, float readFps) {
 		mixf = wrappedFrame - std::floor(wrappedFrame);
 	}
 	readFrame = newRead;
-	return { idx0, idx1, mixf, wraps };
+	return {idx0, idx1, mixf, wraps};
 }
 
-void LooperEngine::presentNoFx(int viewportW, int viewportH,
-	ShaderProgram& shaderBlendTwo,
-	FullscreenQuad& quad,
-	int idx0, int idx1, float mix, float gainMix) {
+void LooperEngine::presentNoFx(int viewportW, int viewportH, ShaderProgram& shaderBlendTwo, FullscreenQuad& quad,
+                               int idx0, int idx1, float mix, float gainMix) {
 	glViewport(0, 0, viewportW, viewportH);
 	shaderBlendTwo.use();
 	glActiveTexture(GL_TEXTURE0);
@@ -60,18 +57,10 @@ void LooperEngine::presentNoFx(int viewportW, int viewportH,
 	quad.draw();
 }
 
-void LooperEngine::writeAndSwap(int fbw, int fbh,
-	ShaderProgram& shaderBlit,
-	ShaderProgram& shaderBlendTwo,
-	FullscreenQuad& quad,
-	int idx0,
-	int wraps,
-	bool recordingActive,
-	float writeOpacity,
-	int recordBlendMode,
-	bool fxCommit,
-	unsigned int fxPrevTexture,
-	unsigned int previewTexture) {
+void LooperEngine::writeAndSwap(int fbw, int fbh, ShaderProgram& shaderBlit, ShaderProgram& shaderBlendTwo,
+                                FullscreenQuad& quad, int idx0, int wraps, bool recordingActive, float writeOpacity,
+                                int recordBlendMode, bool fxCommit, unsigned int fxPrevTexture,
+                                unsigned int previewTexture) {
 	int n = ring.size();
 	if (n <= 0) return;
 
@@ -167,8 +156,8 @@ void LooperEngine::drawHeadsOverlay(int viewportW, int viewportH) const {
 	float wx = barX + writeNorm * barW;
 	ImU32 readCol = IM_COL32(0, 220, 255, 255);
 	ImU32 writeCol = IM_COL32(255, 80, 80, 255);
-	dl->AddLine(ImVec2(rx, static_cast<float>(barY - 2)), ImVec2(rx, static_cast<float>(barY + barH + 2)), readCol, 2.0f);
-	dl->AddLine(ImVec2(wx, static_cast<float>(barY - 2)), ImVec2(wx, static_cast<float>(barY + barH + 2)), writeCol, 2.0f);
+	dl->AddLine(ImVec2(rx, static_cast<float>(barY - 2)), ImVec2(rx, static_cast<float>(barY + barH + 2)), readCol,
+	            2.0f);
+	dl->AddLine(ImVec2(wx, static_cast<float>(barY - 2)), ImVec2(wx, static_cast<float>(barY + barH + 2)), writeCol,
+	            2.0f);
 }
-
-

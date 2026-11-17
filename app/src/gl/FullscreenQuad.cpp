@@ -3,12 +3,8 @@
 FullscreenQuad::FullscreenQuad() : vao(0), vbo(0) {
 	// positions (x,y) and texcoords (u,v) for two triangles
 	const float vertices[] = {
-		-1.0f, -1.0f, 0.0f, 0.0f,
-		 1.0f, -1.0f, 1.0f, 0.0f,
-		 1.0f,  1.0f, 1.0f, 1.0f,
-		-1.0f, -1.0f, 0.0f, 0.0f,
-		 1.0f,  1.0f, 1.0f, 1.0f,
-		-1.0f,  1.0f, 0.0f, 1.0f,
+		-1.0f, -1.0f, 0.0f, 0.0f, 1.0f, -1.0f, 1.0f, 0.0f, 1.0f,  1.0f, 1.0f, 1.0f,
+		-1.0f, -1.0f, 0.0f, 0.0f, 1.0f, 1.0f,  1.0f, 1.0f, -1.0f, 1.0f, 0.0f, 1.0f,
 	};
 
 	glGenVertexArrays(1, &vao);
@@ -37,5 +33,3 @@ void FullscreenQuad::draw() const {
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 	glBindVertexArray(0);
 }
-
-

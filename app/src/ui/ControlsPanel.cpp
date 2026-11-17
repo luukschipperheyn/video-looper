@@ -5,10 +5,13 @@
 #include <algorithm>
 #include <cstring>
 
-void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, float dt,
-			float& outBpm, float& outQuantum, SourceController* source) {
+void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, float dt, float& outBpm,
+                         float& outQuantum, SourceController* source) {
 	if (!params.getBool("show_ui", true)) return;
-	if (!ImGui::Begin("Controls")) { ImGui::End(); return; }
+	if (!ImGui::Begin("Controls")) {
+		ImGui::End();
+		return;
+	}
 
 	if (ImGui::BeginTabBar("ControlsTabs")) {
 		if (ImGui::BeginTabItem("Live")) {
@@ -21,7 +24,7 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 				std::string curp = params.getString("record_path", "");
 				if (curp.size() >= sizeof(rpath)) curp.clear();
 				std::strncpy(rpath, curp.c_str(), sizeof(rpath));
-				rpath[sizeof(rpath)-1] = '\0';
+				rpath[sizeof(rpath) - 1] = '\0';
 				if (ImGui::InputText("Output Path", rpath, sizeof(rpath))) {
 					params.setString("record_path", std::string(rpath));
 				}
@@ -44,7 +47,7 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			ImGui::TextUnformatted("Source");
 			ImGui::Separator();
 			int kind = params.getInt("source_kind", (int)SourceKind::Shader);
-			const char* kinds[] = { "Shader", "File", "Black", "Webcam" };
+			const char* kinds[] = {"Shader", "File", "Black", "Webcam"};
 			if (ImGui::Combo("Source", &kind, kinds, 4)) params.setInt("source_kind", kind);
 			int camIndex = params.getInt("webcam_index", 0);
 			if (ImGui::InputInt("Webcam Index", &camIndex)) params.setInt("webcam_index", camIndex);
@@ -53,12 +56,12 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 				std::string cur = params.getString("file_path", "");
 				if (cur.size() >= sizeof(buf)) cur.clear();
 				std::strncpy(buf, cur.c_str(), sizeof(buf));
-				buf[sizeof(buf)-1] = '\0';
+				buf[sizeof(buf) - 1] = '\0';
 				if (ImGui::InputText("File Path", buf, sizeof(buf))) {
 					params.setString("file_path", std::string(buf));
 				}
 				if (ImGui::Button("Browse...")) {
-					macOpenFileDialogAsync("Select Video File", [&](std::string p){
+					macOpenFileDialogAsync("Select Video File", [&](std::string p) {
 						if (!p.empty()) params.setString("file_path", p);
 					});
 				}
@@ -66,14 +69,16 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 				std::string fcur = params.getString("videos_folder", "");
 				if (fcur.size() >= sizeof(fbuf)) fcur.clear();
 				std::strncpy(fbuf, fcur.c_str(), sizeof(fbuf));
-				fbuf[sizeof(fbuf)-1] = '\0';
+				fbuf[sizeof(fbuf) - 1] = '\0';
 				if (ImGui::InputText("Videos Folder", fbuf, sizeof(fbuf))) {
 					params.setString("videos_folder", std::string(fbuf));
 				}
 				// ImGui::SameLine();
 				if (ImGui::Button("Choose Folder")) {
-					macOpenDirectoryDialogAsync("Select Videos Folder", [&](std::string fp){
-						if (!fp.empty()) { params.setString("videos_folder", fp); }
+					macOpenDirectoryDialogAsync("Select Videos Folder", [&](std::string fp) {
+						if (!fp.empty()) {
+							params.setString("videos_folder", fp);
+						}
 					});
 				}
 				ImGui::Text("Folder Clips: %d", params.getInt("videos_count", 0));
@@ -83,10 +88,16 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 						ImGui::Text("Committing: %s", curf.c_str());
 					}
 				}
-                // ImGui::SameLine();
-                if (ImGui::Button("Load Random File")) { if (source) source->triggerLoadRandomFile(); }
-                if (ImGui::Button("Prev File")) { if (source) source->loadPrevFile(params); }
-                if (ImGui::Button("Next File")) { if (source) source->loadNextFile(params); }
+				// ImGui::SameLine();
+				if (ImGui::Button("Load Random File")) {
+					if (source) source->triggerLoadRandomFile();
+				}
+				if (ImGui::Button("Prev File")) {
+					if (source) source->loadPrevFile(params);
+				}
+				if (ImGui::Button("Next File")) {
+					if (source) source->loadNextFile(params);
+				}
 				bool loop = params.getBool("file_loop", true);
 				if (ImGui::Checkbox("Loop File", &loop)) params.setBool("file_loop", loop);
 				bool paused = params.getBool("file_paused", false);
@@ -95,7 +106,7 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 
 				// Run Mode: 0 = Free, 1 = Trigger
 				int runMode = params.getInt("file_run_mode", 0);
-				const char* runModes[] = { "Free", "Trigger" };
+				const char* runModes[] = {"Free", "Trigger"};
 				if (ImGui::Combo("File Run Mode", &runMode, runModes, 2)) params.setInt("file_run_mode", runMode);
 
 				// Loop range controls: Start and Length (normalized 0..1)
@@ -118,7 +129,8 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			float gain = params.getFloat("gain_mix", 1.0f);
 			if (ImGui::SliderFloat("Blend Gain", &gain, 0.0f, 1.0f)) params.setFloat("gain_mix", gain);
 			int rbm = params.getInt("record_blend_mode", 0);
-			const char* blendModes[] = { "Mix", "Add", "Multiply", "Screen", "Overlay", "Difference", "Lighten", "Darken", "Hard Light", "Soft Light", "Color Dodge", "Color Burn" };
+			const char* blendModes[] = {"Mix",     "Add",    "Multiply",   "Screen",     "Overlay",     "Difference",
+			                            "Lighten", "Darken", "Hard Light", "Soft Light", "Color Dodge", "Color Burn"};
 			if (ImGui::Combo("Record Blend Mode", &rbm, blendModes, 12)) params.setInt("record_blend_mode", rbm);
 			float rop = params.getFloat("record_blend_opacity", 1.0f);
 			if (ImGui::SliderFloat("Record Opacity", &rop, 0.0f, 1.0f)) params.setFloat("record_blend_opacity", rop);
@@ -145,7 +157,7 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			bool fxC = params.getBool("fx_commit", false);
 			if (ImGui::Checkbox("Commit FX to Loop", &fxC)) params.setBool("fx_commit", fxC);
 			int fxMode = params.getInt("fx_mode", 0);
-			const char* fxModes[] = { "Feedback", "Difference", "Chromatic", "Kaleido", "Blur" };
+			const char* fxModes[] = {"Feedback", "Difference", "Chromatic", "Kaleido", "Blur"};
 			if (ImGui::Combo("FX Mode", &fxMode, fxModes, 5)) params.setInt("fx_mode", fxMode);
 			float p1 = params.getFloat("fx_param1", 0.8f);
 			float p2 = params.getFloat("fx_param2", 0.985f);
@@ -174,7 +186,8 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			bool showHeads = params.getBool("show_playheads", true);
 			if (ImGui::Checkbox("Show Playheads", &showHeads)) params.setBool("show_playheads", showHeads);
 			bool previewBack = params.getBool("debug_preview_backbuffer", false);
-			if (ImGui::Checkbox("Preview Backbuffer", &previewBack)) params.setBool("debug_preview_backbuffer", previewBack);
+			if (ImGui::Checkbox("Preview Backbuffer", &previewBack))
+				params.setBool("debug_preview_backbuffer", previewBack);
 
 			ImGui::Separator();
 			ImGui::TextUnformatted("Link");
@@ -226,5 +239,3 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 
 	ImGui::End();
 }
-
-

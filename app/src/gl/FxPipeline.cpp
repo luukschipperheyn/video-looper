@@ -2,8 +2,7 @@
 
 #include "util/GlUtils.hpp"
 
-FxPipeline::FxPipeline()
-	: w(0), h(0), postFront(0) {
+FxPipeline::FxPipeline() : w(0), h(0), postFront(0) {
 	postTex[0] = 0;
 	postTex[1] = 0;
 	postFbo[0] = 0;
@@ -14,14 +13,10 @@ FxPipeline::~FxPipeline() {
 	destroy();
 }
 
-void FxPipeline::init(int width, int height,
-	const std::string& vertexPath,
-	const std::string& feedbackFrag,
-	const std::string& feedbackDiffFrag,
-	const std::string& feedbackChromaFrag,
-	const std::string& feedbackKaleidoFrag,
-	const std::string& blurXFrag,
-	const std::string& blurYFrag) {
+void FxPipeline::init(int width, int height, const std::string& vertexPath, const std::string& feedbackFrag,
+                      const std::string& feedbackDiffFrag, const std::string& feedbackChromaFrag,
+                      const std::string& feedbackKaleidoFrag, const std::string& blurXFrag,
+                      const std::string& blurYFrag) {
 	w = width;
 	h = height;
 	vsPath = vertexPath;
@@ -85,19 +80,21 @@ void FxPipeline::hotReload(HotReload& hot) {
 	}
 }
 
-GLuint FxPipeline::process(int viewportW, int viewportH,
-	GLuint ringTex0, GLuint ringTex1, float baseMix,
-	int fxMode, float p1, float p2, float p3,
-	FullscreenQuad& quad) {
+GLuint FxPipeline::process(int viewportW, int viewportH, GLuint ringTex0, GLuint ringTex1, float baseMix, int fxMode,
+                           float p1, float p2, float p3, FullscreenQuad& quad) {
 	int postWrite = 1 - postFront;
 	glBindFramebuffer(GL_FRAMEBUFFER, postFbo[postWrite]);
 	glViewport(0, 0, viewportW, viewportH);
 
 	ShaderProgram* fxShaderPtr;
-	if (fxMode == 1) fxShaderPtr = &shaderFeedbackDiff;
-	else if (fxMode == 2) fxShaderPtr = &shaderFeedbackChroma;
-	else if (fxMode == 3) fxShaderPtr = &shaderFeedbackKaleido;
-	else fxShaderPtr = &shaderFeedback; // default feedback
+	if (fxMode == 1)
+		fxShaderPtr = &shaderFeedbackDiff;
+	else if (fxMode == 2)
+		fxShaderPtr = &shaderFeedbackChroma;
+	else if (fxMode == 3)
+		fxShaderPtr = &shaderFeedbackKaleido;
+	else
+		fxShaderPtr = &shaderFeedback; // default feedback
 	ShaderProgram& fxShader = *fxShaderPtr;
 	fxShader.use();
 
@@ -208,5 +205,3 @@ void FxPipeline::setWrapRepeat() {
 	}
 	glBindTexture(GL_TEXTURE_2D, 0);
 }
-
-

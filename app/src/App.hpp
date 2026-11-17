@@ -4,5 +4,3 @@ class App {
 public:
 	int run();
 };
-
-

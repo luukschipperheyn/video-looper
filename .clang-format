@@ -1,0 +1,14 @@
+BasedOnStyle: LLVM
+UseTab: AlignWithSpaces
+IndentWidth: 4
+TabWidth: 4
+ContinuationIndentWidth: 4
+ColumnLimit: 120
+AccessModifierOffset: -4
+PointerAlignment: Left
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortBlocksOnASingleLine: Empty
+# GL headers must stay ahead of GLFW/ImGui includes.
+SortIncludes: Never
+IncludeBlocks: Preserve

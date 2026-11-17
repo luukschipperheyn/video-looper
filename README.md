@@ -33,6 +33,14 @@ open build/video_looper.app
 
 Override Link root: `LINK_ROOT=/path/to/link ./build.sh`
 
+## Formatting
+
+C++/ObjC++ under `app/src` follows `.clang-format` (uses Xcode's clang-format):
+
+```bash
+xcrun clang-format -i $(git ls-files 'app/src/*.cpp' 'app/src/*.hpp' 'app/src/*.mm')
+```
+
 ## Layout
 
 | Path | Contents |

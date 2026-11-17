@@ -13,8 +13,8 @@ public:
 	void tick(double dt) override;
 	void stop() override;
 	bool isOpen() const override;
-	bool grab(GLuint destTex, int &outW, int &outH) override;
-    float nominalFps() const;
+	bool grab(GLuint destTex, int& outW, int& outH) override;
+	float nominalFps() const;
 
 	// Normalized loop range [0..1], start < end. Applies immediately.
 	void setLoopRange(float startPct, float endPct);
@@ -29,5 +29,3 @@ private:
 	// Recreate the AVAssetReader at the current loop range start
 	bool recreateReaderAtRangeStart();
 };
-
-

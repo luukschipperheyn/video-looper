@@ -14,24 +14,18 @@ public:
 	FxPipeline(const FxPipeline&) = delete;
 	FxPipeline& operator=(const FxPipeline&) = delete;
 
-	void init(int width, int height,
-		const std::string& vertexPath,
-		const std::string& feedbackFragPath,
-		const std::string& feedbackDiffFragPath,
-		const std::string& feedbackChromaFragPath,
-		const std::string& feedbackKaleidoFragPath,
-		const std::string& blurXFragPath,
-		const std::string& blurYFragPath);
+	void init(int width, int height, const std::string& vertexPath, const std::string& feedbackFragPath,
+	          const std::string& feedbackDiffFragPath, const std::string& feedbackChromaFragPath,
+	          const std::string& feedbackKaleidoFragPath, const std::string& blurXFragPath,
+	          const std::string& blurYFragPath);
 
 	void resize(int width, int height);
 	void registerWatches(HotReload& hot);
 	void hotReload(HotReload& hot);
 
 	// Render one FX frame. Returns the texture containing the result for this frame.
-	GLuint process(int viewportW, int viewportH,
-		GLuint ringTex0, GLuint ringTex1, float baseMix,
-		int fxMode, float p1, float p2, float p3,
-		FullscreenQuad& quad);
+	GLuint process(int viewportW, int viewportH, GLuint ringTex0, GLuint ringTex1, float baseMix, int fxMode, float p1,
+	               float p2, float p3, FullscreenQuad& quad);
 
 	// Texture containing the most recently presented FX output
 	GLuint getPrevOutputTexture() const;
@@ -62,5 +56,3 @@ private:
 	std::string blurXFragPath;
 	std::string blurYFragPath;
 };
-
-
