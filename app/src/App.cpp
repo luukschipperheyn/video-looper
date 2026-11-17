@@ -182,6 +182,7 @@ int App::run() {
 	params.setFloat("record_fps", 60.0f);
 	params.setString("record_path", "");
 	params.setBool("ipad_page", false);
+	params.setBool("ipad_token", true);
 	params.setFloat("silence_ms", 300.0f);
 
 	const char* home = std::getenv("HOME");
@@ -191,6 +192,8 @@ int App::run() {
 	VideoThumbs thumbs;
 	std::vector<std::string> videoPaths;
 	std::vector<std::string> videoNames;
+	std::vector<std::string> sentVideoNames;
+	std::vector<std::string> sentFolderPaths;
 	FolderList folders;
 
 	Clock clock;
@@ -454,6 +457,7 @@ int App::run() {
 		float mixf = rs.mix;
 		float gainMix = params.getFloat("gain_mix", 1.0f);
 
+		remote.setTokenRequired(params.getBool("ipad_token", true));
 		remote.setEnabled(params.getBool("ipad_page", false));
 		std::vector<std::string> videos = source.videos();
 		if (videos != videoPaths) {
@@ -858,11 +862,18 @@ int App::run() {
 
 		if (remote.enabled()) {
 			RemoteLive live{(float(idx0) + mixf) / float(ring.size()), envVal, envPhase, recGate, cueActive};
-			std::string snapshot = remoteSnapshot(params, live, videoNames, folders.paths());
-			if (snapshot != remoteSnapshotSent) {
-				remoteSnapshotSent = snapshot;
-				remote.setSnapshot(snapshot);
-				remote.send(std::move(snapshot));
+			std::vector<std::string> folderPaths = folders.paths();
+			bool catalogChanged = videoNames != sentVideoNames || folderPaths != sentFolderPaths;
+			std::string full = remoteSnapshot(params, live, videoNames, folderPaths);
+			remote.setSnapshot(full);
+			std::string wire = catalogChanged ? full : remoteSnapshot(params, live, {}, {}, false);
+			if (wire != remoteSnapshotSent) {
+				remoteSnapshotSent = wire;
+				remote.send(wire);
+			}
+			if (catalogChanged) {
+				sentVideoNames = videoNames;
+				sentFolderPaths = std::move(folderPaths);
 			}
 		}
 

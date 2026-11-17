@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <climits>
 #include <cstdlib>
@@ -40,7 +41,8 @@ std::string loadOrCreateToken(const std::filesystem::path& file) {
 	if (isToken(token)) return token;
 	std::random_device rd;
 	token.clear();
-	for (int i = 0; i < 32; ++i) token += "0123456789abcdef"[rd() & 0xf];
+	for (int i = 0; i < 32; ++i)
+		token += "0123456789abcdef"[rd() & 0xf];
 	std::error_code ec;
 	std::filesystem::create_directories(file.parent_path(), ec);
 	std::ofstream(file) << token << '\n';
@@ -51,7 +53,8 @@ std::string loadOrCreateToken(const std::filesystem::path& file) {
 bool tokenMatches(const std::string& given, const std::string& expected) {
 	if (given.size() != expected.size()) return false;
 	unsigned char diff = 0;
-	for (size_t i = 0; i < given.size(); ++i) diff |= static_cast<unsigned char>(given[i] ^ expected[i]);
+	for (size_t i = 0; i < given.size(); ++i)
+		diff |= static_cast<unsigned char>(given[i] ^ expected[i]);
 	return diff == 0;
 }
 
@@ -81,7 +84,8 @@ std::string percentDecode(const std::string& s) {
 }
 
 std::string lower(std::string s) {
-	for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	for (char& c : s)
+		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 	return s;
 }
 
@@ -130,7 +134,8 @@ std::string serverFrame(unsigned char opcode, const std::string& payload) {
 		frame += char(n & 0xff);
 	} else {
 		frame += char(127);
-		for (int i = 7; i >= 0; --i) frame += char((n >> (8 * i)) & 0xff);
+		for (int i = 7; i >= 0; --i)
+			frame += char((n >> (8 * i)) & 0xff);
 	}
 	return frame + payload;
 }
@@ -154,7 +159,8 @@ struct Message {
 bool parseMessage(const std::string& json, Message& out) {
 	size_t i = 0;
 	auto skipSpace = [&] {
-		while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
+		while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i])))
+			++i;
 	};
 	auto expect = [&](char c) {
 		skipSpace();
@@ -221,6 +227,10 @@ bool sendAll(int fd, const std::string& data) {
 	return true;
 }
 
+bool isSnapshot(const std::string& json) {
+	return json.rfind("{\"t\":\"snapshot\"", 0) == 0;
+}
+
 std::filesystem::path webDir() {
 	char exe[PATH_MAX];
 	uint32_t size = sizeof exe;
@@ -238,7 +248,9 @@ RemoteSession::RemoteSession(std::filesystem::path tokenFile) : RemoteSession(st
 RemoteSession::RemoteSession(std::filesystem::path tokenFile, std::string bindHost, uint16_t bindPort)
 	: tok(loadOrCreateToken(tokenFile)), bindHost(std::move(bindHost)), bindPort(bindPort) {}
 
-RemoteSession::~RemoteSession() { setEnabled(false); }
+RemoteSession::~RemoteSession() {
+	setEnabled(false);
+}
 
 void RemoteSession::setEnabled(bool on) {
 	if (on == enabled()) return;
@@ -292,6 +304,7 @@ void RemoteSession::send(std::string frame) {
 	if (!enabled()) return;
 	{
 		std::lock_guard<std::mutex> lock(queueMutex);
+		if (isSnapshot(frame)) std::erase_if(outbox, isSnapshot);
 		outbox.push_back(std::move(frame));
 	}
 	(void)write(wakeWrite, "x", 1);
@@ -326,44 +339,94 @@ std::string RemoteSession::url() const {
 			freeifaddrs(list);
 		}
 	}
-	return "http://" + host + ":" + std::to_string(boundPort) + "/?token=" + tok;
+	std::string url = "http://" + host + ":" + std::to_string(boundPort) + "/";
+	if (requireToken.load()) url += "?token=" + tok;
+	return url;
 }
 
 void RemoteSession::serve() {
 	std::vector<Client> sockets;
-	auto flush = [&] {
+	auto closeAt = [&](size_t i) {
+		{
+			std::lock_guard<std::mutex> lock(holdMutex);
+			holds.erase(sockets[i].fd);
+		}
+		close(sockets[i].fd);
+		sockets.erase(sockets.begin() + long(i));
+	};
+	// Writes what it can without waiting. A full socket keeps the tail; the caller closes a dead one.
+	auto drain = [&](Client& c) {
+		while (!c.out.empty()) {
+			ssize_t n = ::send(c.fd, c.out.data(), c.out.size(), 0);
+			if (n > 0) {
+				c.out.erase(0, size_t(n));
+				continue;
+			}
+			if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return true;
+			return false;
+		}
+		return true;
+	};
+	auto queueFrames = [&] {
 		std::vector<std::string> frames;
 		{
 			std::lock_guard<std::mutex> lock(queueMutex);
 			frames.swap(outbox);
 		}
-		for (const std::string& f : frames) {
-			std::string frame = serverFrame(0x1, f);
-			for (const Client& c : sockets) sendAll(c.fd, frame);
+		int last = -1;
+		for (int i = 0; i < int(frames.size()); ++i)
+			if (isSnapshot(frames[size_t(i)])) last = i;
+		if (last >= 0) {
+			std::vector<std::string> kept;
+			for (int i = 0; i < int(frames.size()); ++i)
+				if (!isSnapshot(frames[size_t(i)]) || i == last) kept.push_back(std::move(frames[size_t(i)]));
+			frames.swap(kept);
+		}
+		for (Client& c : sockets) {
+			// A client that has not finished the previous snapshot does not get another piled behind it.
+			bool behind = !c.out.empty();
+			for (const std::string& f : frames) {
+				if (behind && isSnapshot(f)) continue;
+				c.out += serverFrame(0x1, f);
+			}
 		}
 	};
 	while (!stop) {
-		flush();
+		queueFrames();
+		for (size_t i = sockets.size(); i-- > 0;) {
+			if (!drain(sockets[i])) closeAt(i);
+		}
 		std::vector<pollfd> fds{{listenFd, POLLIN, 0}, {wakeRead, POLLIN, 0}};
-		for (const Client& c : sockets) fds.push_back({c.fd, POLLIN, 0});
+		for (const Client& c : sockets)
+			fds.push_back({c.fd, short(POLLIN | (c.out.empty() ? 0 : POLLOUT)), 0});
 		if (poll(fds.data(), nfds_t(fds.size()), -1) <= 0) continue;
 		if (fds[1].revents) clearWake();
 		for (size_t i = fds.size() - 1; i >= 2; --i) {
-			if (!fds[i].revents || readFrames(sockets[i - 2])) continue;
-			{
-				std::lock_guard<std::mutex> lock(holdMutex);
-				holds.erase(fds[i].fd);
+			size_t si = i - 2;
+			short ev = fds[i].revents;
+			if (!ev) continue;
+			if ((ev & POLLIN) && !readFrames(sockets[si])) {
+				closeAt(si);
+				continue;
 			}
-			close(fds[i].fd);
-			sockets.erase(sockets.begin() + long(i - 2));
+			if ((ev & (POLLERR | POLLHUP | POLLNVAL)) && !(ev & POLLIN)) {
+				closeAt(si);
+				continue;
+			}
+			if ((ev & POLLOUT) && !drain(sockets[si])) closeAt(si);
 		}
 		if (fds[0].revents & POLLIN) {
 			// Frames queued before this client connected belong to the clients already here.
-			flush();
+			queueFrames();
+			for (size_t i = sockets.size(); i-- > 0;) {
+				if (!drain(sockets[i])) closeAt(i);
+			}
 			int fd = accept(listenFd, nullptr, nullptr);
-			if (fd >= 0 && handle(fd))
-				sockets.push_back({fd, {}});
-			else if (fd >= 0)
+			if (fd >= 0 && handle(fd)) {
+				int flags = fcntl(fd, F_GETFL, 0);
+				if (flags >= 0) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+				sockets.push_back({fd, {}, {}});
+			} else if (fd >= 0)
 				close(fd);
 		}
 		clients = int(sockets.size());
@@ -372,7 +435,8 @@ void RemoteSession::serve() {
 		std::lock_guard<std::mutex> lock(holdMutex);
 		holds.clear();
 	}
-	for (const Client& c : sockets) close(c.fd);
+	for (const Client& c : sockets)
+		close(c.fd);
 	clients = 0;
 }
 
@@ -381,7 +445,8 @@ bool RemoteSession::readFrames(Client& client) {
 	constexpr uint64_t maxPayload = 65536;
 	char buf[4096];
 	ssize_t n = recv(client.fd, buf, sizeof buf, 0);
-	if (n <= 0) return false;
+	if (n < 0) return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
+	if (n == 0) return false;
 	std::string& in = client.in;
 	in.append(buf, size_t(n));
 	auto byte = [&](size_t i) { return static_cast<unsigned char>(in[i]); };
@@ -395,13 +460,15 @@ bool RemoteSession::readFrames(Client& client) {
 			size_t extra = len == 126 ? 2 : 8;
 			if (in.size() < head + extra) return true;
 			len = 0;
-			for (size_t i = 0; i < extra; ++i) len = (len << 8) | byte(head + i);
+			for (size_t i = 0; i < extra; ++i)
+				len = (len << 8) | byte(head + i);
 			head += extra;
 		}
 		if (len > maxPayload || (opcode >= 0x8 && len > 125)) return false;
 		if (in.size() < head + 4 + len) return true;
 		std::string payload = in.substr(head + 4, size_t(len));
-		for (size_t i = 0; i < payload.size(); ++i) payload[i] ^= in[head + i % 4];
+		for (size_t i = 0; i < payload.size(); ++i)
+			payload[i] ^= in[head + i % 4];
 		in.erase(0, head + 4 + size_t(len));
 		if (opcode == 0x8) {
 			sendAll(client.fd, serverFrame(0x8, ""));
@@ -427,7 +494,7 @@ bool RemoteSession::readFrames(Client& client) {
 			std::lock_guard<std::mutex> lock(queueMutex);
 			inbox.push_back({{}, {}, RemoteKind::Panic});
 		} else if (msg.type == "\"prev\"" || msg.type == "\"next\"" || msg.type == "\"webcam\"") {
-			RemoteKind kind = msg.type == "\"prev\"" ? RemoteKind::Prev
+			RemoteKind kind = msg.type == "\"prev\""   ? RemoteKind::Prev
 			                  : msg.type == "\"next\"" ? RemoteKind::Next
 			                                           : RemoteKind::Webcam;
 			std::lock_guard<std::mutex> lock(queueMutex);
@@ -495,7 +562,7 @@ bool RemoteSession::handle(int fd) {
 	std::string path = target.substr(0, q);
 	std::string query = q == std::string::npos ? "" : target.substr(q + 1);
 
-	if (!tokenMatches(queryParam(query, "token"), tok)) {
+	if (requireToken.load() && !tokenMatches(queryParam(query, "token"), tok)) {
 		sendAll(fd, emptyResponse("403 Forbidden"));
 		return false;
 	}

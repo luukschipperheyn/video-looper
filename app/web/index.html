@@ -35,6 +35,11 @@
 	#folders button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
 		border-radius: 8px; }
 	#folders button.current { border-color: #4af; }
+	#pager { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+	#pager[hidden] { display: none; }
+	#pager button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
+		border-radius: 8px; }
+	#pager button:disabled { opacity: 0.4; }
 	#videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
 	#videos button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px; color: #eee;
 		background: #222; border: 2px solid #444; border-radius: 8px; font-size: 14px; }
@@ -68,6 +73,11 @@
 	<span id="source-reason"></span>
 </p>
 <div id="folders"></div>
+<div id="pager" hidden>
+	<button type="button" id="page-prev">Previous page</button>
+	<span id="page-label"></span>
+	<button type="button" id="page-next">Next page</button>
+</div>
 <div id="videos"></div>
 <div id="controls"></div>
 <script>
@@ -341,13 +351,20 @@
 	}
 
 	const videosGrid = document.getElementById("videos");
+	const pageSize = 12;
+	const pager = document.getElementById("pager");
 	let shownVideos = "";
-	function showVideos(names) {
-		const key = JSON.stringify(names);
-		if (key === shownVideos) return;
-		shownVideos = key;
+	let videoNames = [];
+	let page = 0;
+	let followedVideo;
+	function renderVideos() {
+		const pages = Math.max(1, Math.ceil(videoNames.length / pageSize));
+		if (page >= pages) page = pages - 1;
+		if (page < 0) page = 0;
+		const start = page * pageSize;
+		const slice = videoNames.slice(start, start + pageSize);
 		videosGrid.replaceChildren();
-		for (const name of names) {
+		for (const name of slice) {
 			const button = videosGrid.appendChild(document.createElement("button"));
 			button.dataset.name = name;
 			const img = button.appendChild(document.createElement("img"));
@@ -366,7 +383,30 @@
 				socket.send(JSON.stringify({ t: "load", name }));
 			});
 		}
+		for (const button of videosGrid.children) button.classList.toggle("current", button.dataset.name === state.video);
+		pager.hidden = videoNames.length <= pageSize;
+		document.getElementById("page-prev").disabled = page === 0;
+		document.getElementById("page-next").disabled = page + 1 >= pages;
+		const end = Math.min(start + pageSize, videoNames.length);
+		document.getElementById("page-label").textContent = videoNames.length ? `${start + 1}–${end} of ${videoNames.length}` : "";
 	}
+	function showVideos(names) {
+		const key = JSON.stringify(names);
+		if (key === shownVideos) return;
+		shownVideos = key;
+		videoNames = names.slice();
+		page = 0;
+		renderVideos();
+	}
+	document.getElementById("page-prev").addEventListener("click", () => {
+		if (page <= 0) return;
+		page -= 1;
+		renderVideos();
+	});
+	document.getElementById("page-next").addEventListener("click", () => {
+		page += 1;
+		renderVideos();
+	});
 
 	const foldersRow = document.getElementById("folders");
 	let shownFolders = "";
@@ -407,10 +447,21 @@
 			live("gate", state.gate ? "open" : "closed");
 			live("cue", state.cue ? "open" : "closed");
 			live("video", state.video || "none");
-			showFolders(state.folders || []);
+			if ("folders" in msg) showFolders(msg.folders);
 			for (const button of foldersRow.children)
 				button.classList.toggle("current", button.dataset.path === state.videos_folder);
-			showVideos(state.videos || []);
+			if ("videos" in msg) showVideos(msg.videos);
+			if (state.video !== followedVideo) {
+				followedVideo = state.video;
+				const at = videoNames.indexOf(state.video);
+				if (at >= 0) {
+					const next = Math.floor(at / pageSize);
+					if (next !== page) {
+						page = next;
+						renderVideos();
+					}
+				}
+			}
 			for (const button of videosGrid.children) button.classList.toggle("current", button.dataset.name === state.video);
 			pads.gate.el.classList.toggle("open", state.gate);
 			pads.cue.el.classList.toggle("open", state.cue);

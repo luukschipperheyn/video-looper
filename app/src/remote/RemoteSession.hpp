@@ -12,9 +12,9 @@
 #include <thread>
 #include <vector>
 
-// Serves the iPad page and its WebSocket behind a token. The network thread only reads the published
-// snapshot, thumbnails, the token, and queued frames, and queues the sets it parses and the pad holds it stamps;
-// callers own everything else.
+// Serves the iPad page and its WebSocket. The URL token is required until setTokenRequired(false). The network
+// thread only reads the published snapshot, thumbnails, the token, that flag, and queued frames, and queues the
+// sets it parses and the pad holds it stamps; callers own everything else.
 class RemoteSession {
 public:
 	using TimePoint = std::chrono::steady_clock::time_point;
@@ -31,9 +31,13 @@ public:
 
 	void setEnabled(bool on);
 	bool enabled() const { return listenFd >= 0; }
+	// While required, a request whose token does not match is refused. The shown URL omits ?token= when it is not.
+	void setTokenRequired(bool on) { requireToken.store(on); }
+	bool tokenRequired() const { return requireToken.load(); }
 	// The first frame each new client receives.
 	void setSnapshot(std::string json);
-	// Queues one text frame for every connected client.
+	// Queues one text frame for every connected client. A newer snapshot replaces one that is still queued,
+	// so a slow page cannot pile snapshots up and stall the pad holds.
 	void send(std::string frame);
 	// Replaces the JPEGs served at /thumb?name=, keyed by Video filename.
 	void setThumbs(std::vector<std::pair<std::string, std::string>> nameAndBytes);
@@ -51,6 +55,7 @@ private:
 	struct Client {
 		int fd;
 		std::string in;
+		std::string out;
 	};
 	struct Holds {
 		TimePoint gate = TimePoint::min();
@@ -64,6 +69,7 @@ private:
 	void clearWake();
 
 	std::string tok;
+	std::atomic<bool> requireToken{true};
 	std::string bindHost;
 	uint16_t bindPort;
 	uint16_t boundPort = 0;
