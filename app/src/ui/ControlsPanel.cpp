@@ -2,11 +2,14 @@
 
 #include "imgui.h"
 #include "util/MacFileDialog.hpp"
+#include "remote/QrCode.hpp"
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 
 void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, float dt, float& outBpm,
-                         float& outQuantum, SourceController* source) {
+                         float& outQuantum, SourceController* source, const RemoteSession& remote,
+                         FolderList& folders) {
 	if (!params.getBool("show_ui", true)) return;
 	if (!ImGui::Begin("Controls")) {
 		ImGui::End();
@@ -48,8 +51,13 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			ImGui::Separator();
 			int kind = params.getInt("source_kind", (int)SourceKind::Shader);
 			const char* kinds[] = {"Shader", "File", "Black", "Webcam"};
-			if (ImGui::Combo("Source", &kind, kinds, 4)) params.setInt("source_kind", kind);
 			int camIndex = params.getInt("webcam_index", 0);
+			if (ImGui::Combo("Source", &kind, kinds, 4)) {
+				if (kind == (int)SourceKind::Webcam && source)
+					source->loadWebcam(camIndex);
+				else
+					params.setInt("source_kind", kind);
+			}
 			if (ImGui::InputInt("Webcam Index", &camIndex)) params.setInt("webcam_index", camIndex);
 			if (kind == (int)SourceKind::File) {
 				static char buf[512];
@@ -61,8 +69,8 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 					params.setString("file_path", std::string(buf));
 				}
 				if (ImGui::Button("Browse...")) {
-					macOpenFileDialogAsync("Select Video File", [&](std::string p) {
-						if (!p.empty()) params.setString("file_path", p);
+					macOpenFileDialogAsync("Select Video File", [source](std::string p) {
+						if (!p.empty() && source) source->loadVideo(p);
 					});
 				}
 				static char fbuf[512];
@@ -124,6 +132,26 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			}
 
 			ImGui::Separator();
+			ImGui::TextUnformatted("Folder list");
+			ImGui::Separator();
+			for (const std::string& p : folders.paths()) {
+				std::string label = std::filesystem::path(p).filename().string();
+				if (label.empty()) label = p;
+				label += "###" + p;
+				bool chosen = p == params.getString("videos_folder", "");
+				if (ImGui::Selectable(label.c_str(), chosen) && source && folders.select(p))
+					source->showFolder(p, folders.current()->videos, params);
+			}
+			if (ImGui::Button("Add Folder")) {
+				macOpenDirectoryDialogAsync("Add Videos Folder", [source, &folders, &params](std::string fp) {
+					if (fp.empty() || !source) return;
+					folders.add({fp, scanVideos(fp)});
+					folders.select(fp);
+					source->showFolder(fp, folders.current()->videos, params);
+				});
+			}
+
+			ImGui::Separator();
 			ImGui::TextUnformatted("Blending");
 			ImGui::Separator();
 			float gain = params.getFloat("gain_mix", 1.0f);
@@ -165,6 +193,42 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			if (ImGui::SliderFloat("Param 1", &p1, 0.0f, 1.0f)) params.setFloat("fx_param1", p1);
 			if (ImGui::SliderFloat("Param 2", &p2, 0.0f, 1.0f)) params.setFloat("fx_param2", p2);
 			if (ImGui::SliderFloat("Param 3", &p3, -0.05f, 0.05f)) params.setFloat("fx_param3", p3);
+
+			ImGui::Separator();
+			ImGui::TextUnformatted("iPad");
+			ImGui::Separator();
+			bool ipad = params.getBool("ipad_page", false);
+			if (ImGui::Checkbox("iPad page", &ipad)) params.setBool("ipad_page", ipad);
+			float silence = params.getFloat("silence_ms", 300.0f);
+			if (ImGui::SliderFloat("Silence window (ms)", &silence, 50.0f, 2000.0f))
+				params.setFloat("silence_ms", silence);
+			if (ipad && remote.enabled()) {
+				std::string url = remote.url();
+				ImGui::InputText("URL", url.data(), url.size() + 1, ImGuiInputTextFlags_ReadOnly);
+				static std::string qrUrl;
+				static std::vector<std::vector<bool>> qr;
+				if (url != qrUrl) {
+					qrUrl = url;
+					qr = qrEncode(url);
+				}
+				if (!qr.empty()) {
+					const float cell = 4.0f;
+					const float quiet = 4.0f;
+					const float side = cell * (float(qr.size()) + 2.0f * quiet);
+					ImVec2 origin = ImGui::GetCursorScreenPos();
+					ImDrawList* draw = ImGui::GetWindowDrawList();
+					draw->AddRectFilled(origin, ImVec2(origin.x + side, origin.y + side), IM_COL32_WHITE);
+					for (size_t y = 0; y < qr.size(); ++y) {
+						for (size_t x = 0; x < qr.size(); ++x) {
+							if (!qr[y][x]) continue;
+							ImVec2 p(origin.x + (float(x) + quiet) * cell, origin.y + (float(y) + quiet) * cell);
+							draw->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), IM_COL32_BLACK);
+						}
+					}
+					ImGui::Dummy(ImVec2(side, side));
+				}
+				ImGui::TextUnformatted(remote.clientCount() > 0 ? "iPad connected" : "iPad not connected");
+			}
 
 			ImGui::Separator();
 			ImGui::Text("FPS: %.1f", 1.0f / std::max(1e-6f, dt));

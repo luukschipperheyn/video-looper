@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Video Looper</title>
+<style>
+	body { margin: 0; padding: 24px; background: #111; color: #eee; font: 18px -apple-system, sans-serif; }
+	#connection { font-weight: 600; }
+	#export-state { font-weight: 600; }
+	#export-state.running { color: #f44; }
+	#export-reason { color: #fa0; }
+	section { margin-top: 20px; }
+	h2 { margin: 0 0 4px; font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+	label { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+	label > span { flex: 0 0 9em; }
+	label > output { flex: 0 0 4em; text-align: right; font-variant-numeric: tabular-nums; }
+	input[type=range] { flex: 1; height: 32px; }
+	input[type=checkbox] { width: 32px; height: 32px; margin: 0; }
+	select { font-size: 18px; padding: 4px 8px; }
+	#pads { display: flex; gap: 16px; margin-top: 20px; }
+	#pads button { flex: 1; height: 160px; font-size: 24px; font-weight: 600; color: #eee; background: #333;
+		border: 2px solid #555; border-radius: 12px; touch-action: none; user-select: none;
+		-webkit-user-select: none; }
+	#pads button.open { border-color: #f44; }
+	#pads button.down { background: #a22; }
+	#pads #panic { flex: 0 0 8em; background: #600; }
+	#live output { font-variant-numeric: tabular-nums; font-weight: 600; }
+	#source-load { display: flex; align-items: center; gap: 12px; }
+	#source-load button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
+		border-radius: 8px; }
+	#source-reason { color: #fa0; }
+	#folders { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+	#folders button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
+		border-radius: 8px; }
+	#folders button.current { border-color: #4af; }
+	#videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+	#videos button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px; color: #eee;
+		background: #222; border: 2px solid #444; border-radius: 8px; font-size: 14px; }
+	#videos button.current { border-color: #4af; }
+	#videos img { width: 160px; height: 100px; object-fit: contain; background: #000; }
+	#videos span { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+<p>iPad page: <span id="connection">connecting</span></p>
+<p>Export: <span id="export-state">stopped</span> <span id="export-reason"></span></p>
+<p id="live">Loop <output id="live-loop">0%</output> · Envelope <output id="live-envelope">0.00</output> ·
+	Stage <output id="live-stage">idle</output> · Gate <output id="live-gate">closed</output> ·
+	Cue <output id="live-cue">closed</output> · Video <output id="live-video">none</output></p>
+<div id="pads">
+	<button id="pad-gate">Overdub</button>
+	<button id="pad-cue">Cue</button>
+	<button id="panic">PANIC</button>
+</div>
+<p id="source-load">
+	<button id="source-prev">Previous</button>
+	<button id="source-next">Next</button>
+	<button id="source-webcam">Webcam</button>
+	<span id="source-reason"></span>
+</p>
+<div id="folders"></div>
+<div id="videos"></div>
+<div id="controls"></div>
+<script>
+	const schema = /*CONTROL_SCHEMA*/null;
+	const sections = [
+		["Overdub", [
+			["arm_record", "Latch"],
+			["cue_active", "Cue"],
+			["record_blend_mode", "Blend", ["Mix", "Add", "Multiply", "Screen", "Overlay", "Difference", "Lighten",
+				"Darken", "Hard Light", "Soft Light", "Color Dodge", "Color Burn"]],
+			["record_blend_opacity", "Opacity"],
+			["gain_mix", "Blend gain"],
+		]],
+		["Envelope", [
+			["env_enabled", "Envelope"],
+			["env_attack", "Attack (s)"],
+			["env_decay", "Decay (s)"],
+			["env_sustain", "Sustain"],
+			["env_release", "Release (s)"],
+		]],
+		["FX", [
+			["fx_enabled", "FX"],
+			["fx_commit", "Bake FX"],
+			["fx_mode", "FX mode", ["Feedback", "Difference", "Chromatic", "Kaleido", "Blur"]],
+			["fx_param1", "Param 1"],
+			["fx_param2", "Param 2"],
+			["fx_param3", "Param 3"],
+		]],
+		["Source", [
+			["source_kind", "Source", ["Shader", "Video", "Black", "Webcam"]],
+			["webcam_index", "Webcam"],
+			["file_loop", "Video loop"],
+			["file_paused", "Video paused"],
+			["file_run_mode", "Video run mode", ["Free", "Trigger"]],
+			["file_loop_start", "Loop start"],
+			["file_loop_length", "Loop length"],
+		]],
+		["Tempo", [
+			["bpm", "BPM"],
+			["read_speed_mult", "Read speed"],
+			["tempo_coupled", "Tempo coupled"],
+		]],
+		["Export", [
+			["record_enabled", "Export"],
+			["record_fps", "Export fps"],
+		]],
+	];
+
+	const token = new URLSearchParams(location.search).get("token") || "";
+	const connection = document.getElementById("connection");
+	const exportState = document.getElementById("export-state");
+	const exportReason = document.getElementById("export-reason");
+	const controls = {};
+	const state = {};
+	const socket = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
+
+	const busy = (el) => el.dataset.down === "1" || (el.tagName === "SELECT" && document.activeElement === el);
+	const format = (v) => String(Number(v.toFixed(3)));
+
+	function show(name) {
+		const { el, out, type } = controls[name];
+		if (!(name in state)) return;
+		if (type === "bool") el.checked = state[name];
+		else el.value = state[name];
+		if (out) out.textContent = format(state[name]);
+	}
+
+	function sendSet(name) {
+		const { el, out, type } = controls[name];
+		const value = type === "bool" ? el.checked : type === "int" ? parseInt(el.value, 10) : parseFloat(el.value);
+		if (out) out.textContent = format(value);
+		if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ t: "set", name, value }));
+	}
+
+	function build(name, label, options) {
+		const { type, min, max } = schema[name];
+		const row = document.createElement("label");
+		row.appendChild(document.createElement("span")).textContent = label;
+		let el, out;
+		if (type === "bool") {
+			el = document.createElement("input");
+			el.type = "checkbox";
+		} else if (type === "int") {
+			el = document.createElement("select");
+			for (let i = min; i <= max; ++i) el.add(new Option(options ? options[i] : String(i), i));
+		} else {
+			el = document.createElement("input");
+			el.type = "range";
+			el.min = min;
+			el.max = max;
+			el.step = (max - min) / 1000;
+			out = document.createElement("output");
+		}
+		row.appendChild(el);
+		if (out) row.appendChild(out);
+		controls[name] = { el, out, type };
+		el.addEventListener("pointerdown", () => { el.dataset.down = "1"; });
+		el.addEventListener("input", () => { if (type === "float") sendSet(name); });
+		el.addEventListener("change", () => {
+			if (type !== "float") sendSet(name);
+			if (type === "int") el.blur();
+		});
+		return row;
+	}
+
+	const root = document.getElementById("controls");
+	for (const [title, rows] of sections) {
+		const section = root.appendChild(document.createElement("section"));
+		section.appendChild(document.createElement("h2")).textContent = title;
+		for (const [name, label, options] of rows) section.appendChild(build(name, label, options));
+	}
+
+	function release() {
+		for (const name in controls) {
+			const { el, type } = controls[name];
+			if (el.dataset.down !== "1") continue;
+			delete el.dataset.down;
+			if (type !== "int") show(name);
+		}
+	}
+	window.addEventListener("pointerup", release);
+	window.addEventListener("pointercancel", release);
+
+	const pads = {};
+	// Returns whether the pad was down.
+	function stopPad(name) {
+		const pad = pads[name];
+		if (!pad.timer) return false;
+		clearInterval(pad.timer);
+		pad.timer = 0;
+		pad.el.classList.remove("down");
+		return true;
+	}
+	for (const name of ["gate", "cue"]) {
+		const el = document.getElementById(`pad-${name}`);
+		pads[name] = { el, timer: 0 };
+		el.addEventListener("pointerdown", (event) => {
+			if (connection.textContent !== "connected" || pads[name].timer) return;
+			el.setPointerCapture(event.pointerId);
+			const hold = () => socket.send(JSON.stringify({ t: "hold", name }));
+			hold();
+			pads[name].timer = setInterval(hold, 100);
+			el.classList.add("down");
+		});
+		const up = () => {
+			if (stopPad(name) && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ t: "release", name }));
+		};
+		el.addEventListener("pointerup", up);
+		el.addEventListener("pointercancel", up);
+	}
+	document.getElementById("panic").addEventListener("click", () => {
+		if (socket.readyState !== WebSocket.OPEN) return;
+		socket.send(JSON.stringify({ t: "panic" }));
+		for (const name in pads) stopPad(name);
+	});
+
+	const sourceReason = document.getElementById("source-reason");
+	for (const t of ["prev", "next", "webcam"]) {
+		document.getElementById(`source-${t}`).addEventListener("click", () => {
+			if (socket.readyState !== WebSocket.OPEN) return;
+			sourceReason.textContent = "";
+			socket.send(JSON.stringify({ t }));
+		});
+	}
+
+	const videosGrid = document.getElementById("videos");
+	let shownVideos = "";
+	function showVideos(names) {
+		const key = JSON.stringify(names);
+		if (key === shownVideos) return;
+		shownVideos = key;
+		videosGrid.replaceChildren();
+		for (const name of names) {
+			const button = videosGrid.appendChild(document.createElement("button"));
+			button.dataset.name = name;
+			const img = button.appendChild(document.createElement("img"));
+			const src = `/thumb?name=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`;
+			let tries = 0;
+			// Thumbnails are made after the folder scan, so one may not exist yet when the grid appears.
+			img.onerror = () => {
+				if (++tries <= 30) setTimeout(() => { img.src = `${src}&try=${tries}`; }, 1000);
+			};
+			img.src = src;
+			img.alt = "";
+			button.appendChild(document.createElement("span")).textContent = name;
+			button.addEventListener("click", () => {
+				if (socket.readyState !== WebSocket.OPEN) return;
+				sourceReason.textContent = "";
+				socket.send(JSON.stringify({ t: "load", name }));
+			});
+		}
+	}
+
+	const foldersRow = document.getElementById("folders");
+	let shownFolders = "";
+	function showFolders(paths) {
+		const key = JSON.stringify(paths);
+		if (key === shownFolders) return;
+		shownFolders = key;
+		foldersRow.replaceChildren();
+		for (const path of paths) {
+			const button = foldersRow.appendChild(document.createElement("button"));
+			button.dataset.path = path;
+			button.textContent = path.replace(/\/+$/, "").split("/").pop() || path;
+			button.addEventListener("click", () => {
+				if (socket.readyState !== WebSocket.OPEN) return;
+				sourceReason.textContent = "";
+				socket.send(JSON.stringify({ t: "folder", name: path }));
+			});
+		}
+	}
+
+	const stages = ["idle", "attack", "decay", "sustain", "release"];
+	const live = (id, text) => { document.getElementById(`live-${id}`).textContent = text; };
+
+	socket.onopen = () => { connection.textContent = "connected"; };
+	socket.onclose = () => {
+		connection.textContent = "disconnected";
+		for (const name in pads) stopPad(name);
+	};
+	socket.onmessage = (event) => {
+		const msg = JSON.parse(event.data);
+		if (msg.t === "snapshot") {
+			Object.assign(state, msg);
+			for (const name in controls) if (!busy(controls[name].el)) show(name);
+			live("loop", `${Math.round(state.loop * 100)}%`);
+			live("envelope", state.envelope.toFixed(2));
+			live("stage", stages[state.stage] || String(state.stage));
+			live("gate", state.gate ? "open" : "closed");
+			live("cue", state.cue ? "open" : "closed");
+			live("video", state.video || "none");
+			showFolders(state.folders || []);
+			for (const button of foldersRow.children)
+				button.classList.toggle("current", button.dataset.path === state.videos_folder);
+			showVideos(state.videos || []);
+			for (const button of videosGrid.children) button.classList.toggle("current", button.dataset.name === state.video);
+			pads.gate.el.classList.toggle("open", state.gate);
+			pads.cue.el.classList.toggle("open", state.cue);
+			exportState.textContent = state.record_enabled ? "running" : "stopped";
+			exportState.className = state.record_enabled ? "running" : "";
+			if (state.record_enabled) exportReason.textContent = "";
+		} else if (msg.t === "reject") {
+			if (controls[msg.name]) show(msg.name);
+			if (msg.name === "record_enabled") exportReason.textContent = msg.reason;
+			if (msg.name === "source") {
+				sourceReason.textContent = msg.reason;
+				show("source_kind");
+			}
+			if (msg.name === "folder") sourceReason.textContent = msg.reason;
+		}
+	};
+</script>
+</body>
+</html>

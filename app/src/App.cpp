@@ -19,10 +19,15 @@
 #include "ui/ControlsPanel.hpp"
 #include "clock/Clock.hpp"
 #include "io/VideoSource.hpp"
+#include "io/FolderList.hpp"
 #include "io/SourceController.hpp"
+#include "io/VideoThumbs.hpp"
 #include "link/LinkBridge.hpp"
 #include "util/GlUtils.hpp"
 #include "io/AVFRecorder.hpp"
+#include "remote/RemoteApply.hpp"
+#include "remote/RemoteSession.hpp"
+#include <cstdlib>
 #include <vector>
 
 static void glfwErrorCallback(int code, const char* desc) {
@@ -139,6 +144,9 @@ int App::run() {
 	params.setString("file_path", "");
 	params.setBool("file_loop", true);
 	params.setBool("file_paused", false);
+	params.setInt("file_run_mode", 0);
+	params.setFloat("file_loop_start", 0.0f);
+	params.setFloat("file_loop_length", 1.0f);
 	params.setBool("show_playheads", true);
 	params.setBool("debug_preview_backbuffer", false);
 	params.setString("videos_folder", "");
@@ -161,6 +169,17 @@ int App::run() {
 	params.setBool("record_enabled", false);
 	params.setFloat("record_fps", 60.0f);
 	params.setString("record_path", "");
+	params.setBool("ipad_page", false);
+	params.setFloat("silence_ms", 300.0f);
+
+	const char* home = std::getenv("HOME");
+	RemoteSession remote(std::filesystem::path(home ? home : ".") /
+	                     "Library/Application Support/video-looper/remote-token");
+	std::string remoteSnapshotSent;
+	VideoThumbs thumbs;
+	std::vector<std::string> videoPaths;
+	std::vector<std::string> videoNames;
+	FolderList folders;
 
 	Clock clock;
 	clock.setQuantum(params.getFloat("quantum", 4.0f));
@@ -393,6 +412,63 @@ int App::run() {
 		float mixf = rs.mix;
 		float gainMix = params.getFloat("gain_mix", 1.0f);
 
+		remote.setEnabled(params.getBool("ipad_page", false));
+		std::vector<std::string> videos = source.videos();
+		if (videos != videoPaths) {
+			videoPaths = std::move(videos);
+			videoNames.clear();
+			for (const std::string& p : videoPaths) videoNames.push_back(std::filesystem::path(p).filename());
+			thumbs.setVideos(videoPaths);
+		}
+		std::vector<std::pair<std::string, std::string>> madeThumbs;
+		if (thumbs.take(madeThumbs)) remote.setThumbs(std::move(madeThumbs));
+		std::string loadFailure = source.takeLoadFailure();
+		if (remote.enabled()) {
+			remote.setSilenceWindow(int(params.getFloat("silence_ms", 300.0f)));
+			if (!loadFailure.empty()) remote.send(rejectFrame("source", loadFailure));
+			for (const RemoteSet& set : remote.drain()) {
+				switch (set.kind) {
+				case RemoteKind::Panic:
+					params.setBool("arm_record", false);
+					params.setBool("cue_active", false);
+					break;
+				case RemoteKind::Prev:
+					source.loadPrevFile(params);
+					break;
+				case RemoteKind::Next:
+					source.loadNextFile(params);
+					break;
+				case RemoteKind::Webcam:
+					source.loadWebcam(params.getInt("webcam_index", 0));
+					break;
+				case RemoteKind::Load: {
+					std::string path = videoByName(videoPaths, set.name);
+					if (path.empty())
+						remote.send(rejectFrame("source", "no such video"));
+					else
+						source.loadVideo(path);
+					break;
+				}
+				case RemoteKind::Folder:
+					if (folders.select(set.name))
+						source.showFolder(set.name, folders.current()->videos, params);
+					else
+						remote.send(rejectFrame("folder", "no such folder"));
+					break;
+				case RemoteKind::Set: {
+					ApplyResult result = applyRemoteSet(params, set);
+					if (result.reject) remote.send(rejectFrame(set.name, result.reason));
+					if (result.tempoChanged && params.getBool("link_enabled", false)) link.setTempo(result.bpm);
+					if (result.startWebcam) source.loadWebcam(params.getInt("webcam_index", 0));
+					break;
+				}
+				}
+			}
+		} else {
+			params.setBool("ipad_page", false);
+		}
+		RemoteSession::PadState pads = remote.pads();
+
 		// Compute record/cue and envelope
 		static float envVal = 0.0f;
 		static int envPhase = 0;
@@ -400,8 +476,10 @@ int App::run() {
 		bool commitActive = params.getBool("commit_active", false);
 		bool spaceHeld = (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS);
 		bool cHeld = (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS);
-		bool cueActive = cHeld || params.getBool("cue_active", false);
-		bool recGate = params.getBool("arm_record", false) || spaceHeld;
+		GateState combine = combineHolds({params.getBool("arm_record", false), spaceHeld, pads.gate,
+		                                  params.getBool("cue_active", false), cHeld, pads.cue});
+		bool cueActive = combine.cue;
+		bool recGate = combine.gate;
 
 		if (cueActive) shouldRecordOnRelease = false;
 		if (recGate) shouldRecordOnRelease = true;
@@ -736,13 +814,23 @@ int App::run() {
 			params.setBool("preview_window", false);
 		}
 
+		if (remote.enabled()) {
+			RemoteLive live{(float(idx0) + mixf) / float(ring.size()), envVal, envPhase, recGate, cueActive};
+			std::string snapshot = remoteSnapshot(params, live, videoNames, folders.paths());
+			if (snapshot != remoteSnapshotSent) {
+				remoteSnapshotSent = snapshot;
+				remote.setSnapshot(snapshot);
+				remote.send(std::move(snapshot));
+			}
+		}
+
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 		{
 			ControlsPanel panel;
 			float outBpmDummy = 0.0f, outQuantumDummy = 0.0f;
-			panel.draw(params, link, ring, dt, outBpmDummy, outQuantumDummy, &source);
+			panel.draw(params, link, ring, dt, outBpmDummy, outQuantumDummy, &source, remote, folders);
 		}
 		if (params.getBool("show_playheads", true)) looper.drawHeadsOverlay(w, h);
 		ImGui::Render();

@@ -2,7 +2,7 @@
 
 macOS desktop app: GPU video looper with live/file/webcam/shader sources, overdub blending + ADSR, optional FX, Ableton Link tempo, and `.mov` export.
 
-**As-is map (architecture, loop, hotkeys, invariants):** see [`CONTEXT.md`](CONTEXT.md).
+**As-is map (architecture, loop, hotkeys, invariants):** see [`docs/architecture.md`](docs/architecture.md). Domain vocabulary: [`CONTEXT.md`](CONTEXT.md).
 
 ## Requirements
 
@@ -49,7 +49,8 @@ xcrun clang-format -i $(git ls-files 'app/src/*.cpp' 'app/src/*.hpp' 'app/src/*.
 | `app/shaders/` | GLSL (hot-reloaded from source tree via `SHADER_DIR`) |
 | `app/macos/Info.plist` | Bundle + camera privacy |
 | `CMakeLists.txt` | Target, FetchContent GLFW/ImGui, optional Link |
-| `CONTEXT.md` | Full as-is behavior & architecture |
+| `CONTEXT.md` | Domain glossary |
+| `docs/architecture.md` | Full as-is behavior & architecture |
 
 ## Quick controls
 

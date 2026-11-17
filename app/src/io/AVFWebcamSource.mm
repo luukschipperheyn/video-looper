@@ -143,3 +143,13 @@ bool AVFWebcamSource::grab(GLuint destTex, int& outW, int& outH) {
 	impl->newFrame = false;
 	return true;
 }
+
+bool AVFWebcamSource::copyFrame(std::vector<unsigned char>& bgra, int& outW, int& outH) {
+	std::lock_guard<std::mutex> lock(impl->frameMutex);
+	if (!impl->newFrame || impl->frameData.empty() || impl->width == 0 || impl->height == 0) return false;
+	bgra = impl->frameData;
+	outW = impl->width;
+	outH = impl->height;
+	impl->newFrame = false;
+	return true;
+}
