@@ -49,8 +49,13 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			ImGui::Separator();
 			int kind = params.getInt("source_kind", (int)SourceKind::Shader);
 			const char* kinds[] = {"Shader", "File", "Black", "Webcam"};
-			if (ImGui::Combo("Source", &kind, kinds, 4)) params.setInt("source_kind", kind);
 			int camIndex = params.getInt("webcam_index", 0);
+			if (ImGui::Combo("Source", &kind, kinds, 4)) {
+				if (kind == (int)SourceKind::Webcam && source)
+					source->loadWebcam(camIndex);
+				else
+					params.setInt("source_kind", kind);
+			}
 			if (ImGui::InputInt("Webcam Index", &camIndex)) params.setInt("webcam_index", camIndex);
 			if (kind == (int)SourceKind::File) {
 				static char buf[512];
@@ -62,8 +67,8 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 					params.setString("file_path", std::string(buf));
 				}
 				if (ImGui::Button("Browse...")) {
-					macOpenFileDialogAsync("Select Video File", [&](std::string p) {
-						if (!p.empty()) params.setString("file_path", p);
+					macOpenFileDialogAsync("Select Video File", [source](std::string p) {
+						if (!p.empty() && source) source->loadVideo(p);
 					});
 				}
 				static char fbuf[512];

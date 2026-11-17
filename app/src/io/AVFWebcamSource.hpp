@@ -2,6 +2,9 @@
 
 #include "io/VideoSource.hpp"
 
+#include <utility>
+#include <vector>
+
 class AVFWebcamSource : public IVideoSource {
 public:
 	AVFWebcamSource();
@@ -10,6 +13,9 @@ public:
 	void stop() override;
 	bool isOpen() const override;
 	bool grab(GLuint destTex, int& outW, int& outH) override;
+	// Copies the newest unseen frame into bgra (BGRA, bottom row first) without touching GL.
+	bool copyFrame(std::vector<unsigned char>& bgra, int& outW, int& outH);
+	void swap(AVFWebcamSource& other) { std::swap(impl, other.impl); }
 
 	struct Impl; // make visible for ObjC property type
 

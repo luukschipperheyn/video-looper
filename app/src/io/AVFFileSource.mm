@@ -140,77 +140,25 @@ bool AVFFileSource::isOpen() const {
 	return impl->reader != nil;
 }
 
-bool AVFFileSource::grab(GLuint destTex, int& outW, int& outH) {
-	if (!impl->reader || impl->paused) return false;
-
-	// If we know the nominal fps, only advance when enough time has elapsed.
-	if (impl->framePeriodSeconds > 0.0) {
-		if (impl->timeAccumulatorSeconds < impl->framePeriodSeconds) {
-			return false; // not time for next frame yet; keep showing previous
-		}
-		// Determine how many frames we should advance to catch up
-		int framesToAdvance = (int)floor(impl->timeAccumulatorSeconds / impl->framePeriodSeconds);
-		if (framesToAdvance < 1) framesToAdvance = 1;
-		CMSampleBufferRef sample = NULL;
-		for (int i = 0; i < framesToAdvance; ++i) {
-			CMSampleBufferRef s = [impl->output copyNextSampleBuffer];
-			if (!s) {
-				// End of stream or reached end of selected range
-				if (impl->loop) {
-					// Restart at loop start within selected range
-					recreateReaderAtRangeStart();
-				}
-				if (sample) {
-					CFRelease(sample);
-				}
-				return false;
+bool AVFFileSource::decode(int framesToAdvance) {
+	CMSampleBufferRef sample = NULL;
+	for (int i = 0; i < framesToAdvance; ++i) {
+		CMSampleBufferRef s = [impl->output copyNextSampleBuffer];
+		if (!s) {
+			// End of stream or reached end of selected range
+			if (impl->loop) {
+				// Restart at loop start within selected range
+				recreateReaderAtRangeStart();
 			}
 			if (sample) {
 				CFRelease(sample);
 			}
-			sample = s;
+			return false;
 		}
-		// We have the latest sample to present
-		impl->timeAccumulatorSeconds -= framesToAdvance * impl->framePeriodSeconds;
-		// Process and upload
-		CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sample);
-		CVPixelBufferLockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
-		void* base = CVPixelBufferGetBaseAddress(imageBuffer);
-		size_t w = CVPixelBufferGetWidth(imageBuffer);
-		size_t h = CVPixelBufferGetHeight(imageBuffer);
-		size_t stride = CVPixelBufferGetBytesPerRow(imageBuffer);
-		if (base && w > 0 && h > 0) {
-			impl->width = (int)w;
-			impl->height = (int)h;
-			impl->frameData.resize(h * w * 4);
-			unsigned char* dst = impl->frameData.data();
-			unsigned char* src = (unsigned char*)base;
-			for (size_t y = 0; y < h; ++y) {
-				size_t srcOffset = y * stride;
-				size_t dstOffset = (h - 1 - y) * w * 4;
-				memcpy(dst + dstOffset, src + srcOffset, w * 4);
-			}
-			glBindTexture(GL_TEXTURE_2D, destTex);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, impl->width, impl->height, 0, GL_BGRA, GL_UNSIGNED_BYTE,
-			             impl->frameData.data());
-			glBindTexture(GL_TEXTURE_2D, 0);
-			outW = impl->width;
-			outH = impl->height;
-			impl->newFrame = true;
+		if (sample) {
+			CFRelease(sample);
 		}
-		CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
-		CFRelease(sample);
-		return true;
-	}
-
-	// Fallback: unknown fps, behave as before (grab every time)
-	CMSampleBufferRef sample = [impl->output copyNextSampleBuffer];
-	if (!sample) {
-		if (impl->loop) {
-			// restart at loop start within selected range
-			recreateReaderAtRangeStart();
-		}
-		return false;
+		sample = s;
 	}
 	CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sample);
 	CVPixelBufferLockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
@@ -218,7 +166,8 @@ bool AVFFileSource::grab(GLuint destTex, int& outW, int& outH) {
 	size_t w = CVPixelBufferGetWidth(imageBuffer);
 	size_t h = CVPixelBufferGetHeight(imageBuffer);
 	size_t stride = CVPixelBufferGetBytesPerRow(imageBuffer);
-	if (base && w > 0 && h > 0) {
+	bool copied = base && w > 0 && h > 0;
+	if (copied) {
 		impl->width = (int)w;
 		impl->height = (int)h;
 		impl->frameData.resize(h * w * 4);
@@ -229,16 +178,41 @@ bool AVFFileSource::grab(GLuint destTex, int& outW, int& outH) {
 			size_t dstOffset = (h - 1 - y) * w * 4;
 			memcpy(dst + dstOffset, src + srcOffset, w * 4);
 		}
-		glBindTexture(GL_TEXTURE_2D, destTex);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, impl->width, impl->height, 0, GL_BGRA, GL_UNSIGNED_BYTE,
-		             impl->frameData.data());
-		glBindTexture(GL_TEXTURE_2D, 0);
-		outW = impl->width;
-		outH = impl->height;
 		impl->newFrame = true;
 	}
 	CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
 	CFRelease(sample);
+	return copied;
+}
+
+bool AVFFileSource::grab(GLuint destTex, int& outW, int& outH) {
+	if (!impl->reader || impl->paused) return false;
+
+	// If we know the nominal fps, only advance when enough time has elapsed.
+	int framesToAdvance = 1;
+	if (impl->framePeriodSeconds > 0.0) {
+		if (impl->timeAccumulatorSeconds < impl->framePeriodSeconds) {
+			return false; // not time for next frame yet; keep showing previous
+		}
+		// Determine how many frames we should advance to catch up
+		framesToAdvance = std::max(1, (int)floor(impl->timeAccumulatorSeconds / impl->framePeriodSeconds));
+	}
+	if (!decode(framesToAdvance)) return false;
+	if (impl->framePeriodSeconds > 0.0) impl->timeAccumulatorSeconds -= framesToAdvance * impl->framePeriodSeconds;
+	glBindTexture(GL_TEXTURE_2D, destTex);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, impl->width, impl->height, 0, GL_BGRA, GL_UNSIGNED_BYTE,
+	             impl->frameData.data());
+	glBindTexture(GL_TEXTURE_2D, 0);
+	outW = impl->width;
+	outH = impl->height;
+	return true;
+}
+
+bool AVFFileSource::copyFrame(std::vector<unsigned char>& bgra, int& outW, int& outH) {
+	if (!impl->reader || !decode(1)) return false;
+	bgra = impl->frameData;
+	outW = impl->width;
+	outH = impl->height;
 	return true;
 }
 

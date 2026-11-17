@@ -1,13 +1,17 @@
 #include "io/SourceController.hpp"
 
+#include <chrono>
 #include <filesystem>
 
 #include "util/GlUtils.hpp"
 
 SourceController::SourceController()
-	: w(0), h(0), previewTex(0), previewFbo(0), webcamActive(false), currentWebcamIndex(-1), fileActive(false),
+	: w(0), h(0), previewTex(0), previewFbo(0), webcamActive(false), fileActive(false), seenKind(-1),
+	  seenWebcamIndex(-1), spareW(0), spareH(0), job{0, false, {}, 0}, retire(false), quit(false),
 	  commitRequested(false), committing(false), commitStartTime(0.0), commitNominalFps(0.0f), commitFramesWritten(0),
-	  savedLoopSetting(true) {}
+	  savedLoopSetting(true) {
+	worker = std::thread(&SourceController::runLoads, this);
+}
 
 SourceController::~SourceController() {
 	shutdown();
@@ -28,6 +32,14 @@ void SourceController::resize(int width, int height) {
 }
 
 void SourceController::shutdown() {
+	if (worker.joinable()) {
+		{
+			std::lock_guard<std::mutex> lock(jobMutex);
+			quit = true;
+		}
+		jobReady.notify_one();
+		worker.join();
+	}
 	if (webcamActive) {
 		webcam.stop();
 		webcamActive = false;
@@ -40,10 +52,12 @@ void SourceController::shutdown() {
 }
 
 bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus& params) {
-	ensureSource(params);
-	bool updatedPreviewTex = false;
-
 	int srcKind = params.getInt("source_kind", (int)SourceKind::Shader);
+	bool showLive = srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam;
+	if (!showLive && load.busy()) load.cancel();
+	bool updatedPreviewTex = showLive && swapInLoaded(params);
+	ensureSource(params);
+
 	if (srcKind == (int)SourceKind::Webcam) {
 		int sw = 0, sh = 0;
 		if (webcam.grab(previewTex, sw, sh)) {
@@ -83,60 +97,102 @@ void SourceController::restartFileAtLoopStart() {
 	}
 }
 
-static size_t wrapIndex(long long value, size_t size) {
-	if (size == 0) return 0;
-	long long mod = value % static_cast<long long>(size);
-	if (mod < 0) mod += static_cast<long long>(size);
-	return static_cast<size_t>(mod);
-}
-
 void SourceController::loadPrevFile(ParamBus& params) {
 	maybeRescanFolder(params);
-	if (videoFiles.empty()) return;
-	std::string current = params.getString("file_path", "");
-	long long idx = -1;
-	for (size_t i = 0; i < videoFiles.size(); ++i) {
-		if (videoFiles[i] == current) {
-			idx = static_cast<long long>(i);
-			break;
-		}
-	}
-	size_t nextIdx =
-		wrapIndex((idx == -1 ? static_cast<long long>(videoFiles.size()) - 1 : idx - 1), videoFiles.size());
-	std::string pick = videoFiles[nextIdx];
-	params.setInt("source_kind", (int)SourceKind::File);
-	params.setString("file_path", pick);
-	params.setBool("commit_active", false);
-	params.setString("commit_current_file", "");
-	if (fileActive) {
-		fileSrc.stop();
-		fileActive = false;
-	}
-	fileActive = fileSrc.startFile(pick);
+	std::string pick = stepVideo(videoFiles, params.getString("file_path", ""), -1);
+	if (!pick.empty()) loadVideo(pick);
 }
 
 void SourceController::loadNextFile(ParamBus& params) {
 	maybeRescanFolder(params);
-	if (videoFiles.empty()) return;
-	std::string current = params.getString("file_path", "");
-	long long idx = -1;
-	for (size_t i = 0; i < videoFiles.size(); ++i) {
-		if (videoFiles[i] == current) {
-			idx = static_cast<long long>(i);
-			break;
-		}
+	std::string pick = stepVideo(videoFiles, params.getString("file_path", ""), +1);
+	if (!pick.empty()) loadVideo(pick);
+}
+
+void SourceController::loadVideo(const std::string& path) {
+	startLoad(load.requestVideo(path));
+}
+
+void SourceController::loadWebcam(int index) {
+	startLoad(load.requestWebcam(index));
+}
+
+void SourceController::startLoad(const LoadRequest& request) {
+	{
+		std::lock_guard<std::mutex> lock(jobMutex);
+		job = request;
 	}
-	size_t nextIdx = wrapIndex((idx == -1 ? 0 : idx + 1), videoFiles.size());
-	std::string pick = videoFiles[nextIdx];
-	params.setInt("source_kind", (int)SourceKind::File);
-	params.setString("file_path", pick);
+	jobReady.notify_one();
+}
+
+// Swaps a loaded Source in one step: the spares become live, and the previous live sources go to the worker to stop.
+bool SourceController::swapInLoaded(ParamBus& params) {
+	bool isWebcam = false;
+	std::string path;
+	int index = 0;
+	if (!load.pollSwap(isWebcam, path, index)) return false;
+	webcam.swap(spareWebcam);
+	fileSrc.swap(spareFile);
+	webcamActive = isWebcam;
+	fileActive = !isWebcam;
+	params.setInt("source_kind", (int)(isWebcam ? SourceKind::Webcam : SourceKind::File));
+	params.setString("file_path", path);
+	if (isWebcam) {
+		params.setInt("webcam_index", index);
+		seenWebcamIndex = index;
+	}
 	params.setBool("commit_active", false);
 	params.setString("commit_current_file", "");
-	if (fileActive) {
-		fileSrc.stop();
-		fileActive = false;
+	glBindTexture(GL_TEXTURE_2D, previewTex);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, spareW, spareH, 0, GL_BGRA, GL_UNSIGNED_BYTE, spareFrame.data());
+	glBindTexture(GL_TEXTURE_2D, 0);
+	{
+		std::lock_guard<std::mutex> lock(jobMutex);
+		retire = true;
 	}
-	fileActive = fileSrc.startFile(pick);
+	jobReady.notify_one();
+	return true;
+}
+
+void SourceController::runLoads() {
+	uint64_t done = 0;
+	for (;;) {
+		LoadRequest request;
+		{
+			std::unique_lock<std::mutex> lock(jobMutex);
+			jobReady.wait(lock, [&] { return quit || retire || job.id != done; });
+			if (quit) return;
+			retire = false;
+			request = job;
+		}
+		spareWebcam.stop();
+		spareFile.stop();
+		if (request.id == done) continue;
+		done = request.id;
+		std::string reason = openSpare(request);
+		if (!reason.empty() || load.inflight() != request.id) {
+			spareWebcam.stop();
+			spareFile.stop();
+		}
+		load.resolve(request.id, reason.empty(), reason);
+	}
+}
+
+// Opens request into a spare and copies its first frame. Returns why it failed, or empty on success.
+std::string SourceController::openSpare(const LoadRequest& request) {
+	if (!request.webcam) {
+		std::string name = std::filesystem::path(request.path).filename().string();
+		if (!spareFile.startFile(request.path)) return "could not open " + name;
+		if (!spareFile.copyFrame(spareFrame, spareW, spareH)) return "no frame in " + name;
+		return {};
+	}
+	if (!spareWebcam.start(request.webcamIndex)) return "could not open webcam";
+	for (int i = 0; i < 300; ++i) {
+		if (spareWebcam.copyFrame(spareFrame, spareW, spareH)) return {};
+		if (quit || load.inflight() != request.id) return "cancelled";
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	return "no frame from webcam";
 }
 
 void SourceController::allocatePreview(int width, int height) {
@@ -156,34 +212,16 @@ void SourceController::destroyPreview() {
 	}
 }
 
+// The live sources change only in swapInLoaded. A param edge that names a Source that is not live starts a load;
+// reacting to edges only keeps a failed load from retrying every frame.
 void SourceController::ensureSource(ParamBus& params) {
-	int srcKind = params.getInt("source_kind", (int)SourceKind::Shader);
-	if (srcKind == (int)SourceKind::Webcam) {
-		int desiredIndex = params.getInt("webcam_index", 0);
-		bool needsReinit = (!webcamActive) || (currentWebcamIndex != desiredIndex);
-		if (needsReinit) {
-			if (webcamActive) {
-				webcam.stop();
-				webcamActive = false;
-			}
-			printf("(Re)starting webcam %d\n", desiredIndex);
-			webcamActive = webcam.start(desiredIndex);
-			currentWebcamIndex = desiredIndex;
-		}
-		if (fileActive) {
-			fileSrc.stop();
-			fileActive = false;
-		}
-	} else if (srcKind == (int)SourceKind::File) {
-		if (!fileActive) {
-			std::string p = params.getString("file_path", "");
-			if (!p.empty()) fileActive = fileSrc.startFile(p);
-		}
-		if (webcamActive) {
-			webcam.stop();
-			webcamActive = false;
-		}
-	} else {
+	int kind = params.getInt("source_kind", (int)SourceKind::Shader);
+	int index = params.getInt("webcam_index", 0);
+	bool kindChanged = kind != seenKind;
+	bool indexChanged = index != seenWebcamIndex;
+	seenKind = kind;
+	seenWebcamIndex = index;
+	if (kindChanged && kind != (int)SourceKind::File && kind != (int)SourceKind::Webcam) {
 		if (webcamActive) {
 			webcam.stop();
 			webcamActive = false;
@@ -192,6 +230,11 @@ void SourceController::ensureSource(ParamBus& params) {
 			fileSrc.stop();
 			fileActive = false;
 		}
+	} else if (indexChanged && webcamActive) {
+		loadWebcam(index);
+	} else if (kindChanged && kind == (int)SourceKind::File && !fileActive) {
+		std::string p = params.getString("file_path", "");
+		if (!p.empty()) loadVideo(p);
 	}
 }
 

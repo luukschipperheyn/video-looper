@@ -4,10 +4,10 @@
 
 class ParamBus;
 
-enum class RemoteKind { Set, Panic };
+enum class RemoteKind { Set, Panic, Prev, Next, Webcam };
 
 // One message from the iPad for the main thread. For a Set, raw is the JSON value token as sent: true, false,
-// 140, or "x". A Panic carries no name or value.
+// 140, or "x". The other kinds carry no name or value.
 struct RemoteSet {
 	std::string name;
 	std::string raw;
@@ -19,6 +19,7 @@ struct ApplyResult {
 	std::string reason;
 	bool tempoChanged;
 	float bpm;
+	bool startWebcam = false;
 };
 
 // This frame's loop position as a fraction of the Loop, the envelope, and the combined holds.
@@ -45,6 +46,7 @@ struct GateState {
 };
 
 // Clamps and writes a writable param. Never calls Link; the caller hands bpm to Link when tempoChanged.
+// source_kind 3 (webcam) is not written; startWebcam asks the caller to load the webcam instead.
 ApplyResult applyRemoteSet(ParamBus& params, const RemoteSet& set);
 GateState combineHolds(GateInputs in);
 std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live = {});

@@ -63,7 +63,9 @@ ApplyResult applyRemoteSet(ParamBus& params, const RemoteSet& set) {
 	if (!parseNumber(set.raw, n)) return rejected("bad value");
 	n = std::clamp(n, double(control->min), double(control->max));
 	if (control->type == ControlType::Int) {
-		params.setInt(set.name, int(std::lround(n)));
+		int v = int(std::lround(n));
+		if (set.name == "source_kind" && v == 3) return {false, {}, false, 0.0f, true};
+		params.setInt(set.name, v);
 		return {};
 	}
 	float v = float(n);

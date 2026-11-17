@@ -400,6 +400,12 @@ bool RemoteSession::readFrames(Client& client) {
 			}
 			std::lock_guard<std::mutex> lock(queueMutex);
 			inbox.push_back({{}, {}, RemoteKind::Panic});
+		} else if (msg.type == "\"prev\"" || msg.type == "\"next\"" || msg.type == "\"webcam\"") {
+			RemoteKind kind = msg.type == "\"prev\"" ? RemoteKind::Prev
+			                  : msg.type == "\"next\"" ? RemoteKind::Next
+			                                           : RemoteKind::Webcam;
+			std::lock_guard<std::mutex> lock(queueMutex);
+			inbox.push_back({{}, {}, kind});
 		}
 	}
 	return true;

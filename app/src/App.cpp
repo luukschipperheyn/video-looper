@@ -407,17 +407,33 @@ int App::run() {
 		float gainMix = params.getFloat("gain_mix", 1.0f);
 
 		remote.setEnabled(params.getBool("ipad_page", false));
+		std::string loadFailure = source.takeLoadFailure();
 		if (remote.enabled()) {
 			remote.setSilenceWindow(int(params.getFloat("silence_ms", 300.0f)));
+			if (!loadFailure.empty()) remote.send(rejectFrame("source", loadFailure));
 			for (const RemoteSet& set : remote.drain()) {
-				if (set.kind == RemoteKind::Panic) {
+				switch (set.kind) {
+				case RemoteKind::Panic:
 					params.setBool("arm_record", false);
 					params.setBool("cue_active", false);
-					continue;
+					break;
+				case RemoteKind::Prev:
+					source.loadPrevFile(params);
+					break;
+				case RemoteKind::Next:
+					source.loadNextFile(params);
+					break;
+				case RemoteKind::Webcam:
+					source.loadWebcam(params.getInt("webcam_index", 0));
+					break;
+				case RemoteKind::Set: {
+					ApplyResult result = applyRemoteSet(params, set);
+					if (result.reject) remote.send(rejectFrame(set.name, result.reason));
+					if (result.tempoChanged && params.getBool("link_enabled", false)) link.setTempo(result.bpm);
+					if (result.startWebcam) source.loadWebcam(params.getInt("webcam_index", 0));
+					break;
 				}
-				ApplyResult result = applyRemoteSet(params, set);
-				if (result.reject) remote.send(rejectFrame(set.name, result.reason));
-				if (result.tempoChanged && params.getBool("link_enabled", false)) link.setTempo(result.bpm);
+				}
 			}
 		} else {
 			params.setBool("ipad_page", false);

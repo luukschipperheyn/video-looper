@@ -1,3 +1,4 @@
+#include "io/SourceLoad.hpp"
 #include "remote/ControlSchema.hpp"
 #include "remote/RemoteApply.hpp"
 #include "remote/RemoteSession.hpp"
@@ -472,8 +473,105 @@ int main() {
 		publish(session, params);
 		check(field(readText(client), "video") == "\"\"", "23. video is empty when the Source is not a Video");
 
+		// SourceLoad stands in for the loader: the test plays App's part, choosing paths and resolving loads.
+		const std::vector<std::string> videos = {"/v/a.mov", "/v/b.mov", "/v/c.mov"};
+		SourceLoad load;
+		bool isWebcam = true;
+		std::string path;
+		int index = -1;
+		auto swapIn = [&] {
+			if (!load.pollSwap(isWebcam, path, index)) return false;
+			params.setInt("source_kind", isWebcam ? 3 : 1);
+			params.setString("file_path", path);
+			if (isWebcam) params.setInt("webcam_index", index);
+			return true;
+		};
+		LoadRequest first = load.requestVideo(videos[0]);
+		load.resolve(first.id, true, {});
+		check(swapIn() && !isWebcam && path == videos[0] && load.committedPath() == videos[0] && !load.busy(),
+		      "24. a resolved load swaps in on the next poll");
+		check(!load.pollSwap(isWebcam, path, index), "24. a swap happens once");
+
+		sendFrame(client.fd, 0x1, R"({"t":"next"})");
+		sets = waitDrain(session);
+		check(sets.size() == 1 && sets[0].kind == RemoteKind::Next, "24. next drains as one Next item");
+		LoadRequest toNext = load.requestVideo(stepVideo(videos, params.getString("file_path"), +1));
+		check(toNext.path == videos[1] && load.busy() && load.inflight() == toNext.id &&
+		          load.committedPath() == videos[0],
+		      "24. Next starts a load of b.mov and the committed Video stays a.mov");
+		publish(session, params);
+		check(field(readText(client), "video") == "\"a.mov\"", "24. the client still reads a.mov while loading");
+
+		sendFrame(client.fd, 0x1, R"({"t":"prev"})");
+		sets = waitDrain(session);
+		check(sets.size() == 1 && sets[0].kind == RemoteKind::Prev, "24. prev drains as one Prev item");
+		LoadRequest toPrev = load.requestVideo(stepVideo(videos, params.getString("file_path"), -1));
+		check(toPrev.path == videos[2] && toPrev.id != toNext.id && load.inflight() == toPrev.id,
+		      "24. Prev starts a load of c.mov that replaces the Next load");
+		load.resolve(toNext.id, true, {});
+		check(!swapIn() && load.busy() && load.committedPath() == videos[0],
+		      "24. resolving the cancelled load swaps nothing");
+		load.resolve(toPrev.id, true, {});
+		check(swapIn() && path == videos[2] && load.committedPath() == videos[2] && !load.busy(),
+		      "24. resolving the latest load swaps c.mov in one step");
+		publish(session, params);
+		check(field(readText(client), "video") == "\"c.mov\"", "24. the client reads c.mov after the swap");
+
+		LoadRequest bad = load.requestVideo(videos[1]);
+		load.resolve(bad.id, false, "could not open");
+		check(!swapIn() && load.committedPath() == videos[2], "25. a failed open keeps the committed Video");
+		std::string failure = load.takeFailure();
+		check(failure == "could not open" && load.takeFailure().empty() && !load.busy(),
+		      "25. the failure reason comes out once");
+		session.send(rejectFrame("source", failure));
+		payload = readText(client);
+		check(field(payload, "name") == "\"source\"" && field(payload, "reason") == "\"could not open\"",
+		      "25. the client reads \"reason\":\"could not open\"");
+
+		params.setInt("webcam_index", 2);
+		sendFrame(client.fd, 0x1, R"({"t":"webcam"})");
+		sets = waitDrain(session);
+		check(sets.size() == 1 && sets[0].kind == RemoteKind::Webcam, "26. webcam drains as one Webcam item");
+		LoadRequest cam = load.requestWebcam(params.getInt("webcam_index"));
+		check(cam.webcam && cam.webcamIndex == 2 && load.busy() && !load.committedWebcam(),
+		      "26. a webcam load leaves the committed Source on the Video");
+		LoadRequest cam4 = load.requestWebcam(4);
+		load.resolve(cam.id, true, {});
+		check(!swapIn() && !load.committedWebcam(), "26. a second webcam request cancels the first");
+		load.resolve(cam4.id, true, {});
+		check(swapIn() && isWebcam && index == 4 && load.committedWebcam() && load.committedWebcamIndex() == 4 &&
+		          load.committedPath() == videos[2],
+		      "26. resolving the latest webcam load swaps in webcam 4");
+
+		params.setInt("source_kind", 1);
+		sendFrame(client.fd, 0x1, setFrame("source_kind", "3"));
+		sets = waitDrain(session);
+		ApplyResult result = sets.size() == 1 ? applyRemoteSet(params, sets[0]) : ApplyResult{true, {}, false, 0.0f};
+		check(!result.reject && result.startWebcam && params.getInt("source_kind") == 1,
+		      "26. a set of source_kind 3 asks for a webcam load and leaves the param alone");
+
 		close(client.fd);
 	}
+
+	check(stepVideo({}, "/v/a.mov", 1).empty() && stepVideo({}, "", -1).empty(), "27. an empty list steps to nothing");
+	const std::vector<std::string> abc = {"a", "b", "c"};
+	check(stepVideo(abc, "a", 1) == "b" && stepVideo(abc, "b", -1) == "a", "27. next and prev step one Video");
+	check(stepVideo(abc, "c", 1) == "a" && stepVideo(abc, "a", -1) == "c", "27. stepping wraps at both ends");
+	{
+		SourceLoad dropped;
+		LoadRequest stale = dropped.requestVideo("a.mov");
+		dropped.resolve(stale.id, true, {});
+		dropped.cancel();
+		bool webcam = false;
+		std::string path;
+		int index = 0;
+		check(!dropped.pollSwap(webcam, path, index) && dropped.committedPath().empty(),
+		      "28. cancel drops a ready load before it swaps");
+		dropped.resolve(stale.id, true, {});
+		check(!dropped.pollSwap(webcam, path, index), "28. a resolve after cancel does not swap");
+	}
+	check(stepVideo(abc, "x", -1) == "c" && stepVideo(abc, "x", 1) == "a",
+	      "27. from an unknown Video prev picks the last and next the first");
 	std::filesystem::remove_all(dir);
 	std::printf("%s (%d failures)\n", failures ? "FAILED" : "ALL PASSED", failures);
 	return failures ? 1 : 0;

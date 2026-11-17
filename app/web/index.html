@@ -27,6 +27,10 @@
 	#pads button.down { background: #a22; }
 	#pads #panic { flex: 0 0 8em; background: #600; }
 	#live output { font-variant-numeric: tabular-nums; font-weight: 600; }
+	#source-load { display: flex; align-items: center; gap: 12px; }
+	#source-load button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
+		border-radius: 8px; }
+	#source-reason { color: #fa0; }
 </style>
 </head>
 <body>
@@ -40,6 +44,12 @@
 	<button id="pad-cue">Cue</button>
 	<button id="panic">PANIC</button>
 </div>
+<p id="source-load">
+	<button id="source-prev">Previous</button>
+	<button id="source-next">Next</button>
+	<button id="source-webcam">Webcam</button>
+	<span id="source-reason"></span>
+</p>
 <div id="controls"></div>
 <script>
 	const schema = /*CONTROL_SCHEMA*/null;
@@ -195,6 +205,15 @@
 		for (const name in pads) stopPad(name);
 	});
 
+	const sourceReason = document.getElementById("source-reason");
+	for (const t of ["prev", "next", "webcam"]) {
+		document.getElementById(`source-${t}`).addEventListener("click", () => {
+			if (socket.readyState !== WebSocket.OPEN) return;
+			sourceReason.textContent = "";
+			socket.send(JSON.stringify({ t }));
+		});
+	}
+
 	const stages = ["idle", "attack", "decay", "sustain", "release"];
 	const live = (id, text) => { document.getElementById(`live-${id}`).textContent = text; };
 
@@ -222,6 +241,10 @@
 		} else if (msg.t === "reject") {
 			if (controls[msg.name]) show(msg.name);
 			if (msg.name === "record_enabled") exportReason.textContent = msg.reason;
+			if (msg.name === "source") {
+				sourceReason.textContent = msg.reason;
+				show("source_kind");
+			}
 		}
 	};
 </script>
