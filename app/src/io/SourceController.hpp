@@ -38,10 +38,12 @@ public:
 	// keeps playing until the new one has a first frame.
 	void loadPrevFile(ParamBus& params);
 	void loadNextFile(ParamBus& params);
-	void loadVideo(const std::string& path);
+	void loadVideo(const std::string& path, float loopStart = 0, float loopLength = 1);
 	void loadWebcam(int index);
 	// Why the latest load failed, once. Empty if none.
 	std::string takeLoadFailure() { return load.takeFailure(); }
+	// True on the frame a load replaced the live Source.
+	bool loadSwapped() const { return swappedLoad; }
 	// Full paths of the Videos in the current Videos folder, as of the last scan.
 	std::vector<std::string> videos() const { return videoFiles; }
 	// Makes path the current Videos folder with videos as its Videos, without reading the disk. The live Source
@@ -84,6 +86,7 @@ private:
 	bool fileActive;
 	int seenKind;
 	int seenWebcamIndex;
+	bool swappedLoad = false;
 
 	// The worker owns the spares and spareFrame from a request until it resolves; after a swap they hold the
 	// previous live sources until the worker stops them.

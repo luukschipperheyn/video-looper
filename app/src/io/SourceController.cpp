@@ -1,6 +1,7 @@
 #include "io/SourceController.hpp"
 #include "io/FolderList.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 
@@ -62,7 +63,8 @@ bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus
 	int srcKind = params.getInt("source_kind", (int)SourceKind::Shader);
 	bool justChoseStill = stillSourceCancelsLoad(srcKind, seenKind);
 	if (justChoseStill && load.busy()) load.cancel();
-	bool updatedPreviewTex = !justChoseStill && swapInLoaded(params);
+	swappedLoad = !justChoseStill && swapInLoaded(params);
+	bool updatedPreviewTex = swappedLoad;
 	ensureSource(params);
 
 	if (srcKind == (int)SourceKind::Webcam) {
@@ -113,17 +115,19 @@ void SourceController::restartFileAtLoopStart() {
 void SourceController::loadPrevFile(ParamBus& params) {
 	maybeRescanFolder(params);
 	std::string pick = stepVideo(videoFiles, params.getString("file_path", ""), -1);
-	if (!pick.empty()) loadVideo(pick);
+	if (!pick.empty())
+		loadVideo(pick, params.getFloat("file_loop_start", 0.0f), params.getFloat("file_loop_length", 1.0f));
 }
 
 void SourceController::loadNextFile(ParamBus& params) {
 	maybeRescanFolder(params);
 	std::string pick = stepVideo(videoFiles, params.getString("file_path", ""), +1);
-	if (!pick.empty()) loadVideo(pick);
+	if (!pick.empty())
+		loadVideo(pick, params.getFloat("file_loop_start", 0.0f), params.getFloat("file_loop_length", 1.0f));
 }
 
-void SourceController::loadVideo(const std::string& path) {
-	startLoad(load.requestVideo(path));
+void SourceController::loadVideo(const std::string& path, float loopStart, float loopLength) {
+	startLoad(load.requestVideo(path, loopStart, loopLength));
 }
 
 void SourceController::loadWebcam(int index) {
@@ -199,6 +203,10 @@ std::string SourceController::openSpare(const LoadRequest& request) {
 	if (!request.webcam) {
 		std::string name = std::filesystem::path(request.path).filename().string();
 		if (!spareFile.startFile(request.path)) return "could not open " + name;
+		float loopStart = std::clamp(request.loopStart, 0.0f, 1.0f);
+		float loopLen = std::clamp(request.loopLength, 0.0f, 1.0f);
+		float loopEnd = std::clamp(loopStart + loopLen, loopStart + 0.001f, 1.0f);
+		spareFile.setLoopRange(loopStart, loopEnd);
 		if (!spareFile.copyFrame(spareFrame, spareW, spareH)) return "no frame in " + name;
 		return {};
 	}
@@ -261,7 +269,8 @@ void SourceController::ensureSource(ParamBus& params) {
 		loadWebcam(index);
 	} else if (kindChanged && kind == (int)SourceKind::File && !fileActive) {
 		std::string p = params.getString("file_path", "");
-		if (!p.empty()) loadVideo(p);
+		if (!p.empty())
+			loadVideo(p, params.getFloat("file_loop_start", 0.0f), params.getFloat("file_loop_length", 1.0f));
 	}
 }
 
@@ -270,8 +279,7 @@ void SourceController::maybeRescanFolder(ParamBus& params) {
 	if (folder != lastVideosFolder) showFolder(folder, scanVideos(folder), params);
 }
 
-void SourceController::showFolder(const std::string& path, const std::vector<std::string>& videos,
-                                  ParamBus& params) {
+void SourceController::showFolder(const std::string& path, const std::vector<std::string>& videos, ParamBus& params) {
 	videoFiles = videos;
 	lastVideosFolder = path;
 	params.setString("videos_folder", path);

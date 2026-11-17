@@ -76,8 +76,10 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 					params.setString("file_path", std::string(buf));
 				}
 				if (ImGui::Button("Browse...")) {
-					macOpenFileDialogAsync("Select Video File", [source](std::string p) {
-						if (!p.empty() && source) source->loadVideo(p);
+					macOpenFileDialogAsync("Select Video File", [source, &params](std::string p) {
+						if (!p.empty() && source)
+							source->loadVideo(p, params.getFloat("file_loop_start", 0.0f),
+							                  params.getFloat("file_loop_length", 1.0f));
 					});
 				}
 				static char fbuf[512];
@@ -202,10 +204,10 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			if (ImGui::SliderFloat("Param 3", &p3, -0.05f, 0.05f)) params.setFloat("fx_param3", p3);
 
 			ImGui::Separator();
-			ImGui::TextUnformatted("iPad");
+			ImGui::TextUnformatted("Web interface");
 			ImGui::Separator();
 			bool ipad = params.getBool("ipad_page", false);
-			if (ImGui::Checkbox("iPad page", &ipad)) params.setBool("ipad_page", ipad);
+			if (ImGui::Checkbox("Web interface", &ipad)) params.setBool("ipad_page", ipad);
 			bool token = params.getBool("ipad_token", true);
 			if (ImGui::Checkbox("URL token", &token)) params.setBool("ipad_token", token);
 			float silence = params.getFloat("silence_ms", 300.0f);

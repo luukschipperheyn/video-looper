@@ -6,10 +6,13 @@
 #include <vector>
 
 struct LoadRequest {
-	uint64_t id;
-	bool webcam; // false means a Video path
+	uint64_t id = 0;
+	bool webcam = false; // false means a Video path
 	std::string path;
-	int webcamIndex;
+	int webcamIndex = 0;
+	// Where a Video starts. The first decoded frame is inside this range.
+	float loopStart = 0;
+	float loopLength = 1;
 };
 
 // One Source load at a time, and the Source it last committed. resolve runs on the loading thread; everything
@@ -17,7 +20,7 @@ struct LoadRequest {
 class SourceLoad {
 public:
 	// Each request cancels the one in flight.
-	LoadRequest requestVideo(std::string path);
+	LoadRequest requestVideo(std::string path, float loopStart = 0, float loopLength = 1);
 	LoadRequest requestWebcam(int index);
 	// Drops a load that has not swapped, including one that is already ready.
 	void cancel();

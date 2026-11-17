@@ -2,11 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Video Looper</title>
 <style>
-	body { margin: 0; padding: 24px; background: #111; color: #eee; font: 18px -apple-system, sans-serif; }
+	html, body, body * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+		-webkit-user-drag: none; touch-action: pan-y; }
+	body { margin: 0; padding: 24px 24px calc(104px + env(safe-area-inset-bottom)); background: #111; color: #eee;
+		font: 18px -apple-system, sans-serif; }
+	input[type=range], #trackpad, #pads button { touch-action: none; }
 	#connection { font-weight: 600; }
 	#export-state { font-weight: 600; }
 	#export-state.running { color: #f44; }
@@ -19,13 +23,16 @@
 	input[type=range] { flex: 1; height: 32px; }
 	input[type=checkbox] { width: 32px; height: 32px; margin: 0; }
 	select { font-size: 18px; padding: 4px 8px; }
-	#pads { display: flex; gap: 16px; margin-top: 20px; }
-	#pads button { flex: 1; height: 160px; font-size: 24px; font-weight: 600; color: #eee; background: #333;
-		border: 2px solid #555; border-radius: 12px; touch-action: none; user-select: none;
-		-webkit-user-select: none; }
+	#pads { position: fixed; left: 0; right: 0; bottom: 0; z-index: 2; box-sizing: border-box; display: flex;
+		gap: 8px; margin: 0; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); background: #111; }
+	#pads button { flex: 1; height: 72px; font-size: 18px; font-weight: 600; color: #eee; background: #333;
+		border: 2px solid #555; border-radius: 12px; }
 	#pads button.open { border-color: #f44; }
 	#pads button.down { background: #a22; }
-	#pads #panic { flex: 0 0 8em; background: #600; }
+	#pads #panic { flex: 0 0 5.5em; background: #600; }
+	#blend-names { display: flex; margin-left: calc(9em + 12px); margin-right: calc(4em + 12px); gap: 2px; }
+	#blend-names span { flex: 1 1 0; text-align: center; font-size: 11px; line-height: 1.15; color: #888; }
+	#blend-names span.on { color: #eee; }
 	#live output { font-variant-numeric: tabular-nums; font-weight: 600; }
 	#source-load { display: flex; align-items: center; gap: 12px; }
 	#source-load button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
@@ -56,16 +63,11 @@
 </style>
 </head>
 <body>
-<p>iPad page: <span id="connection">connecting</span></p>
+<p>Web interface: <span id="connection">connecting</span></p>
 <p>Export: <span id="export-state">stopped</span> <span id="export-reason"></span></p>
 <p id="live">Loop <output id="live-loop">0%</output> · Envelope <output id="live-envelope">0.00</output> ·
 	Stage <output id="live-stage">idle</output> · Gate <output id="live-gate">closed</output> ·
 	Cue <output id="live-cue">closed</output> · Video <output id="live-video">none</output></p>
-<div id="pads">
-	<button id="pad-gate">Overdub</button>
-	<button id="pad-cue">Cue</button>
-	<button id="panic">PANIC</button>
-</div>
 <p id="source-load">
 	<button id="source-prev">Previous</button>
 	<button id="source-next">Next</button>
@@ -80,6 +82,11 @@
 </div>
 <div id="videos"></div>
 <div id="controls"></div>
+<div id="pads">
+	<button id="pad-gate">Overdub</button>
+	<button id="pad-cue">Cue</button>
+	<button id="panic">PANIC</button>
+</div>
 <script>
 	const schema = /*CONTROL_SCHEMA*/null;
 	const sections = [
@@ -128,6 +135,11 @@
 		]],
 	];
 
+	document.addEventListener("gesturestart", (event) => event.preventDefault());
+	document.addEventListener("contextmenu", (event) => {
+		if (event.target.closest("img")) event.preventDefault();
+	});
+
 	const token = new URLSearchParams(location.search).get("token") || "";
 	const connection = document.getElementById("connection");
 	const exportState = document.getElementById("export-state");
@@ -140,17 +152,19 @@
 	const format = (v) => String(Number(v.toFixed(3)));
 
 	function show(name) {
-		const { el, out, type } = controls[name];
+		const control = controls[name];
+		const { el, out, type } = control;
 		if (!(name in state)) return;
 		if (type === "bool") el.checked = state[name];
 		else el.value = state[name];
-		if (out) out.textContent = format(state[name]);
+		if (out) out.textContent = control.paint ? control.paint(state[name]) : format(state[name]);
 	}
 
 	function sendSet(name) {
-		const { el, out, type } = controls[name];
+		const control = controls[name];
+		const { el, out, type } = control;
 		const value = type === "bool" ? el.checked : type === "int" ? parseInt(el.value, 10) : parseFloat(el.value);
-		if (out) out.textContent = format(value);
+		if (out) out.textContent = control.paint ? control.paint(value) : format(value);
 		if (name === "video_aspect" && value === true) xf.video_sy = xf.video_sx;
 		if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ t: "set", name, value }));
 	}
@@ -216,7 +230,7 @@
 		wrap.id = "source-transform";
 		const pad = wrap.appendChild(document.createElement("div"));
 		pad.id = "trackpad";
-		pad.appendChild(document.createElement("span")).textContent = "Drag to move. Pinch to scale and rotate.";
+		pad.appendChild(document.createElement("span")).textContent = "Drag to move. Pinch to move, scale, and rotate.";
 		const reset = wrap.appendChild(document.createElement("button"));
 		reset.type = "button";
 		reset.id = "transform-reset";
@@ -254,6 +268,10 @@
 			}
 			if (after.length < 2 || before.length < 2) return;
 			const oldA = before[0], oldB = before[1], newA = after[0], newB = after[1];
+			const oldMidX = (oldA.x + oldB.x) / 2, oldMidY = (oldA.y + oldB.y) / 2;
+			const newMidX = (newA.x + newB.x) / 2, newMidY = (newA.y + newB.y) / 2;
+			xf.video_tx = lim("video_tx", xf.video_tx + (newMidX - oldMidX) / pad.clientWidth);
+			xf.video_ty = lim("video_ty", xf.video_ty - (newMidY - oldMidY) / pad.clientHeight);
 			const oldDx = Math.abs(oldB.x - oldA.x), oldDy = Math.abs(oldB.y - oldA.y);
 			const newDx = Math.abs(newB.x - newA.x), newDy = Math.abs(newB.y - newA.y);
 			const oldDist = Math.hypot(oldB.x - oldA.x, oldB.y - oldA.y);
@@ -289,11 +307,37 @@
 		return wrap;
 	}
 
+	function buildBlend(label, names) {
+		const wrap = document.createElement("div");
+		wrap.id = "blend";
+		const row = wrap.appendChild(document.createElement("label"));
+		row.appendChild(document.createElement("span")).textContent = label;
+		const el = row.appendChild(document.createElement("input"));
+		el.type = "range";
+		el.min = "0";
+		el.max = String(names.length - 1);
+		el.step = "1";
+		const out = row.appendChild(document.createElement("output"));
+		const ticks = wrap.appendChild(document.createElement("div"));
+		ticks.id = "blend-names";
+		for (const name of names) ticks.appendChild(document.createElement("span")).textContent = name;
+		const paint = (value) => {
+			const i = Math.max(0, Math.min(names.length - 1, parseInt(value, 10) || 0));
+			for (let n = 0; n < ticks.children.length; ++n) ticks.children[n].classList.toggle("on", n === i);
+			return names[i];
+		};
+		controls.record_blend_mode = { el, out, type: "int", paint };
+		el.addEventListener("pointerdown", () => { el.dataset.down = "1"; });
+		el.addEventListener("input", () => sendSet("record_blend_mode"));
+		return wrap;
+	}
+
 	const root = document.getElementById("controls");
 	for (const [title, rows] of sections) {
 		const section = root.appendChild(document.createElement("section"));
 		section.appendChild(document.createElement("h2")).textContent = title;
-		for (const [name, label, options] of rows) section.appendChild(build(name, label, options));
+		for (const [name, label, options] of rows)
+			section.appendChild(name === "record_blend_mode" ? buildBlend(label, options) : build(name, label, options));
 		if (title === "Source") section.appendChild(buildTrackpad());
 	}
 
@@ -447,6 +491,15 @@
 			live("gate", state.gate ? "open" : "closed");
 			live("cue", state.cue ? "open" : "closed");
 			live("video", state.video || "none");
+			if ("source_error" in state) {
+				if (state.source_error) {
+					sourceReason.dataset.kind = "source";
+					sourceReason.textContent = state.source_error;
+				} else if (sourceReason.dataset.kind === "source") {
+					sourceReason.textContent = "";
+					delete sourceReason.dataset.kind;
+				}
+			}
 			if ("folders" in msg) showFolders(msg.folders);
 			for (const button of foldersRow.children)
 				button.classList.toggle("current", button.dataset.path === state.videos_folder);
@@ -472,10 +525,14 @@
 			if (controls[msg.name]) show(msg.name);
 			if (msg.name === "record_enabled") exportReason.textContent = msg.reason;
 			if (msg.name === "source") {
+				sourceReason.dataset.kind = "source";
 				sourceReason.textContent = msg.reason;
 				show("source_kind");
 			}
-			if (msg.name === "folder") sourceReason.textContent = msg.reason;
+			if (msg.name === "folder") {
+				sourceReason.dataset.kind = "folder";
+				sourceReason.textContent = msg.reason;
+			}
 		}
 	};
 </script>

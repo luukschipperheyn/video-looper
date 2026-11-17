@@ -28,6 +28,7 @@
 #include "io/AVFRecorder.hpp"
 #include "remote/RemoteApply.hpp"
 #include "remote/RemoteSession.hpp"
+#include "setup/SetupStore.hpp"
 #include <cstdlib>
 #include <vector>
 
@@ -186,8 +187,9 @@ int App::run() {
 	params.setFloat("silence_ms", 300.0f);
 
 	const char* home = std::getenv("HOME");
-	RemoteSession remote(std::filesystem::path(home ? home : ".") /
-	                     "Library/Application Support/video-looper/remote-token");
+	std::filesystem::path support =
+		std::filesystem::path(home ? home : ".") / "Library/Application Support/video-looper";
+	RemoteSession remote(support / "remote-token");
 	std::string remoteSnapshotSent;
 	VideoThumbs thumbs;
 	std::vector<std::string> videoPaths;
@@ -195,6 +197,26 @@ int App::run() {
 	std::vector<std::string> sentVideoNames;
 	std::vector<std::string> sentFolderPaths;
 	FolderList folders;
+	SetupSaver setupSaver(support / "setup.json", 0.2);
+	{
+		PerformanceSetup setup;
+		if (readSetup(support / "setup.json", setup)) {
+			applySetup(params, setup);
+			RestoredFolders restored = restoreFolders(setup);
+			for (const std::string& folder : restored.paths)
+				folders.add({folder, scanVideos(folder)});
+			if (!restored.current.empty() && folders.select(restored.current) && folders.current())
+				source.showFolder(restored.current, folders.current()->videos, params);
+			else {
+				params.setString("videos_folder", "");
+				params.setInt("videos_count", 0);
+			}
+		}
+		if (params.getInt("source_kind", (int)SourceKind::Shader) == (int)SourceKind::Webcam)
+			source.loadWebcam(params.getInt("webcam_index", 0));
+		setupSaver.settle(captureSetup(params, folders));
+	}
+	std::string sourceFailure;
 
 	Clock clock;
 	clock.setQuantum(params.getFloat("quantum", 4.0f));
@@ -463,12 +485,17 @@ int App::run() {
 		if (videos != videoPaths) {
 			videoPaths = std::move(videos);
 			videoNames.clear();
-			for (const std::string& p : videoPaths) videoNames.push_back(std::filesystem::path(p).filename());
+			for (const std::string& p : videoPaths)
+				videoNames.push_back(std::filesystem::path(p).filename());
 			thumbs.setVideos(videoPaths);
 		}
 		std::vector<std::pair<std::string, std::string>> madeThumbs;
 		if (thumbs.take(madeThumbs)) remote.setThumbs(std::move(madeThumbs));
 		std::string loadFailure = source.takeLoadFailure();
+		if (!loadFailure.empty())
+			sourceFailure = loadFailure;
+		else if (source.loadSwapped() || (srcKind != (int)SourceKind::File && srcKind != (int)SourceKind::Webcam))
+			sourceFailure.clear();
 		if (remote.enabled()) {
 			remote.setSilenceWindow(int(params.getFloat("silence_ms", 300.0f)));
 			if (!loadFailure.empty()) remote.send(rejectFrame("source", loadFailure));
@@ -492,7 +519,8 @@ int App::run() {
 					if (path.empty())
 						remote.send(rejectFrame("source", "no such video"));
 					else
-						source.loadVideo(path);
+						source.loadVideo(path, params.getFloat("file_loop_start", 0.0f),
+						                 params.getFloat("file_loop_length", 1.0f));
 					break;
 				}
 				case RemoteKind::Folder:
@@ -864,9 +892,9 @@ int App::run() {
 			RemoteLive live{(float(idx0) + mixf) / float(ring.size()), envVal, envPhase, recGate, cueActive};
 			std::vector<std::string> folderPaths = folders.paths();
 			bool catalogChanged = videoNames != sentVideoNames || folderPaths != sentFolderPaths;
-			std::string full = remoteSnapshot(params, live, videoNames, folderPaths);
+			std::string full = remoteSnapshot(params, live, videoNames, folderPaths, true, sourceFailure);
 			remote.setSnapshot(full);
-			std::string wire = catalogChanged ? full : remoteSnapshot(params, live, {}, {}, false);
+			std::string wire = catalogChanged ? full : remoteSnapshot(params, live, {}, {}, false, sourceFailure);
 			if (wire != remoteSnapshotSent) {
 				remoteSnapshotSent = wire;
 				remote.send(wire);
@@ -895,8 +923,11 @@ int App::run() {
 			glfwMakeContextCurrent(backup_current_context);
 		}
 
+		setupSaver.observe(captureSetup(params, folders), now);
 		glfwSwapBuffers(window);
 	}
+
+	setupSaver.flush();
 
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplGlfw_Shutdown();

@@ -55,5 +55,5 @@ GateState combineHolds(GateInputs in);
 // catalog false omits those lists, for the per-frame update. A new client still gets them from the stored snapshot.
 std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live = {},
                            const std::vector<std::string>& videos = {}, const std::vector<std::string>& folders = {},
-                           bool catalog = true);
+                           bool catalog = true, const std::string& sourceError = {});
 std::string rejectFrame(const std::string& name, const std::string& reason);

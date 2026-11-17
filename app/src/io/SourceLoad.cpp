@@ -4,8 +4,8 @@
 #include <filesystem>
 #include <utility>
 
-LoadRequest SourceLoad::requestVideo(std::string p) {
-	return request({0, false, std::move(p), 0});
+LoadRequest SourceLoad::requestVideo(std::string p, float loopStart, float loopLength) {
+	return request({0, false, std::move(p), 0, loopStart, loopLength});
 }
 
 LoadRequest SourceLoad::requestWebcam(int index) {

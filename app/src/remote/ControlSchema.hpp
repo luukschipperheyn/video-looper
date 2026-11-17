@@ -14,7 +14,7 @@ struct Control {
 	bool writable;
 };
 
-// Every param the iPad page sees. Writable numbers are clamped to min..max; bools are not clamped.
+// Every param the Web interface sees. Writable numbers are clamped to min..max; bools are not clamped.
 inline constexpr Control kControls[] = {
 	{"record_enabled", ControlType::Bool, 0, 0, true},
 	{"record_fps", ControlType::Float, 1, 240, true},

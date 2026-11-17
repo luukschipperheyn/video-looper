@@ -48,6 +48,7 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/gl/FxPipeline.*` | Feedback / Diff / Chroma / Kaleido / Blur post; ping-pong targets; hot-reload |
 | `app/src/gl/Shader.*`, `FullscreenQuad.*`, `util/GlUtils.hpp` | GL helpers |
 | `app/src/ui/ParamBus.*` | String-keyed bool/float/int/string bag (no schema validation) |
+| `app/src/setup/SetupStore.*` | Performance setup saved when a control settles and restored at launch |
 | `app/src/ui/ControlsPanel.*` | ImGui **Live** + **Settings** tabs |
 | `app/src/clock/Clock.hpp` | Local beat accumulator from BPM × dt |
 | `app/src/link/LinkBridge.*` | Real Ableton Link when `USE_ABLETON_LINK`; else local stub |
@@ -94,7 +95,7 @@ Ring size is fixed at **120** frames at current framebuffer resolution (`ring.se
 | Black (2) | Clear preview FBO to black |
 | Webcam (3) | `AVFWebcamSource` by `webcam_index` |
 
-File and webcam frames are drawn into the Source, then that image is what an Overdub writes. **Preserve aspect** (`video_aspect`, default on) fits them with contain: the image fills the loop's width or its height. Off stretches them to the loop frame first. **Black bars** (`video_bars`, default on) paints the unused side black; off leaves it transparent, so the Loop shows through and an Overdub does not paint it. The iPad Source trackpad drags with one finger to translate and pinches to scale and rotate (`video_tx`, `video_ty`, `video_sx`, `video_sy`, `video_rot`, identity at 0, 0, 1, 1, 0). With Preserve aspect on, a pinch scales both axes together. Shader and Black ignore the transform and fill the loop frame. The switches are on the Mac Source section and the iPad Source section.
+File and webcam frames are drawn into the Source, then that image is what an Overdub writes. **Preserve aspect** (`video_aspect`, default on) fits them with contain: the image fills the loop's width or its height. Off stretches them to the loop frame first. **Black bars** (`video_bars`, default on) paints the unused side black; off leaves it transparent, so the Loop shows through and an Overdub does not paint it. The Web interface Source trackpad drags with one finger to translate. A pinch moves by the midpoint and scales and rotates (`video_tx`, `video_ty`, `video_sx`, `video_sy`, `video_rot`, identity at 0, 0, 1, 1, 0). With Preserve aspect on, a pinch scales both axes together. Shader and Black ignore the transform and fill the loop frame. The switches are on the Mac Source section and the Web interface Source section.
 
 **Folder / random commit** (`SourceController`):
 
@@ -202,6 +203,10 @@ Notable defaults from `App.cpp` ~120–162: `show_ui`, `gain_mix=1`, `record_ble
 
 Keys used elsewhere but not all initialized at startup (rely on get defaults): e.g. `file_run_mode`, `file_loop_start`, `file_loop_length`.
 
+## Saved setup
+
+`~/Library/Application Support/video-looper/setup.json` is written 0.2 s after the setup stops changing, and again on quit. Launch applies it after the defaults, so a missing or broken file leaves the defaults. Restored fields: blend, opacity, blend gain, envelope, FX, Source kind and transform, black bars, preserve aspect, webcam, video loop / pause / run mode / loop range, current Video, Folder list, tempo, whether the Web interface is on, export path and export fps. Latch, latched Cue, and Export start off. Link, the preview window, playheads, Mac UI visibility, the URL token, and the window are not in the file. A folder that cannot be read is dropped. If the current Video cannot be opened, the Source stays a Video, nothing is loaded, and the Web interface keeps the load failure on its snapshot. The Loop's frames are not restored (ADR-0003). A restored Video's first frame is the start of its saved loop range.
+
 ---
 
 ## Stubs / conditionals
@@ -253,6 +258,7 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 | Ring write/swap math | `app/src/looper/LooperEngine.cpp` |
 | Dual-bank storage | `app/src/buffer/RingBuffer.cpp` |
 | Live UI | `app/src/ui/ControlsPanel.cpp` |
+| Saved setup | `app/src/setup/SetupStore.cpp` |
 | Sources / commit | `app/src/io/SourceController.cpp` |
 | FX modes | `app/src/gl/FxPipeline.cpp` |
 | Link stub vs real | `app/src/link/LinkBridge.cpp` |

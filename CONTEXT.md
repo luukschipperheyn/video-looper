@@ -22,6 +22,10 @@ _Avoid_: Arm Record, arm
 Showing the Audition without writing into the loop, to try a Source before overdubbing it.
 _Avoid_: Monitor, pre-listen
 
+**Panic**:
+The control that releases the Latch, the latched Cue, and a held Overdub gate or Cue.
+_Avoid_: reset, clear
+
 **Commit**:
 Writing one whole Video into the Loop at full opacity from its start to its end, bypassing the envelope. The Video is picked at random from the Videos folder.
 _Avoid_: Load random file
@@ -67,3 +71,9 @@ _Avoid_: Output, main view
 **Export**:
 Saving rendered video to a `.mov` file on disk.
 _Avoid_: Record, recording, disk record
+
+### Control
+
+**Web interface**:
+The page the app serves for live control from a browser.
+_Avoid_: iPad page

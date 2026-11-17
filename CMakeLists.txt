@@ -52,6 +52,7 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/remote/RemoteSession.cpp
   app/src/remote/RemoteApply.cpp
   app/src/remote/QrCode.cpp
+  app/src/setup/SetupStore.cpp
   ${imgui_SOURCE_DIR}/imgui.cpp
   ${imgui_SOURCE_DIR}/imgui_draw.cpp
   ${imgui_SOURCE_DIR}/imgui_tables.cpp
@@ -82,6 +83,15 @@ target_compile_definitions(remote_session_test PRIVATE WEB_DIR="${CMAKE_SOURCE_D
 
 add_executable(contain_rect_test app/tests/contain_rect_test.cpp)
 target_include_directories(contain_rect_test PRIVATE app/src)
+
+add_executable(setup_test
+  app/tests/setup_test.cpp
+  app/src/setup/SetupStore.cpp
+  app/src/ui/ParamBus.cpp
+  app/src/io/FolderList.cpp
+  app/src/remote/RemoteApply.cpp
+)
+target_include_directories(setup_test PRIVATE app/src)
 
 if(APPLE)
   # Provide Info.plist for bundle (required for camera privacy and Continuity Camera)
