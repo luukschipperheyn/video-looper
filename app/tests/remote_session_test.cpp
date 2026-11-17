@@ -243,16 +243,17 @@ int main() {
 
 		std::string res = httpGet(port, "/");
 		check(res.rfind("HTTP/1.1 403", 0) == 0, "2. GET / without token returns 403");
-		check(res.find("id=\"connection\"") == std::string::npos, "2. 403 carries no page body");
+		check(res.find("id=\"two-hands\"") == std::string::npos, "2. 403 carries no page body");
 		res = httpGet(port, "/?token=" + std::string(32, '0'));
 		check(res.rfind("HTTP/1.1 403", 0) == 0, "2. GET / with a wrong token returns 403");
 
 		res = httpGet(port, "/?token=" + token);
 		check(res.rfind("HTTP/1.1 200", 0) == 0, "3. GET /?token returns 200");
-		check(res.find("id=\"connection\"") != std::string::npos, "3. page body contains id=\"connection\"");
+		check(res.find("id=\"two-hands\"") != std::string::npos, "3. page body contains id=\"two-hands\"");
 		const std::string bpmSchema = R"("bpm":{"type":"float","min":40,"max":240,"writable":true})";
 		check(res.find("/*CONTROL_SCHEMA*/") == std::string::npos && res.find(bpmSchema) != std::string::npos,
 		      "3. page carries the control schema");
+		check(res.find("relativeDrag") != std::string::npos, "3. page carries the gesture module");
 
 		fd = connectTo(port);
 		std::string req = upgradeRequest("/ws");
@@ -787,7 +788,7 @@ int main() {
 		check(!session.tokenRequired() && session.url().find("token=") == std::string::npos,
 		      "42. the URL drops the token when it is off");
 		std::string res = httpGet(port, "/");
-		check(res.rfind("HTTP/1.1 200", 0) == 0 && res.find("id=\"connection\"") != std::string::npos,
+		check(res.rfind("HTTP/1.1 200", 0) == 0 && res.find("id=\"two-hands\"") != std::string::npos,
 		      "42. GET / without a token returns the page when the token is off");
 		check(httpGet(port, "/?token=" + token).rfind("HTTP/1.1 200", 0) == 0,
 		      "42. GET / with the token still returns the page when the token is off");
