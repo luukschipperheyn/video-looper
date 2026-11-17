@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 
 namespace {
 
@@ -71,7 +72,11 @@ ApplyResult applyRemoteSet(ParamBus& params, const RemoteSet& set) {
 	return {false, {}, tempoChanged, v};
 }
 
-std::string remoteSnapshot(const ParamBus& params) {
+GateState combineHolds(GateInputs in) {
+	return {in.latch || in.space || in.pad, in.cueLatch || in.cueKey || in.cuePad};
+}
+
+std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live) {
 	std::string out = "{\"t\":\"snapshot\"";
 	for (const Control& c : kControls) {
 		out += ",\"";
@@ -92,6 +97,11 @@ std::string remoteSnapshot(const ParamBus& params) {
 			break;
 		}
 	}
+	std::string video;
+	if (params.getInt("source_kind") == 1) video = std::filesystem::path(params.getString("file_path")).filename();
+	out += ",\"loop\":" + jsonNumber(live.loop) + ",\"envelope\":" + jsonNumber(live.envelope) +
+	       ",\"stage\":" + std::to_string(live.stage) + ",\"gate\":" + (live.gate ? "true" : "false") +
+	       ",\"cue\":" + (live.cue ? "true" : "false") + ",\"video\":" + jsonString(video);
 	return out + "}";
 }
 

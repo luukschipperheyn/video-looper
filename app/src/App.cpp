@@ -168,6 +168,7 @@ int App::run() {
 	params.setFloat("record_fps", 60.0f);
 	params.setString("record_path", "");
 	params.setBool("ipad_page", false);
+	params.setFloat("silence_ms", 300.0f);
 
 	const char* home = std::getenv("HOME");
 	RemoteSession remote(std::filesystem::path(home ? home : ".") /
@@ -405,6 +406,24 @@ int App::run() {
 		float mixf = rs.mix;
 		float gainMix = params.getFloat("gain_mix", 1.0f);
 
+		remote.setEnabled(params.getBool("ipad_page", false));
+		if (remote.enabled()) {
+			remote.setSilenceWindow(int(params.getFloat("silence_ms", 300.0f)));
+			for (const RemoteSet& set : remote.drain()) {
+				if (set.kind == RemoteKind::Panic) {
+					params.setBool("arm_record", false);
+					params.setBool("cue_active", false);
+					continue;
+				}
+				ApplyResult result = applyRemoteSet(params, set);
+				if (result.reject) remote.send(rejectFrame(set.name, result.reason));
+				if (result.tempoChanged && params.getBool("link_enabled", false)) link.setTempo(result.bpm);
+			}
+		} else {
+			params.setBool("ipad_page", false);
+		}
+		RemoteSession::PadState pads = remote.pads();
+
 		// Compute record/cue and envelope
 		static float envVal = 0.0f;
 		static int envPhase = 0;
@@ -412,8 +431,10 @@ int App::run() {
 		bool commitActive = params.getBool("commit_active", false);
 		bool spaceHeld = (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS);
 		bool cHeld = (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS);
-		bool cueActive = cHeld || params.getBool("cue_active", false);
-		bool recGate = params.getBool("arm_record", false) || spaceHeld;
+		GateState combine = combineHolds({params.getBool("arm_record", false), spaceHeld, pads.gate,
+		                                  params.getBool("cue_active", false), cHeld, pads.cue});
+		bool cueActive = combine.cue;
+		bool recGate = combine.gate;
 
 		if (cueActive) shouldRecordOnRelease = false;
 		if (recGate) shouldRecordOnRelease = true;
@@ -748,21 +769,14 @@ int App::run() {
 			params.setBool("preview_window", false);
 		}
 
-		remote.setEnabled(params.getBool("ipad_page", false));
 		if (remote.enabled()) {
-			for (const RemoteSet& set : remote.drain()) {
-				ApplyResult result = applyRemoteSet(params, set);
-				if (result.reject) remote.send(rejectFrame(set.name, result.reason));
-				if (result.tempoChanged && params.getBool("link_enabled", false)) link.setTempo(result.bpm);
-			}
-			std::string snapshot = remoteSnapshot(params);
+			RemoteLive live{(float(idx0) + mixf) / float(ring.size()), envVal, envPhase, recGate, cueActive};
+			std::string snapshot = remoteSnapshot(params, live);
 			if (snapshot != remoteSnapshotSent) {
 				remoteSnapshotSent = snapshot;
 				remote.setSnapshot(snapshot);
 				remote.send(std::move(snapshot));
 			}
-		} else {
-			params.setBool("ipad_page", false);
 		}
 
 		ImGui_ImplOpenGL3_NewFrame();

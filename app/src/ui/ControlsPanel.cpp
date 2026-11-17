@@ -172,6 +172,9 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			ImGui::Separator();
 			bool ipad = params.getBool("ipad_page", false);
 			if (ImGui::Checkbox("iPad page", &ipad)) params.setBool("ipad_page", ipad);
+			float silence = params.getFloat("silence_ms", 300.0f);
+			if (ImGui::SliderFloat("Silence window (ms)", &silence, 50.0f, 2000.0f))
+				params.setFloat("silence_ms", silence);
 			if (ipad && remote.enabled()) {
 				std::string url = remote.url();
 				ImGui::InputText("URL", url.data(), url.size() + 1, ImGuiInputTextFlags_ReadOnly);

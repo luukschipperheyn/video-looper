@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -162,8 +163,8 @@ static std::vector<RemoteSet> waitDrain(RemoteSession& session) {
 	return {};
 }
 
-static void publish(RemoteSession& session, const ParamBus& params) {
-	std::string snapshot = remoteSnapshot(params);
+static void publish(RemoteSession& session, const ParamBus& params, const RemoteLive& live = {}) {
+	std::string snapshot = remoteSnapshot(params, live);
 	session.setSnapshot(snapshot);
 	session.send(snapshot);
 }
@@ -187,6 +188,27 @@ static bool waitFor(const RemoteSession& session, int count) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
 	return false;
+}
+
+static bool waitPads(const RemoteSession& session, bool gate, bool cue) {
+	for (int i = 0; i < 100; ++i) {
+		RemoteSession::PadState p = session.pads();
+		if (p.gate == gate && p.cue == cue) return true;
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	return false;
+}
+
+static std::atomic<RemoteSession::TimePoint> fakeNow{RemoteSession::TimePoint(std::chrono::hours(1))};
+static RemoteSession::TimePoint fakeClock() { return fakeNow.load(); }
+
+static Ws openClient(uint16_t port, const std::string& token) {
+	Ws ws{connectTo(port), {}};
+	std::string req = upgradeRequest("/ws?token=" + token), head;
+	send(ws.fd, req.data(), req.size(), 0);
+	readHead(ws, head);
+	readText(ws);
+	return ws;
 }
 
 int main() {
@@ -359,6 +381,97 @@ int main() {
 		session.setEnabled(false);
 		check(!session.enabled() && session.clientCount() == 0, "17. disabling returns with a handshake pending");
 		close(pending);
+		close(client.fd);
+	}
+
+	check(combineHolds({false, false, true, false, false, false}).gate, "18. a pad alone opens the gate");
+	check(combineHolds({false, true, true, false, false, false}).gate &&
+	          combineHolds({false, true, false, false, false, false}).gate,
+	      "18. Space plus a pad stays open when the pad releases");
+	check(!combineHolds({false, false, false, false, false, false}).gate, "18. both released closes the gate");
+	check(combineHolds({true, false, false, false, false, false}).gate, "18. Latch keeps the gate open with no pad");
+	check(combineHolds({false, false, false, false, false, true}).cue &&
+	          !combineHolds({false, false, false, false, false, true}).gate,
+	      "18. a Cue pad opens Cue and not the gate");
+	{
+		RemoteSession session(tokenFile, "127.0.0.1", 0);
+		session.setClock(fakeClock);
+		session.setEnabled(true);
+		uint16_t port = session.port();
+		ParamBus params;
+		Ws client = openClient(port, session.token());
+
+		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"gate"})");
+		check(waitPads(session, true, false), "19. a gate hold opens the gate pad");
+		RemoteLive live;
+		live.gate = session.pads().gate;
+		publish(session, params, live);
+		check(field(readText(client), "gate") == "true", "19. the client reads \"gate\":true");
+		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"cue"})");
+		check(waitPads(session, true, true), "19. a cue hold opens the Cue pad");
+		live.cue = session.pads().cue;
+		publish(session, params, live);
+		check(field(readText(client), "cue") == "true", "19. the client reads \"cue\":true");
+
+		fakeNow = fakeNow.load() + std::chrono::milliseconds(301);
+		RemoteSession::PadState p = session.pads();
+		check(!p.gate && !p.cue, "20. with no hold for longer than the silence window both pads drop");
+		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"gate"})");
+		check(waitPads(session, true, false), "20. a new hold reopens the gate pad");
+		sendFrame(client.fd, 0x1, R"({"t":"release","name":"gate"})");
+		check(waitPads(session, false, false), "20. a release drops the gate pad without waiting");
+		sendFrame(client.fd, 0x1, R"({"t":"release","name":"cue"})");
+		session.setSilenceWindow(1000);
+		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"gate"})");
+		check(waitPads(session, true, false), "20. a hold under a 1000 ms window opens the gate pad");
+		fakeNow = fakeNow.load() + std::chrono::milliseconds(500);
+		check(session.pads().gate, "20. the gate pad stays down 500 ms later under a 1000 ms window");
+		sendFrame(client.fd, 0x1, R"({"t":"release","name":"gate"})");
+		check(waitPads(session, false, false), "20. release clears the gate pad");
+		session.setSilenceWindow(300);
+
+		params.setBool("arm_record", true);
+		Ws other = openClient(port, session.token());
+		sendFrame(other.fd, 0x1, R"({"t":"hold","name":"gate"})");
+		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"cue"})");
+		check(waitPads(session, true, true), "21. holds from two clients are both down");
+		close(other.fd);
+		check(waitPads(session, false, true), "21. closing one socket drops only that client's pads");
+		check(params.getBool("arm_record"), "21. the Latch stays on after the socket closes");
+		sendFrame(client.fd, 0x1, R"({"t":"release","name":"cue"})");
+		check(waitPads(session, false, false), "21. the other client's release drops its Cue pad");
+
+		params.setBool("cue_active", true);
+		params.setFloat("bpm", 128.0f);
+		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"gate"})");
+		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"cue"})");
+		check(waitPads(session, true, true), "22. both pads are down before panic");
+		sendFrame(client.fd, 0x1, R"({"t":"panic"})");
+		std::vector<RemoteSet> sets = waitDrain(session);
+		for (const RemoteSet& set : sets) {
+			if (set.kind != RemoteKind::Panic) continue;
+			params.setBool("arm_record", false);
+			params.setBool("cue_active", false);
+		}
+		p = session.pads();
+		check(sets.size() == 1 && sets[0].kind == RemoteKind::Panic, "22. panic drains as one Panic item");
+		check(!params.getBool("arm_record") && !params.getBool("cue_active") && !p.gate && !p.cue,
+		      "22. after panic the Latch, the latched Cue, and both pads are clear");
+		check(params.getFloat("bpm") == 128.0f, "22. panic leaves other params alone");
+
+		params.setString("file_path", "/tmp/videos/clip.mov");
+		params.setInt("source_kind", 1);
+		publish(session, params, {0.25f, 0.5f, 3, true, false});
+		std::string payload = readText(client);
+		check(field(payload, "loop") == "0.25" && field(payload, "envelope") == "0.5" && field(payload, "stage") == "3",
+		      "23. the client reads loop, envelope, and stage");
+		check(field(payload, "video") == "\"clip.mov\"", "23. the client reads \"video\":\"clip.mov\"");
+		check(field(payload, "gate") == "true" && field(payload, "cue") == "false",
+		      "23. the client reads the gate and Cue flags");
+		params.setInt("source_kind", 0);
+		publish(session, params);
+		check(field(readText(client), "video") == "\"\"", "23. video is empty when the Source is not a Video");
+
 		close(client.fd);
 	}
 	std::filesystem::remove_all(dir);

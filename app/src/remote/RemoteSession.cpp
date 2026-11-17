@@ -129,8 +129,15 @@ bool isJsonValue(const std::string& raw) {
 	return end == raw.c_str() + raw.size();
 }
 
-// Parses {"t":"set","name":"...","value":<bool|number|string>} with keys in any order.
-bool parseSet(const std::string& json, RemoteSet& out) {
+// The fields of one client message, each as its raw JSON token, or empty when absent.
+struct Message {
+	std::string type;
+	std::string name;
+	std::string value;
+};
+
+// Parses one flat JSON object such as {"t":"set","name":"...","value":<bool|number|string>} with keys in any order.
+bool parseMessage(const std::string& json, Message& out) {
 	size_t i = 0;
 	auto skipSpace = [&] {
 		while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
@@ -160,20 +167,24 @@ bool parseSet(const std::string& json, RemoteSet& out) {
 		return !raw.empty();
 	};
 
-	std::string key, raw, type, name, value;
+	std::string key, raw;
 	if (!expect('{')) return false;
 	do {
 		if (!token(key) || key[0] != '"' || !expect(':') || !token(raw)) return false;
-		if (key == "\"t\"") type = raw;
-		if (key == "\"name\"") name = raw;
-		if (key == "\"value\"") value = raw;
+		if (key == "\"t\"") out.type = raw;
+		if (key == "\"name\"") out.name = raw;
+		if (key == "\"value\"") out.value = raw;
 	} while (expect(','));
 	if (!expect('}')) return false;
 	skipSpace();
-	if (i != json.size() || type != "\"set\"") return false;
+	return i == json.size();
+}
+
+bool toSet(const Message& msg, RemoteSet& out) {
+	const std::string& name = msg.name;
 	if (name.size() < 3 || name[0] != '"' || name.find('\\') != std::string::npos) return false;
-	if (value.empty() || !isJsonValue(value)) return false;
-	out = {name.substr(1, name.size() - 2), value};
+	if (msg.value.empty() || !isJsonValue(msg.value)) return false;
+	out = {name.substr(1, name.size() - 2), msg.value};
 	return true;
 }
 
@@ -313,6 +324,10 @@ void RemoteSession::serve() {
 		if (fds[1].revents) clearWake();
 		for (size_t i = fds.size() - 1; i >= 2; --i) {
 			if (!fds[i].revents || readFrames(sockets[i - 2])) continue;
+			{
+				std::lock_guard<std::mutex> lock(holdMutex);
+				holds.erase(fds[i].fd);
+			}
 			close(fds[i].fd);
 			sockets.erase(sockets.begin() + long(i - 2));
 		}
@@ -326,6 +341,10 @@ void RemoteSession::serve() {
 				close(fd);
 		}
 		clients = int(sockets.size());
+	}
+	{
+		std::lock_guard<std::mutex> lock(holdMutex);
+		holds.clear();
 	}
 	for (const Client& c : sockets) close(c.fd);
 	clients = 0;
@@ -363,13 +382,38 @@ bool RemoteSession::readFrames(Client& client) {
 			return false;
 		}
 		if (opcode == 0x9) sendAll(client.fd, serverFrame(0xA, payload));
+		Message msg;
+		if (opcode != 0x1 || !fin || !parseMessage(payload, msg)) continue;
 		RemoteSet set;
-		if (opcode == 0x1 && fin && parseSet(payload, set)) {
+		if (msg.type == "\"set\"" && toSet(msg, set)) {
 			std::lock_guard<std::mutex> lock(queueMutex);
 			inbox.push_back(std::move(set));
+		} else if (msg.type == "\"hold\"" || msg.type == "\"release\"") {
+			TimePoint at = msg.type == "\"hold\"" ? clock.load()() : TimePoint::min();
+			std::lock_guard<std::mutex> lock(holdMutex);
+			if (msg.name == "\"gate\"") holds[client.fd].gate = at;
+			if (msg.name == "\"cue\"") holds[client.fd].cue = at;
+		} else if (msg.type == "\"panic\"") {
+			{
+				std::lock_guard<std::mutex> lock(holdMutex);
+				holds.clear();
+			}
+			std::lock_guard<std::mutex> lock(queueMutex);
+			inbox.push_back({{}, {}, RemoteKind::Panic});
 		}
 	}
 	return true;
+}
+
+RemoteSession::PadState RemoteSession::pads() const {
+	TimePoint since = clock.load()() - std::chrono::milliseconds(silenceMs.load());
+	PadState out{false, false};
+	std::lock_guard<std::mutex> lock(holdMutex);
+	for (const auto& [fd, h] : holds) {
+		out.gate = out.gate || h.gate > since;
+		out.cue = out.cue || h.cue > since;
+	}
+	return out;
 }
 
 // Waits up to 2 s for fd to become readable. Returns false on timeout or when the session stops.

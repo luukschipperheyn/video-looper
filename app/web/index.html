@@ -19,11 +19,27 @@
 	input[type=range] { flex: 1; height: 32px; }
 	input[type=checkbox] { width: 32px; height: 32px; margin: 0; }
 	select { font-size: 18px; padding: 4px 8px; }
+	#pads { display: flex; gap: 16px; margin-top: 20px; }
+	#pads button { flex: 1; height: 160px; font-size: 24px; font-weight: 600; color: #eee; background: #333;
+		border: 2px solid #555; border-radius: 12px; touch-action: none; user-select: none;
+		-webkit-user-select: none; }
+	#pads button.open { border-color: #f44; }
+	#pads button.down { background: #a22; }
+	#pads #panic { flex: 0 0 8em; background: #600; }
+	#live output { font-variant-numeric: tabular-nums; font-weight: 600; }
 </style>
 </head>
 <body>
 <p>iPad page: <span id="connection">connecting</span></p>
 <p>Export: <span id="export-state">stopped</span> <span id="export-reason"></span></p>
+<p id="live">Loop <output id="live-loop">0%</output> · Envelope <output id="live-envelope">0.00</output> ·
+	Stage <output id="live-stage">idle</output> · Gate <output id="live-gate">closed</output> ·
+	Cue <output id="live-cue">closed</output> · Video <output id="live-video">none</output></p>
+<div id="pads">
+	<button id="pad-gate">Overdub</button>
+	<button id="pad-cue">Cue</button>
+	<button id="panic">PANIC</button>
+</div>
 <div id="controls"></div>
 <script>
 	const schema = /*CONTROL_SCHEMA*/null;
@@ -146,13 +162,60 @@
 	window.addEventListener("pointerup", release);
 	window.addEventListener("pointercancel", release);
 
+	const pads = {};
+	// Returns whether the pad was down.
+	function stopPad(name) {
+		const pad = pads[name];
+		if (!pad.timer) return false;
+		clearInterval(pad.timer);
+		pad.timer = 0;
+		pad.el.classList.remove("down");
+		return true;
+	}
+	for (const name of ["gate", "cue"]) {
+		const el = document.getElementById(`pad-${name}`);
+		pads[name] = { el, timer: 0 };
+		el.addEventListener("pointerdown", (event) => {
+			if (connection.textContent !== "connected" || pads[name].timer) return;
+			el.setPointerCapture(event.pointerId);
+			const hold = () => socket.send(JSON.stringify({ t: "hold", name }));
+			hold();
+			pads[name].timer = setInterval(hold, 100);
+			el.classList.add("down");
+		});
+		const up = () => {
+			if (stopPad(name) && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ t: "release", name }));
+		};
+		el.addEventListener("pointerup", up);
+		el.addEventListener("pointercancel", up);
+	}
+	document.getElementById("panic").addEventListener("click", () => {
+		if (socket.readyState !== WebSocket.OPEN) return;
+		socket.send(JSON.stringify({ t: "panic" }));
+		for (const name in pads) stopPad(name);
+	});
+
+	const stages = ["idle", "attack", "decay", "sustain", "release"];
+	const live = (id, text) => { document.getElementById(`live-${id}`).textContent = text; };
+
 	socket.onopen = () => { connection.textContent = "connected"; };
-	socket.onclose = () => { connection.textContent = "disconnected"; };
+	socket.onclose = () => {
+		connection.textContent = "disconnected";
+		for (const name in pads) stopPad(name);
+	};
 	socket.onmessage = (event) => {
 		const msg = JSON.parse(event.data);
 		if (msg.t === "snapshot") {
 			Object.assign(state, msg);
 			for (const name in controls) if (!busy(controls[name].el)) show(name);
+			live("loop", `${Math.round(state.loop * 100)}%`);
+			live("envelope", state.envelope.toFixed(2));
+			live("stage", stages[state.stage] || String(state.stage));
+			live("gate", state.gate ? "open" : "closed");
+			live("cue", state.cue ? "open" : "closed");
+			live("video", state.video || "none");
+			pads.gate.el.classList.toggle("open", state.gate);
+			pads.cue.el.classList.toggle("open", state.cue);
 			exportState.textContent = state.record_enabled ? "running" : "stopped";
 			exportState.className = state.record_enabled ? "running" : "";
 			if (state.record_enabled) exportReason.textContent = "";
