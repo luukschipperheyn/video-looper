@@ -94,6 +94,8 @@ Ring size is fixed at **120** frames at current framebuffer resolution (`ring.se
 | Black (2) | Clear preview FBO to black |
 | Webcam (3) | `AVFWebcamSource` by `webcam_index` |
 
+File and webcam frames are drawn into the Source, then that image is what an Overdub writes. **Preserve aspect** (`video_aspect`, default on) fits them with contain: the image fills the loop's width or its height. Off stretches them to the loop frame first. **Black bars** (`video_bars`, default on) paints the unused side black; off leaves it transparent, so the Loop shows through and an Overdub does not paint it. The iPad Source trackpad drags with one finger to translate and pinches to scale and rotate (`video_tx`, `video_ty`, `video_sx`, `video_sy`, `video_rot`, identity at 0, 0, 1, 1, 0). With Preserve aspect on, a pinch scales both axes together. Shader and Black ignore the transform and fill the loop frame. The switches are on the Mac Source section and the iPad Source section.
+
 **Folder / random commit** (`SourceController`):
 
 - `videos_folder` scanned for `.mp4/.mov/.m4v/.mkv/.avi`  
@@ -196,7 +198,7 @@ Hotkeys ignore ImGui keyboard capture (`wantKb` hardcoded false).
 
 ## ParamBus defaults (init)
 
-Notable defaults from `App.cpp` ~120–162: `show_ui`, `gain_mix=1`, `record_blend_opacity=1`, `bpm=120`, `quantum=4`, `read_speed_mult=1`, `tempo_coupled=true`, Link off, `source_kind=Shader`, `env_enabled=true` (A/D/S/R 0.05/0.20/1.0/0.30), `fx_enabled=false`, `record_fps=60`, preview on inset scale 0.3, playheads on.
+Notable defaults from `App.cpp` ~120–162: `show_ui`, `gain_mix=1`, `record_blend_opacity=1`, `bpm=120`, `quantum=4`, `read_speed_mult=1`, `tempo_coupled=true`, Link off, `source_kind=Shader`, `video_bars=true`, `env_enabled=true` (A/D/S/R 0.05/0.20/1.0/0.30), `fx_enabled=false`, `record_fps=60`, preview on inset scale 0.3, playheads on.
 
 Keys used elsewhere but not all initialized at startup (rely on get defaults): e.g. `file_run_mode`, `file_loop_start`, `file_loop_length`.
 

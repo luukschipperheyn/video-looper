@@ -23,6 +23,7 @@
 #include "io/SourceController.hpp"
 #include "io/VideoThumbs.hpp"
 #include "link/LinkBridge.hpp"
+#include "util/ContainRect.hpp"
 #include "util/GlUtils.hpp"
 #include "io/AVFRecorder.hpp"
 #include "remote/RemoteApply.hpp"
@@ -78,10 +79,12 @@ int App::run() {
 
 	ShaderProgram shaderTest;
 	ShaderProgram shaderBlit;
+	ShaderProgram shaderFit;
 	ShaderProgram shaderBlendTwo;
 	std::string vsPath = std::string(SHADER_DIR) + "/fullscreen.vert";
 	std::string testFragPath = std::string(SHADER_DIR) + "/test_pattern.frag";
 	std::string blitFragPath = std::string(SHADER_DIR) + "/texture_blit.frag";
+	std::string fitFragPath = std::string(SHADER_DIR) + "/video_fit.frag";
 	std::string blendTwoFragPath = std::string(SHADER_DIR) + "/texture_blend_two.frag";
 	std::string feedbackFragPath = std::string(SHADER_DIR) + "/feedback.frag";
 	std::string feedbackDiffFragPath = std::string(SHADER_DIR) + "/feedback_diff.frag";
@@ -91,6 +94,7 @@ int App::run() {
 	std::string blurYFragPath = std::string(SHADER_DIR) + "/fx_blur_y.frag";
 	shaderTest.loadFromFiles(vsPath, testFragPath);
 	shaderBlit.loadFromFiles(vsPath, blitFragPath);
+	shaderFit.loadFromFiles(vsPath, fitFragPath);
 	shaderBlendTwo.loadFromFiles(vsPath, blendTwoFragPath);
 	fx.init(fbw, fbh, vsPath, feedbackFragPath, feedbackDiffFragPath, feedbackChromaFragPath, feedbackKaleidoFragPath,
 	        blurXFragPath, blurYFragPath);
@@ -105,6 +109,7 @@ int App::run() {
 	hot.watch(vsPath);
 	hot.watch(testFragPath);
 	hot.watch(blitFragPath);
+	hot.watch(fitFragPath);
 	hot.watch(blendTwoFragPath);
 	fx.registerWatches(hot);
 	FullscreenQuad quad;
@@ -139,6 +144,13 @@ int App::run() {
 	params.setBool("preview_window", false);
 	params.setFloat("preview_scale", 0.3f);
 	params.setInt("source_kind", (int)SourceKind::Shader);
+	params.setBool("video_bars", true);
+	params.setBool("video_aspect", true);
+	params.setFloat("video_tx", 0.0f);
+	params.setFloat("video_ty", 0.0f);
+	params.setFloat("video_sx", 1.0f);
+	params.setFloat("video_sy", 1.0f);
+	params.setFloat("video_rot", 0.0f);
 	params.setInt("record_blend_mode", 0);
 	params.setInt("webcam_index", 0);
 	params.setString("file_path", "");
@@ -330,6 +342,7 @@ int App::run() {
 
 		if (hot.changed(vsPath) || hot.changed(testFragPath)) shaderTest.loadFromFiles(vsPath, testFragPath);
 		if (hot.changed(vsPath) || hot.changed(blitFragPath)) shaderBlit.loadFromFiles(vsPath, blitFragPath);
+		if (hot.changed(vsPath) || hot.changed(fitFragPath)) shaderFit.loadFromFiles(vsPath, fitFragPath);
 		if (hot.changed(vsPath) || hot.changed(blendTwoFragPath))
 			shaderBlendTwo.loadFromFiles(vsPath, blendTwoFragPath);
 		fx.hotReload(hot);
@@ -374,6 +387,35 @@ int App::run() {
 			glViewport(0, 0, fbw, fbh);
 			glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		} else if ((srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
+		           source.frameTexture() != 0 && source.frameWidth() > 0 && source.frameHeight() > 0) {
+			bool bars = params.getBool("video_bars", true);
+			bool aspect = params.getBool("video_aspect", true);
+			float sx = params.getFloat("video_sx", 1.0f);
+			float sy = aspect ? sx : params.getFloat("video_sy", 1.0f);
+			float tx = params.getFloat("video_tx", 0.0f);
+			float ty = params.getFloat("video_ty", 0.0f);
+			float rot = params.getFloat("video_rot", 0.0f);
+			float baseW = static_cast<float>(fbw);
+			float baseH = static_cast<float>(fbh);
+			if (aspect) {
+				ContainRect fitted = containRect(source.frameWidth(), source.frameHeight(), fbw, fbh);
+				baseW = static_cast<float>(fitted.w);
+				baseH = static_cast<float>(fitted.h);
+			}
+			glBindFramebuffer(GL_FRAMEBUFFER, source.getPreviewFbo());
+			glViewport(0, 0, fbw, fbh);
+			shaderFit.use();
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, source.frameTexture());
+			shaderFit.setUniform("uTex", 0);
+			shaderFit.setUniform("uFrame", static_cast<float>(fbw), static_cast<float>(fbh));
+			shaderFit.setUniform("uCenter", (0.5f + tx) * fbw, (0.5f + ty) * fbh);
+			shaderFit.setUniform("uHalf", baseW * 0.5f * sx, baseH * 0.5f * sy);
+			shaderFit.setUniform("uRot", rot);
+			shaderFit.setUniform("uOutside", bars ? 1.0f : 0.0f);
+			quad.draw();
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
 

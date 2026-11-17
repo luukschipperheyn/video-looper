@@ -51,11 +51,16 @@ public:
 	// Query information for UI/debugging
 	GLuint getPreviewTexture() const { return previewTex; }
 	GLuint getPreviewFbo() const { return previewFbo; }
+	// Latest file or webcam frame at its own pixel size, before it is fitted into the loop frame.
+	GLuint frameTexture() const { return frameTex; }
+	int frameWidth() const { return frameW; }
+	int frameHeight() const { return frameH; }
 	float getFileNominalFps() const { return fileSrc.nominalFps(); }
 
 private:
 	void allocatePreview(int width, int height);
 	void destroyPreview();
+	void ensureFrameTexture();
 	bool swapInLoaded(ParamBus& params);
 	void ensureSource(ParamBus& params);
 	void startLoad(const LoadRequest& request);
@@ -69,6 +74,9 @@ private:
 	int h;
 	GLuint previewTex;
 	GLuint previewFbo;
+	GLuint frameTex;
+	int frameW;
+	int frameH;
 
 	AVFWebcamSource webcam;
 	bool webcamActive;

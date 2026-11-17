@@ -323,6 +323,13 @@ int main() {
 		pump(session, params);
 		check(field(readText(client), "webcam_index") == "0", "10. webcam_index -3 comes back clamped to 0");
 
+		params.setFloat("video_sx", 2.0f);
+		params.setFloat("video_sy", 0.5f);
+		sendFrame(client.fd, 0x1, setFrame("video_aspect", "true"));
+		pump(session, params);
+		check(field(readText(client), "video_sy") == "2" && params.getFloat("video_sy") == 2.0f,
+		      "10. Preserve aspect copies scale x onto scale y");
+
 		params.setFloat("quantum", 4.0f);
 		const std::pair<std::string, std::string> readOnly[] = {{"record_path", "\"/tmp/evil.mov\""},
 		                                                        {"quantum", "8"},
