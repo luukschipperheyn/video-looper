@@ -6,6 +6,14 @@ Entry: `app/src/main.cpp` → `App::run()` in `app/src/App.cpp`.
 
 ---
 
+## Usage context
+
+Target use is **live VJ performance**: steady frame rate and no hitches or lost loops mid-set outweigh offline quality. No formal memory or resolution budget is set yet.
+
+GPU memory is dominated by the ring: `2 banks × 120 frames × fbW × fbH × 4 bytes`. Framebuffer size is in physical pixels, so a 1280×720 window on Retina (2560×1440) costs ~3.5 GB; fullscreen 4K costs ~8 GB. Any feature that adds per-frame GPU storage multiplies against this.
+
+---
+
 ## Platforms / deps / build
 
 | Item | As implemented |
@@ -192,21 +200,32 @@ Keys used elsewhere but not all initialized at startup (rely on get defaults): e
 
 ---
 
-## Stubs / conditionals / observed gaps
+## Stubs / conditionals
 
-Documented as **code facts**, not backlog:
+By design:
 
 | Observation | Where |
 |-------------|--------|
 | Ableton Link optional; stub without SDK | `LinkBridge.*`, CMake `USE_ABLETON_LINK` |
 | No audio capture/playback/sync | no audio sources under `app/` |
-| Source hotkey cycle omits Webcam | `App.cpp` `=` capped at `SourceKind::Black` |
-| Hotkeys always active vs text fields | `wantKb = false` |
 | `RingBuffer::commitWrite` no-op | bank flip only on wrap |
-| Disk record path is audition composite | may diverge from FX-presented main view |
-| Verbose `[rec]` printf per captured frame | `App.cpp` capture loop |
-| Bundle id `com.example.video-looper` | `Info.plist` |
 | macOS / OpenGL only | CMake Apple frameworks |
+
+---
+
+## Known bugs
+
+Confirmed unintentional by the owner. Fix rather than preserve.
+
+| Bug | Where |
+|-----|-------|
+| `-`/`=` source cycle stops at Black; Webcam unreachable by hotkey | `App.cpp` `=` capped at `SourceKind::Black` |
+| Hotkeys fire while typing in ImGui text fields | `App.cpp` `wantKb = false` |
+| Preview ignores the ADSR envelope (always full record opacity) | `App.cpp` preview audition pass |
+| Disk recording captures the audition composite, not the presented main view (FX missing) | `App.cpp` capture reads `auditionFboB` |
+| Editing `file_path` while a file is playing does not reload it | `SourceController::ensureSource` only starts when `!fileActive` |
+| `[rec]` printf on every captured frame | `App.cpp` capture loop |
+| Placeholder bundle id `com.example.video-looper` | `Info.plist` |
 
 ---
 
@@ -218,8 +237,7 @@ Documented as **code facts**, not backlog:
 4. **Resize invalidates** ring contents (full `setup` destroy/recreate) and aborts disk recording.  
 5. **Read interpolation** — present mixes `idx0`/`idx1` with `gain_mix`; write path uses integer slot indices.  
 6. **FX present vs commit** — live FX is a present-path effect unless `fx_commit` bakes last FX texture into the loop.  
-7. **Preview vs main** — inset/separate preview shows `auditionTexB` (loop+live at full record opacity, not envelope), except during cue/recording when main already shows that composite; debug can show back-bank slot instead.  
-8. **File path change** — `ensureSource` only `startFile` when `!fileActive`; changing `file_path` while already active may not reload until stop (prev/next/commit explicitly stop first).
+7. **Preview vs main** — inset/separate preview shows `auditionTexB` (loop + live overlay); debug toggle shows the back-bank slot instead.
 
 ---
 
