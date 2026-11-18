@@ -1,483 +1,1544 @@
 <!doctype html>
-<html lang="en">
+<html lang="nl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Video Looper</title>
 <style>
-	body { margin: 0; padding: 24px; background: #111; color: #eee; font: 18px -apple-system, sans-serif; }
-	#connection { font-weight: 600; }
-	#export-state { font-weight: 600; }
-	#export-state.running { color: #f44; }
-	#export-reason { color: #fa0; }
-	section { margin-top: 20px; }
-	h2 { margin: 0 0 4px; font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
-	label { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
-	label > span { flex: 0 0 9em; }
-	label > output { flex: 0 0 4em; text-align: right; font-variant-numeric: tabular-nums; }
-	input[type=range] { flex: 1; height: 32px; }
-	input[type=checkbox] { width: 32px; height: 32px; margin: 0; }
-	select { font-size: 18px; padding: 4px 8px; }
-	#pads { display: flex; gap: 16px; margin-top: 20px; }
-	#pads button { flex: 1; height: 160px; font-size: 24px; font-weight: 600; color: #eee; background: #333;
-		border: 2px solid #555; border-radius: 12px; touch-action: none; user-select: none;
-		-webkit-user-select: none; }
-	#pads button.open { border-color: #f44; }
-	#pads button.down { background: #a22; }
-	#pads #panic { flex: 0 0 8em; background: #600; }
-	#live output { font-variant-numeric: tabular-nums; font-weight: 600; }
-	#source-load { display: flex; align-items: center; gap: 12px; }
-	#source-load button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
-		border-radius: 8px; }
-	#source-reason { color: #fa0; }
-	#folders { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
-	#folders button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
-		border-radius: 8px; }
-	#folders button.current { border-color: #4af; }
-	#pager { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-	#pager[hidden] { display: none; }
-	#pager button { font-size: 18px; padding: 12px 20px; color: #eee; background: #333; border: 2px solid #555;
-		border-radius: 8px; }
-	#pager button:disabled { opacity: 0.4; }
-	#videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
-	#videos button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px; color: #eee;
-		background: #222; border: 2px solid #444; border-radius: 8px; font-size: 14px; }
-	#videos button.current { border-color: #4af; }
-	#videos img { width: 160px; height: 100px; object-fit: contain; background: #000; }
-	#videos span { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	#source-transform { margin-top: 8px; }
-	#trackpad { height: 240px; background: #181818; border: 2px solid #555; border-radius: 12px; touch-action: none;
-		position: relative; }
-	#trackpad span { position: absolute; left: 16px; right: 16px; bottom: 16px; color: #888; font-size: 14px;
-		pointer-events: none; }
-	#transform-reset { margin-top: 12px; font-size: 18px; padding: 12px 20px; color: #eee; background: #333;
-		border: 2px solid #555; border-radius: 8px; }
+:root{--bg:#0d0f10;--panel:#15181a;--panel2:#1c2023;--line:#252a2e;--line2:#333a3f;--text:#e7e9eb;--dim:#8b9297;--faint:#5c646a;
+	--rec:#ff5b4f;--cue:#45d3c8;--amber:#f3a93c;--amberd:#33250f;--ok:#93d46d;
+	--fl:#f2c46b;--fd:#6b8cf2;--fc:#c77df2;--fx:#6bf2a8;--fn:#9aa3a9}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#050606;color:var(--text);overflow:hidden;touch-action:none;
+	font:14px/1.2 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,sans-serif;
+	-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;touch-action:manipulation}
+button:disabled{opacity:.35}
+[hidden]{display:none!important}
+.num{font-variant-numeric:tabular-nums}
+#viewport{position:fixed;left:env(safe-area-inset-left);right:env(safe-area-inset-right);top:env(safe-area-inset-top);bottom:env(safe-area-inset-bottom);
+	display:flex;align-items:center;justify-content:center;overflow:hidden}
+#holder{position:relative}
+#two-hands{position:absolute;left:0;top:0;width:1366px;height:950px;transform-origin:0 0;background:var(--bg);overflow:hidden;border-radius:16px;
+	display:grid;grid-template-rows:44px 1fr;--ovl-left:296px;--ovl-right:540px}
+#two-hands .drawer{grid-template-columns:1fr}
+#two-hands main{position:relative;display:grid;grid-template-columns:196px 80px 1fr 520px;gap:10px;padding:10px;min-height:0}
+#two-hands .pcol{display:grid;grid-template-rows:3fr 76px 2fr 76px 92px;gap:8px;min-height:0}
+#two-hands .opcol{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 8px}
+#two-hands .opcol .fader{flex:1;min-height:0}
+#two-hands .adsr-slot{height:220px;display:flex;flex:none}
+#two-hands .adsr-slot .adsr{flex:1}
+.panel{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:8px;min-height:0;min-width:0}
+.ph{display:flex;align-items:center;gap:8px;min-height:24px}
+.pt{font-size:11px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);white-space:nowrap}
+.pv{font-size:13px;font-weight:600}
+.hint{font-size:11px;color:var(--faint)}
+.clip{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp{flex:1}
+.row{display:flex;align-items:center;gap:6px}
+.btn{height:40px;padding:0 12px;border-radius:8px;background:var(--panel2);border:1px solid var(--line2);font-size:13px;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+.btn:active{background:#2a3034}
+.btn.sq{width:40px;padding:0;font-size:18px}
+.col{display:flex;flex-direction:column;gap:10px;min-height:0;min-width:0}
+.seg{display:flex;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:2px;gap:2px;min-width:0}
+.seg button{flex:1;height:34px;border-radius:6px;font-size:13px;color:var(--dim);padding:0 8px;white-space:nowrap}
+.seg button.on{background:var(--text);color:#111;font-weight:650}
+.tog{height:34px;padding:0 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line2);display:inline-flex;align-items:center;gap:7px;font-size:12px;white-space:nowrap}
+.tog .led{width:8px;height:8px;border-radius:50%;background:#3a4045;flex:none}
+.tog .st{color:var(--faint);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.tog.on{border-color:#4d6a3e}
+.tog.on .led{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.tog.on .st{color:var(--ok)}
+.tog.amber.on{border-color:var(--amber);background:var(--amberd)}
+.tog.amber.on .led{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.tog.amber.on .st{color:var(--amber)}
+.dimmed>*:not(.ph){opacity:.45}
+.fader{display:flex;flex-direction:column;gap:5px;min-width:0;min-height:0}
+.fh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px;color:var(--dim)}
+.fv{color:var(--text);font-variant-numeric:tabular-nums;font-weight:650}
+.ft{position:relative;height:40px;border-radius:8px;background:#0f1214;border:1px solid var(--line2);overflow:hidden;touch-action:none;flex:none}
+.ff{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#26302a,#93d46d40);border-right:2px solid var(--ok)}
+.fader.bip .ff{border-right:0;background:#93d46d40}
+.fader.bip .ft::after{content:'';position:absolute;left:50%;top:6px;bottom:6px;width:1px;background:#ffffff30}
+.ticks{position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(90deg,transparent 0 calc(10% - 1px),#ffffff14 calc(10% - 1px) 10%)}
+.fader.off{opacity:.35;pointer-events:none}
+.fader.v{height:100%}
+.fader.v .fh{flex-direction:column;align-items:center;gap:2px}
+.fader.v .ft{flex:1;height:auto}
+.fader.v .ff{top:auto;right:0;bottom:0;width:auto;border-right:0;border-top:2px solid var(--ok);background:linear-gradient(0deg,#26302a,#93d46d40)}
+.fader.v .ticks{background:repeating-linear-gradient(0deg,transparent 0 calc(10% - 1px),#ffffff14 calc(10% - 1px) 10%)}
+.fader.big .fv{font-size:20px}
+.fader.big .fh{font-size:13px}
+.status{display:flex;align-items:center;gap:14px;padding:0 10px 0 14px;border-bottom:1px solid var(--line);background:#101314;font-size:12px;min-width:0}
+.conn{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.conn .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+.conn.lost{color:var(--amber)} .conn.lost .dot{background:var(--amber)}
+.meter{display:flex;align-items:center;gap:6px;color:var(--dim);white-space:nowrap}
+.bar{position:relative;height:8px;border-radius:4px;background:#22272b;overflow:hidden}
+.bar i{position:absolute;top:0;bottom:0;left:0}
+.lbar{width:180px} .lbar i{background:#45d3c840;border-right:2px solid var(--cue)}
+.ebar{width:60px} .ebar i{background:var(--rec)}
+.est{width:50px;color:var(--text);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.chips{display:flex;gap:4px}
+.chip{height:22px;padding:0 7px;white-space:nowrap;border-radius:5px;font-size:10px;font-weight:750;letter-spacing:.07em;text-transform:uppercase;display:inline-flex;align-items:center;border:1px solid var(--line2);color:var(--faint)}
+.chip.on.rec{background:var(--rec);border-color:var(--rec);color:#fff}
+.chip.on.cue{background:var(--cue);border-color:var(--cue);color:#032}
+.chip.on.fx{background:#2c3a26;border-color:#4d6a3e;color:var(--ok)}
+.chip.on.bake{background:var(--amber);border-color:var(--amber);color:#211}
+.nowv{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dim)}
+.nowv b{color:var(--cue);font-weight:600}
+.status .btn{height:32px;font-size:12px;padding:0 10px}
+.exp.on{border-color:var(--rec);color:#ffb3ad;background:#2b1210}
+.exp .rd{width:8px;height:8px;border-radius:50%;background:#5a2a26}
+.exp.on .rd{background:var(--rec);animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:.25}}
+.export-reason{color:var(--amber);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pad{position:relative;border-radius:12px;border:2px solid;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;padding:10px 12px;touch-action:none;min-height:0}
+.pad .fill{position:absolute;left:0;right:0;bottom:0;height:0;pointer-events:none}
+.pad .top{display:flex;justify-content:space-between;align-items:baseline;position:relative}
+.pad .nm{font-size:22px;font-weight:650}
+.pad .stg{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.pad .sb{position:relative;font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}
+.pad.rec{border-color:#6b2a25;background:#1b1211}
+.pad.rec .fill{background:linear-gradient(0deg,#ff5b4f70,#ff5b4f20)}
+.pad.rec.open{border-color:var(--rec);background:#341411}
+.pad.rec.open .sb,.pad.rec .stg{color:#ffd2ce}
+.pad.cue{border-color:#1f5450;background:#0f1a19}
+.pad.cue.open{border-color:var(--cue);background:#123a37}
+.pad.cue.open .sb{color:#d2fffb}
+.ptog{position:relative;border-radius:12px;border:2px solid var(--line2);background:var(--panel2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:6px 4px;min-height:0}
+.ptog .led{width:12px;height:12px;border-radius:50%;background:#3a4045}
+.ptog .pn{font-size:13px;font-weight:650;text-align:center}
+.ptog .ps{font-size:10px;font-weight:750;letter-spacing:.07em;color:var(--faint);text-align:center;text-transform:uppercase}
+.ptog.rec.on{border-color:var(--rec);background:#341411} .ptog.rec.on .led{background:var(--rec);box-shadow:0 0 8px var(--rec)} .ptog.rec.on .ps{color:#ffd2ce}
+.ptog.cue.on{border-color:var(--cue);background:#123a37} .ptog.cue.on .led{background:var(--cue);box-shadow:0 0 8px var(--cue)} .ptog.cue.on .ps{color:#d2fffb}
+.panic{border:2px solid #7a2a24;color:#ff8a80;border-radius:12px;background:#140c0b;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:0}
+.panic div:first-child{font-weight:800;letter-spacing:.14em;font-size:14px}
+.panic .psub{font-size:10px;color:#b0625b;text-align:center;padding:0 4px}
+.panic:active{background:#3a1512}
+.unknown{border-color:#5a4a2a!important;background:var(--panel2)!important}
+.unknown::after{content:'status onbekend';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;
+	background:repeating-linear-gradient(45deg,#000d 0 8px,#000a 8px 16px);color:var(--amber);font-size:11px;font-weight:750;letter-spacing:.06em;text-transform:uppercase;z-index:3}
+.videos{flex:1;min-height:0}
+.folders{display:flex;gap:4px;min-width:0;overflow:hidden}
+.fchip{height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--line2);background:var(--panel2);font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px;white-space:nowrap}
+.fchip.on{border-color:var(--cue);color:var(--text)}
+.vgrid{position:relative;flex:1;min-height:0;display:grid;gap:6px;align-content:start;touch-action:none;grid-template-columns:repeat(5,1fr)}
+.vc{position:relative;display:flex;flex-direction:column;gap:3px;min-width:0}
+.vc .th{position:relative;aspect-ratio:16/9;border-radius:6px;overflow:hidden;background:#000;border:2px solid transparent;transition:transform .08s}
+.vc img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;-webkit-user-drag:none}
+.vc .nm{font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:13px}
+.vc.cur .th{border-color:var(--cue)}
+.vc.cur .nm{color:var(--cue);font-weight:600}
+.vc.press .th{transform:scale(.94)}
+.vgrid.inactive .vc{opacity:.4}
+.vempty{grid-column:1/-1;padding:20px;color:var(--faint);font-size:12px;text-align:center}
+.vover{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);background:#0d0f10ee;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;align-items:center;font-size:12px;color:var(--dim);z-index:2;text-align:center;max-width:90%}
+.vover b{color:var(--text)}
+.vfoot{display:flex;align-items:center;gap:6px}
+.plabel{font-size:12px;color:var(--dim);min-width:84px;text-align:center}
+.xf{flex:1}
+.tpad{position:relative;flex:1;min-height:0;border-radius:8px;background-color:#0b0d0e;border:1px solid var(--line2);overflow:hidden;touch-action:none;
+	background-image:linear-gradient(#ffffff09 1px,transparent 1px),linear-gradient(90deg,#ffffff09 1px,transparent 1px);background-size:32px 32px;background-position:center}
+.tpad.touch{border-color:#2d6f6a}
+.lframe{position:absolute;overflow:hidden;box-shadow:0 0 0 1px #ffffff70}
+.lframe.bars{background:#000}
+.lframe .simg{position:absolute;transform-origin:50% 50%}
+.lframe .simg img{display:block;width:100%;height:100%;opacity:.8;pointer-events:none;-webkit-user-drag:none}
+.lframe.fillsrc .simg{inset:0!important;width:auto!important;height:auto!important;transform:none!important;background:repeating-linear-gradient(135deg,#2b3134 0 6px,#202528 6px 12px)}
+.sout{position:absolute;border:1.5px solid var(--cue);transform-origin:50% 50%;pointer-events:none}
+.sout span{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:10px;letter-spacing:.24em;color:var(--cue);text-shadow:0 0 4px #000}
+.flabel{position:absolute;left:6px;top:4px;font-size:9px;letter-spacing:.18em;color:#ffffffa0;text-shadow:0 0 3px #000;z-index:1}
+.xhair{position:absolute;pointer-events:none;background:#ffffff18}
+.xfread{display:flex;align-items:center;gap:14px;font-size:12px;color:var(--dim)}
+.xfread b{color:var(--text);font-weight:650;margin-left:4px}
+.xfread .btn{height:36px}
+.tpnote{position:absolute;right:8px;bottom:6px;font-size:10px;color:var(--faint);pointer-events:none}
+.bgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;touch-action:none}
+.bb{height:40px;border-radius:7px;background:var(--panel2);border:1px solid var(--line2);font-size:12.5px;position:relative;overflow:hidden;white-space:nowrap;padding:0 4px}
+.bb::before{content:'';position:absolute;left:10px;right:10px;top:0;height:3px;border-radius:0 0 3px 3px;background:var(--fam)}
+.bb.on{background:var(--text);color:#111;font-weight:700}
+.fams{display:flex;gap:8px;font-size:10px;color:var(--faint)}
+.fams i{display:inline-block;width:8px;height:3px;border-radius:2px;margin-right:3px;vertical-align:middle}
+.lr{position:relative;height:44px;border-radius:8px;background:#0f1214;border:1px solid var(--line2);touch-action:none;flex:none;
+	background-image:repeating-linear-gradient(90deg,transparent 0 calc(10% - 1px),#ffffff12 calc(10% - 1px) 10%)}
+.lr .win{position:absolute;top:-1px;bottom:-1px;background:#45d3c82a;border-top:2px solid var(--cue);border-bottom:2px solid var(--cue);touch-action:none}
+.lr .hd{position:absolute;top:-1px;bottom:-1px;width:14px;background:var(--cue);border-radius:4px;touch-action:none}
+.lr .hd::before{content:'';position:absolute;top:-6px;bottom:-6px;left:-14px;right:-14px}
+.lr .hd::after{content:'';position:absolute;left:5px;right:5px;top:14px;bottom:14px;border-left:1px solid #0337;border-right:1px solid #0337}
+.lr .hd.s{left:-7px} .lr .hd.e{right:-7px}
+.adsr{flex:1}
+.envbox{position:relative;flex:1;min-height:90px;border-radius:8px;background:#0f1214;border:1px solid var(--line2);touch-action:none;overflow:hidden}
+.envbox svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.ea{fill:#93d46d18}
+.el{fill:none;stroke:var(--ok);stroke-width:2}
+.eg{stroke:#ffffff10;stroke-width:1}
+.ed{fill:var(--rec);stroke:#fff;stroke-width:1.5}
+.eh .hit{fill:transparent}
+.eh .vis{fill:#0f1214;stroke:var(--ok);stroke-width:2}
+.eh text{fill:var(--dim);font-size:10px;font-weight:700}
+.adsr.envoff .envbox{opacity:.35}
+.envvals{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;font-size:11px;color:var(--dim)}
+.envvals b{color:var(--text);font-weight:650;margin-left:3px}
+.bpm{height:40px;min-width:78px;border-radius:8px;background:#0f1214;border:1px solid var(--line2);display:flex;align-items:baseline;justify-content:center;gap:4px;padding-top:7px;touch-action:none}
+.bpm .bv{font-size:20px;font-weight:700}
+.bpm .u{font-size:10px;color:var(--dim)}
+.overlay{position:absolute;z-index:20;top:10px;bottom:10px;right:var(--ovl-right,10px);left:var(--ovl-left,10px);background:#0d0f10f4;border:1px solid var(--line2);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:12px;box-shadow:0 10px 40px #000a;overflow:hidden}
+.ogrid{display:grid;grid-template-columns:1fr;gap:10px;align-content:start;overflow:hidden}
+.osec{display:flex;flex-direction:column;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
+.osec p{margin:0;font-size:12px;color:var(--dim);line-height:1.4}
+.drawer{display:grid;grid-template-columns:1fr;gap:10px;align-content:start;overflow:hidden}
+#mid-error{color:var(--amber);padding:0 4px}
 </style>
 </head>
 <body>
-<p>iPad page: <span id="connection">connecting</span></p>
-<p>Export: <span id="export-state">stopped</span> <span id="export-reason"></span></p>
-<p id="live">Loop <output id="live-loop">0%</output> · Envelope <output id="live-envelope">0.00</output> ·
-	Stage <output id="live-stage">idle</output> · Gate <output id="live-gate">closed</output> ·
-	Cue <output id="live-cue">closed</output> · Video <output id="live-video">none</output></p>
-<div id="pads">
-	<button id="pad-gate">Overdub</button>
-	<button id="pad-cue">Cue</button>
-	<button id="panic">PANIC</button>
-</div>
-<p id="source-load">
-	<button id="source-prev">Previous</button>
-	<button id="source-next">Next</button>
-	<button id="source-webcam">Webcam</button>
-	<span id="source-reason"></span>
-</p>
-<div id="folders"></div>
-<div id="pager" hidden>
-	<button type="button" id="page-prev">Previous page</button>
-	<span id="page-label"></span>
-	<button type="button" id="page-next">Next page</button>
-</div>
-<div id="videos"></div>
-<div id="controls"></div>
+<div id="viewport"><div id="holder"><div id="two-hands"></div></div></div>
 <script>
-	const schema = /*CONTROL_SCHEMA*/null;
-	const sections = [
-		["Overdub", [
-			["arm_record", "Latch"],
-			["cue_active", "Cue"],
-			["record_blend_mode", "Blend", ["Mix", "Add", "Multiply", "Screen", "Overlay", "Difference", "Lighten",
-				"Darken", "Hard Light", "Soft Light", "Color Dodge", "Color Burn"]],
-			["record_blend_opacity", "Opacity"],
-			["gain_mix", "Blend gain"],
-		]],
-		["Envelope", [
-			["env_enabled", "Envelope"],
-			["env_attack", "Attack (s)"],
-			["env_decay", "Decay (s)"],
-			["env_sustain", "Sustain"],
-			["env_release", "Release (s)"],
-		]],
-		["FX", [
-			["fx_enabled", "FX"],
-			["fx_commit", "Bake FX"],
-			["fx_mode", "FX mode", ["Feedback", "Difference", "Chromatic", "Kaleido", "Blur"]],
-			["fx_param1", "Param 1"],
-			["fx_param2", "Param 2"],
-			["fx_param3", "Param 3"],
-		]],
-		["Source", [
-			["source_kind", "Source", ["Shader", "Video", "Black", "Webcam"]],
-			["video_bars", "Black bars"],
-			["video_aspect", "Preserve aspect"],
-			["webcam_index", "Webcam"],
-			["file_loop", "Video loop"],
-			["file_paused", "Video paused"],
-			["file_run_mode", "Video run mode", ["Free", "Trigger"]],
-			["file_loop_start", "Loop start"],
-			["file_loop_length", "Loop length"],
-		]],
-		["Tempo", [
-			["bpm", "BPM"],
-			["read_speed_mult", "Read speed"],
-			["tempo_coupled", "Tempo coupled"],
-		]],
-		["Export", [
-			["record_enabled", "Export"],
-			["record_fps", "Export fps"],
-		]],
-	];
+/*GESTURES*/
+</script>
+<script>
+const schema = /*CONTROL_SCHEMA*/null;
+const dragValue = gestures.relativeDrag;
+const token = new URLSearchParams(location.search).get("token") || "";
+const FX_MODES = ["Feedback", "Diff", "Chroma", "Kaleido", "Blur"];
+const FX_LABELS = [
+	["Mix", "Decay", "Zoom"],
+	["ongebruikt in deze modus", "Schaal", "Decay"],
+	["Chroma", "Decay", "Zoom"],
+	["Segmenten", "Decay", "Zoom"],
+	["Mix + radius", "Decay", "Zoom"],
+];
+const STAGES = ["idle", "attack", "decay", "sustain", "release"];
+const FAM = { none: "fn", light: "fl", dark: "fd", contrast: "fc", difference: "fx" };
+const transformNames = ["video_tx", "video_ty", "video_sx", "video_sy", "video_rot"];
+const NS = "http://www.w3.org/2000/svg";
 
-	const token = new URLSearchParams(location.search).get("token") || "";
-	const connection = document.getElementById("connection");
-	const exportState = document.getElementById("export-state");
-	const exportReason = document.getElementById("export-reason");
-	const controls = {};
-	const state = {};
-	const socket = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
+const state = {
+	overlay: null,
+	link: "connecting",
+	remote: {},
+	local: {},
+	grabbed: new Set(),
+	fingers: { gate: false, cue: false },
+	holds: { gate: 0, cue: 0 },
+	videos: [],
+	folders: [],
+	page: 0,
+	pageSize: 5,
+	paged: false,
+	followed: undefined,
+	exportBase: 0,
+	exportOn: false,
+	exportReason: "",
+	midError: "",
+	midKind: "",
+	relFrom: 1,
+	relStage: 0,
+	taps: {},
+	imageAspect: 16 / 9,
+};
 
-	const busy = (el) => el.dataset.down === "1" || (el.tagName === "SELECT" && document.activeElement === el);
-	const format = (v) => String(Number(v.toFixed(3)));
+const socket = new WebSocket("ws://" + location.host + "/ws?token=" + encodeURIComponent(token));
 
-	function show(name) {
-		const { el, out, type } = controls[name];
-		if (!(name in state)) return;
-		if (type === "bool") el.checked = state[name];
-		else el.value = state[name];
-		if (out) out.textContent = format(state[name]);
-	}
-
-	function sendSet(name) {
-		const { el, out, type } = controls[name];
-		const value = type === "bool" ? el.checked : type === "int" ? parseInt(el.value, 10) : parseFloat(el.value);
-		if (out) out.textContent = format(value);
-		if (name === "video_aspect" && value === true) xf.video_sy = xf.video_sx;
-		if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ t: "set", name, value }));
-	}
-
-	function build(name, label, options) {
-		const { type, min, max } = schema[name];
-		const row = document.createElement("label");
-		row.appendChild(document.createElement("span")).textContent = label;
-		let el, out;
-		if (type === "bool") {
-			el = document.createElement("input");
-			el.type = "checkbox";
-		} else if (type === "int") {
-			el = document.createElement("select");
-			for (let i = min; i <= max; ++i) el.add(new Option(options ? options[i] : String(i), i));
-		} else {
-			el = document.createElement("input");
-			el.type = "range";
-			el.min = min;
-			el.max = max;
-			el.step = (max - min) / 1000;
-			out = document.createElement("output");
-		}
-		row.appendChild(el);
-		if (out) row.appendChild(out);
-		controls[name] = { el, out, type };
-		el.addEventListener("pointerdown", () => { el.dataset.down = "1"; });
-		el.addEventListener("input", () => { if (type === "float") sendSet(name); });
-		el.addEventListener("change", () => {
-			if (type !== "float") sendSet(name);
-			if (type === "int") el.blur();
-		});
-		return row;
-	}
-
-	const xf = { video_tx: 0, video_ty: 0, video_sx: 1, video_sy: 1, video_rot: 0 };
-	const transformNames = ["video_tx", "video_ty", "video_sx", "video_sy", "video_rot"];
-	let padDown = false;
-	let transformSend = 0;
-
-	function lim(name, value) {
-		const c = schema[name];
-		return Math.min(c.max, Math.max(c.min, value));
-	}
-	function sendTransform() {
-		if (socket.readyState !== WebSocket.OPEN) return;
-		for (const name of transformNames) socket.send(JSON.stringify({ t: "set", name, value: xf[name] }));
-	}
-	function queueTransform() {
-		if (transformSend) return;
-		transformSend = requestAnimationFrame(() => {
-			transformSend = 0;
-			sendTransform();
-		});
-	}
-	function adoptTransform() {
-		if (padDown) return;
-		for (const name of transformNames) if (typeof state[name] === "number") xf[name] = state[name];
-	}
-
-	function buildTrackpad() {
-		const wrap = document.createElement("div");
-		wrap.id = "source-transform";
-		const pad = wrap.appendChild(document.createElement("div"));
-		pad.id = "trackpad";
-		pad.appendChild(document.createElement("span")).textContent = "Drag to move. Pinch to scale and rotate.";
-		const reset = wrap.appendChild(document.createElement("button"));
-		reset.type = "button";
-		reset.id = "transform-reset";
-		reset.textContent = "Reset";
-		const pts = new Map();
-		const shot = () => [...pts].map(([id, p]) => ({ id, x: p.x, y: p.y }));
-		const spanScale = (oldSpan, newSpan) => {
-			const floor = 16;
-			if (oldSpan < floor && newSpan < floor) return 1;
-			return newSpan / Math.max(oldSpan, floor);
-		};
-		const wrapAngle = (d) => {
-			if (d > Math.PI) d -= Math.PI * 2;
-			if (d < -Math.PI) d += Math.PI * 2;
-			return d;
-		};
-		pad.addEventListener("contextmenu", (event) => event.preventDefault());
-		pad.addEventListener("pointerdown", (event) => {
-			pad.setPointerCapture(event.pointerId);
-			pts.set(event.pointerId, { x: event.clientX, y: event.clientY });
-			padDown = true;
-		});
-		pad.addEventListener("pointermove", (event) => {
-			if (!pts.has(event.pointerId) || pad.clientWidth < 1 || pad.clientHeight < 1) return;
-			const before = shot();
-			const point = pts.get(event.pointerId);
-			point.x = event.clientX;
-			point.y = event.clientY;
-			const after = shot();
-			if (after.length === 1 && before.length === 1) {
-				xf.video_tx = lim("video_tx", xf.video_tx + (after[0].x - before[0].x) / pad.clientWidth);
-				xf.video_ty = lim("video_ty", xf.video_ty - (after[0].y - before[0].y) / pad.clientHeight);
-				queueTransform();
-				return;
-			}
-			if (after.length < 2 || before.length < 2) return;
-			const oldA = before[0], oldB = before[1], newA = after[0], newB = after[1];
-			const oldDx = Math.abs(oldB.x - oldA.x), oldDy = Math.abs(oldB.y - oldA.y);
-			const newDx = Math.abs(newB.x - newA.x), newDy = Math.abs(newB.y - newA.y);
-			const oldDist = Math.hypot(oldB.x - oldA.x, oldB.y - oldA.y);
-			const newDist = Math.hypot(newB.x - newA.x, newB.y - newA.y);
-			if (controls.video_aspect.el.checked) {
-				if (oldDist > 1) {
-					xf.video_sx = lim("video_sx", xf.video_sx * (newDist / oldDist));
-					xf.video_sy = xf.video_sx;
-				}
-			} else {
-				xf.video_sx = lim("video_sx", xf.video_sx * spanScale(oldDx, newDx));
-				xf.video_sy = lim("video_sy", xf.video_sy * spanScale(oldDy, newDy));
-			}
-			const oldAng = Math.atan2(oldB.y - oldA.y, oldB.x - oldA.x);
-			const newAng = Math.atan2(newB.y - newA.y, newB.x - newA.x);
-			xf.video_rot = lim("video_rot", xf.video_rot - wrapAngle(newAng - oldAng));
-			queueTransform();
-		});
-		const lift = (event) => {
-			pts.delete(event.pointerId);
-			if (pts.size === 0) padDown = false;
-		};
-		pad.addEventListener("pointerup", lift);
-		pad.addEventListener("pointercancel", lift);
-		reset.addEventListener("click", () => {
-			xf.video_tx = 0;
-			xf.video_ty = 0;
-			xf.video_sx = 1;
-			xf.video_sy = 1;
-			xf.video_rot = 0;
-			sendTransform();
-		});
-		return wrap;
-	}
-
-	const root = document.getElementById("controls");
-	for (const [title, rows] of sections) {
-		const section = root.appendChild(document.createElement("section"));
-		section.appendChild(document.createElement("h2")).textContent = title;
-		for (const [name, label, options] of rows) section.appendChild(build(name, label, options));
-		if (title === "Source") section.appendChild(buildTrackpad());
-	}
-
-	function release() {
-		for (const name in controls) {
-			const { el, type } = controls[name];
-			if (el.dataset.down !== "1") continue;
-			delete el.dataset.down;
-			if (type !== "int") show(name);
+function h(tag, props, ...kids) {
+	const parts = tag.split(".");
+	const el = document.createElement(parts[0] || "div");
+	if (parts.length > 1) el.className = parts.slice(1).join(" ");
+	if (props) {
+		for (const key of Object.keys(props)) {
+			const value = props[key];
+			if (value == null || value === false) continue;
+			el.setAttribute(key, value === true ? "" : value);
 		}
 	}
-	window.addEventListener("pointerup", release);
-	window.addEventListener("pointercancel", release);
-
-	const pads = {};
-	// Returns whether the pad was down.
-	function stopPad(name) {
-		const pad = pads[name];
-		if (!pad.timer) return false;
-		clearInterval(pad.timer);
-		pad.timer = 0;
-		pad.el.classList.remove("down");
-		return true;
+	for (const kid of kids.flat()) {
+		if (kid == null || kid === false) continue;
+		el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
 	}
-	for (const name of ["gate", "cue"]) {
-		const el = document.getElementById(`pad-${name}`);
-		pads[name] = { el, timer: 0 };
-		el.addEventListener("pointerdown", (event) => {
-			if (connection.textContent !== "connected" || pads[name].timer) return;
-			el.setPointerCapture(event.pointerId);
-			const hold = () => socket.send(JSON.stringify({ t: "hold", name }));
-			hold();
-			pads[name].timer = setInterval(hold, 100);
-			el.classList.add("down");
-		});
-		const up = () => {
-			if (stopPad(name) && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ t: "release", name }));
-		};
-		el.addEventListener("pointerup", up);
-		el.addEventListener("pointercancel", up);
-	}
-	document.getElementById("panic").addEventListener("click", () => {
-		if (socket.readyState !== WebSocket.OPEN) return;
-		socket.send(JSON.stringify({ t: "panic" }));
-		for (const name in pads) stopPad(name);
-	});
+	return el;
+}
 
-	const sourceReason = document.getElementById("source-reason");
-	for (const t of ["prev", "next", "webcam"]) {
-		document.getElementById(`source-${t}`).addEventListener("click", () => {
-			if (socket.readyState !== WebSocket.OPEN) return;
-			sourceReason.textContent = "";
-			socket.send(JSON.stringify({ t }));
-		});
-	}
+function svg(tag, attrs) {
+	const el = document.createElementNS(NS, tag);
+	for (const key of Object.keys(attrs || {})) el.setAttribute(key, attrs[key]);
+	return el;
+}
 
-	const videosGrid = document.getElementById("videos");
-	const pageSize = 12;
-	const pager = document.getElementById("pager");
-	let shownVideos = "";
-	let videoNames = [];
-	let page = 0;
-	let followedVideo;
-	function renderVideos() {
-		const pages = Math.max(1, Math.ceil(videoNames.length / pageSize));
-		if (page >= pages) page = pages - 1;
-		if (page < 0) page = 0;
-		const start = page * pageSize;
-		const slice = videoNames.slice(start, start + pageSize);
-		videosGrid.replaceChildren();
-		for (const name of slice) {
-			const button = videosGrid.appendChild(document.createElement("button"));
-			button.dataset.name = name;
-			const img = button.appendChild(document.createElement("img"));
-			const src = `/thumb?name=${encodeURIComponent(name)}&token=${encodeURIComponent(token)}`;
-			let tries = 0;
-			// Thumbnails are made after the folder scan, so one may not exist yet when the grid appears.
-			img.onerror = () => {
-				if (++tries <= 30) setTimeout(() => { img.src = `${src}&try=${tries}`; }, 1000);
-			};
-			img.src = src;
-			img.alt = "";
-			button.appendChild(document.createElement("span")).textContent = name;
-			button.addEventListener("click", () => {
-				if (socket.readyState !== WebSocket.OPEN) return;
-				sourceReason.textContent = "";
-				socket.send(JSON.stringify({ t: "load", name }));
-			});
+function capture(el, event) {
+	try { el.setPointerCapture(event.pointerId); } catch (err) {}
+}
+
+function openSocket() {
+	return socket.readyState === WebSocket.OPEN;
+}
+
+function linkUp() {
+	return state.link === "up";
+}
+
+function valueOf(name, fallback) {
+	const v = Number(state.local[name]);
+	return Number.isFinite(v) ? v : fallback;
+}
+
+function sendSet(name, value) {
+	const control = schema[name];
+	if (!control) return;
+	let v = value;
+	if (control.type === "bool") v = !!value;
+	else {
+		const n = Number(value);
+		if (!Number.isFinite(n)) return;
+		v = Math.min(control.max, Math.max(control.min, n));
+		if (control.type === "int") v = Math.round(Math.min(control.max, Math.max(control.min, v)));
+	}
+	state.local[name] = v;
+	if (openSocket()) socket.send(JSON.stringify({ t: "set", name: name, value: v }));
+}
+
+function sendRaw(msg) {
+	if (openSocket()) socket.send(JSON.stringify(msg));
+}
+
+function grab(names) {
+	for (const name of names) state.grabbed.add(name);
+}
+
+function releaseGrab(names) {
+	for (const name of names) {
+		state.grabbed.delete(name);
+		if (Object.prototype.hasOwnProperty.call(state.remote, name)) state.local[name] = state.remote[name];
+	}
+	paint();
+}
+
+function noteExport(on) {
+	if (on && !state.exportOn) state.exportBase = performance.now();
+	if (!on) state.exportBase = 0;
+	state.exportOn = !!on;
+	if (on) state.exportReason = "";
+}
+
+function clock(ms) {
+	const s = Math.max(0, Math.floor(ms / 1000));
+	return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+}
+
+function compact(v, digits) {
+	const n = Number(v);
+	if (!Number.isFinite(n)) return "0";
+	const p = Math.pow(10, digits);
+	return String(Math.round(n * p) / p);
+}
+
+function leaf(path) {
+	const trimmed = String(path).replace(/\/+$/, "");
+	const i = trimmed.lastIndexOf("/");
+	return (i >= 0 ? trimmed.slice(i + 1) : trimmed) || String(path);
+}
+
+function grad(name) {
+	let x = 0;
+	for (const c of name) x = (x * 31 + c.charCodeAt(0)) >>> 0;
+	return "linear-gradient(135deg,hsl(" + (x % 360) + " 40% 30%),hsl(" + ((x >> 8) % 360) + " 40% 14%))";
+}
+
+function fmtT(t) {
+	t = Number(t) || 0;
+	return t < 1 ? Math.round(t * 1000) + " ms" : t.toFixed(2) + " s";
+}
+
+function pct(v) {
+	return Math.round(Number(v) * 100) + "%";
+}
+
+function gateOpen() {
+	return linkUp() && (state.fingers.gate || !!state.local.arm_record || !!state.remote.gate);
+}
+
+function cueOpen() {
+	return linkUp() && (state.fingers.cue || !!state.local.cue_active || !!state.remote.cue);
+}
+
+function sourceName() {
+	const kind = Number(state.local.source_kind);
+	if (kind === 0) return "Shader";
+	if (kind === 2) return "Zwart";
+	if (kind === 3) return "Webcam " + Math.round(valueOf("webcam_index", 0));
+	return state.remote.video ? gestures.shortName(state.remote.video) : "";
+}
+
+function stopHold(name, notify) {
+	if (!state.holds[name]) return false;
+	clearInterval(state.holds[name]);
+	state.holds[name] = 0;
+	state.fingers[name] = false;
+	if (notify) sendRaw({ t: "release", name: name });
+	return true;
+}
+
+function startHold(name, el, event) {
+	if (!linkUp() || !openSocket() || state.holds[name]) return;
+	capture(el, event);
+	state.fingers[name] = true;
+	const send = () => sendRaw({ t: "hold", name: name });
+	send();
+	state.holds[name] = setInterval(send, 100);
+	paint();
+}
+
+function bindHold(name, el) {
+	el.addEventListener("pointerdown", (event) => startHold(name, el, event));
+	const up = () => {
+		state.fingers[name] = false;
+		stopHold(name, true);
+		paint();
+	};
+	el.addEventListener("pointerup", up);
+	el.addEventListener("pointercancel", up);
+}
+
+function bindFader(track, fader) {
+	let pid = null, origin = 0, sx = 0, sy = 0, restored = false;
+	track.addEventListener("pointerdown", (event) => {
+		if (fader.off && fader.off()) return;
+		if (!openSocket()) return;
+		const now = performance.now();
+		const tap = gestures.doubleTap({ nowMs: now, lastStampMs: state.taps[fader.name] || 0, windowMs: 280 });
+		state.taps[fader.name] = tap.stamp;
+		capture(track, event);
+		pid = event.pointerId;
+		grab([fader.name]);
+		if (tap.fired) {
+			restored = true;
+			sendSet(fader.name, fader.def);
+			paint();
+			return;
 		}
-		for (const button of videosGrid.children) button.classList.toggle("current", button.dataset.name === state.video);
-		pager.hidden = videoNames.length <= pageSize;
-		document.getElementById("page-prev").disabled = page === 0;
-		document.getElementById("page-next").disabled = page + 1 >= pages;
-		const end = Math.min(start + pageSize, videoNames.length);
-		document.getElementById("page-label").textContent = videoNames.length ? `${start + 1}–${end} of ${videoNames.length}` : "";
-	}
-	function showVideos(names) {
-		const key = JSON.stringify(names);
-		if (key === shownVideos) return;
-		shownVideos = key;
-		videoNames = names.slice();
-		page = 0;
-		renderVideos();
-	}
-	document.getElementById("page-prev").addEventListener("click", () => {
-		if (page <= 0) return;
-		page -= 1;
-		renderVideos();
+		restored = false;
+		origin = valueOf(fader.name, fader.def);
+		sx = event.clientX;
+		sy = event.clientY;
 	});
-	document.getElementById("page-next").addEventListener("click", () => {
-		page += 1;
-		renderVideos();
+	track.addEventListener("pointermove", (event) => {
+		if (restored || event.pointerId !== pid) return;
+		const rect = track.getBoundingClientRect();
+		const control = schema[fader.name];
+		const value = dragValue({
+			value: origin,
+			deltaPx: fader.vertical ? -(event.clientY - sy) : event.clientX - sx,
+			trackPx: fader.vertical ? rect.height : rect.width,
+			min: control.min,
+			max: control.max,
+		});
+		sendSet(fader.name, value);
+		paint();
 	});
+	const up = (event) => {
+		if (event.pointerId !== pid) return;
+		pid = null;
+		restored = false;
+		releaseGrab([fader.name]);
+	};
+	track.addEventListener("pointerup", up);
+	track.addEventListener("pointercancel", up);
+}
 
-	const foldersRow = document.getElementById("folders");
-	let shownFolders = "";
-	function showFolders(paths) {
-		const key = JSON.stringify(paths);
-		if (key === shownFolders) return;
-		shownFolders = key;
-		foldersRow.replaceChildren();
-		for (const path of paths) {
-			const button = foldersRow.appendChild(document.createElement("button"));
+function makeFader(o) {
+	const fill = h("div.ff");
+	const value = h("span.fv.num");
+	const label = h("span.fl", null, o.label || "");
+	const track = h("div.ft", null, fill, o.ticks ? h("div.ticks") : null);
+	const el = h("div.fader" + (o.vertical ? ".v" : "") + (o.bipolar ? ".bip" : "") + (o.big ? ".big" : ""), null,
+		h("div.fh", null, label, value), track);
+	const fader = { el: el, fill: fill, value: value, label: label, name: o.name, def: o.def, vertical: !!o.vertical, bipolar: !!o.bipolar, off: o.off, text: o.text };
+	bindFader(track, fader);
+	return fader;
+}
+
+function makeTog(label, tone) {
+	const status = h("span.st");
+	const el = h("button.tog" + (tone ? "." + tone : ""), { type: "button" }, h("i.led"), h("span", null, label), status);
+	return { el: el, status: status };
+}
+
+function makeSeg(options, onPick) {
+	const el = h("div.seg");
+	const buttons = options.map((opt) => {
+		const button = h("button", { type: "button" }, opt.label);
+		button.dataset.value = String(opt.value);
+		button.addEventListener("click", () => onPick(opt.value));
+		el.append(button);
+		return button;
+	});
+	return { el: el, buttons: buttons };
+}
+
+function pickInt(name, value) {
+	if (!openSocket()) return;
+	sendSet(name, value);
+	paint();
+}
+
+function pickBool(name) {
+	if (!openSocket()) return;
+	const next = !state.local[name];
+	sendSet(name, next);
+	if (name === "video_aspect" && next) sendSet("video_sy", state.local.video_sx);
+	paint();
+}
+
+const stage = document.getElementById("two-hands");
+const connText = h("span");
+const conn = h("div.conn", null, h("i.dot"), connText);
+const loopFill = h("i");
+const loopPct = h("span.num", null, "0%");
+const envFill = h("i");
+const envStage = h("span.est", null, "idle");
+const chipWrite = h("span.chip.rec", null, "Schrijft");
+const chipLatch = h("span.chip.rec", null, "Latch");
+const chipCue = h("span.chip.cue", null, "Cue");
+const chipFx = h("span.chip.fx", null, "FX");
+const chipBake = h("span.chip.bake", null, "Bake FX");
+const sourceNow = h("div.nowv");
+const fxBtnText = h("span");
+const fxBtn = h("button.btn", { type: "button" }, fxBtnText);
+const exportText = h("span.num", null, "Export");
+const exportBtn = h("button.btn.exp", { type: "button" }, h("i.rd"), exportText);
+const exportReason = h("span.export-reason");
+const setupBtn = h("button.btn", { type: "button" }, "Setup");
+const status = h("div.status", null, conn,
+	h("div.meter", null, "Loop", h("div.bar.lbar", null, loopFill), loopPct),
+	h("div.meter", null, "Env", h("div.bar.ebar", null, envFill), envStage),
+	h("div.chips", null, chipWrite, chipLatch, chipCue, chipFx, chipBake),
+	sourceNow, h("div.sp"), fxBtn, exportReason, exportBtn, setupBtn);
+
+const overdubFill = h("div.fill");
+const overdubStage = h("span.stg");
+const overdubSub = h("div.sb");
+const overdub = h("div.pad.rec", null, overdubFill, h("div.top", null, h("div.nm", null, "Overdub"), overdubStage), overdubSub);
+const latchStatus = h("div.ps");
+const latchBtn = h("button.ptog.rec", { type: "button" }, h("i.led"), h("div.pn", null, "Latch"), latchStatus);
+const cueSub = h("div.sb");
+const cuePad = h("div.pad.cue", null, h("div.top", null, h("div.nm", null, "Cue")), cueSub);
+const cueVastStatus = h("div.ps");
+const cueVastBtn = h("button.ptog.cue", { type: "button" }, h("i.led"), h("div.pn", null, "Cue vast"), cueVastStatus);
+const panicBtn = h("button.panic", { type: "button" }, h("div", null, "PANIC"), h("div.psub", null, "Latch, Cue en gates los"));
+bindHold("gate", overdub);
+bindHold("cue", cuePad);
+latchBtn.addEventListener("click", () => {
+	if (!linkUp() || !openSocket()) return;
+	sendSet("arm_record", !state.local.arm_record);
+	paint();
+});
+cueVastBtn.addEventListener("click", () => {
+	if (!linkUp() || !openSocket()) return;
+	sendSet("cue_active", !state.local.cue_active);
+	paint();
+});
+panicBtn.addEventListener("click", () => {
+	if (!openSocket()) return;
+	sendRaw({ t: "panic" });
+	stopHold("gate", false);
+	stopHold("cue", false);
+	state.fingers.gate = false;
+	state.fingers.cue = false;
+	paint();
+});
+
+const opacity = makeFader({ name: "record_blend_opacity", label: "Opacity", def: 1, vertical: true, big: true, ticks: true, text: pct });
+
+const kindSeg = makeSeg(
+	[{ value: 1, label: "Video" }, { value: 3, label: "Webcam" }, { value: 0, label: "Shader" }, { value: 2, label: "Zwart" }],
+	(value) => pickInt("source_kind", value));
+const folderRow = h("div.folders");
+const grid = h("div.vgrid");
+const sourceOver = h("div.vover");
+const pagePrev = h("button.btn.sq", { type: "button" }, "‹");
+const pageNext = h("button.btn.sq", { type: "button" }, "›");
+const pageLabel = h("span.plabel.num");
+const videoPrev = h("button.btn.sq", { type: "button" }, "◂");
+const videoNext = h("button.btn.sq", { type: "button" }, "▸");
+const midError = h("div.hint", { id: "mid-error" });
+let videoKey = "";
+let folderKey = "";
+let downCell = null;
+let gridPid = null;
+let gridX = 0;
+let gridY = 0;
+let gridMoved = false;
+
+function thumbUrl(name) {
+	return "/thumb?name=" + encodeURIComponent(name) + "&token=" + encodeURIComponent(token);
+}
+
+function videoCell(name) {
+	const thumb = h("div.th");
+	const img = h("img", { alt: "", draggable: "false" });
+	const src = thumbUrl(name);
+	let tries = 0;
+	img.onload = () => {
+		img.style.visibility = "";
+		thumb.style.background = "";
+	};
+	img.onerror = () => {
+		thumb.style.background = grad(name);
+		img.style.visibility = "hidden";
+		if (++tries <= 30) {
+			setTimeout(() => {
+				if (!img.isConnected) return;
+				img.style.visibility = "";
+				img.src = src + "&try=" + tries;
+			}, 1000);
+		}
+	};
+	img.src = src;
+	thumb.append(img);
+	const cell = h("div.vc", null, thumb, h("div.nm", null, gestures.shortName(name)));
+	cell.dataset.name = name;
+	return cell;
+}
+
+function pageCount() {
+	return Math.max(1, Math.ceil(state.videos.length / Math.max(1, state.pageSize)));
+}
+
+function movePage(dir) {
+	const next = Math.min(pageCount() - 1, Math.max(0, state.page + dir));
+	if (next === state.page) return;
+	state.page = next;
+	state.paged = true;
+	paintVideos();
+}
+
+function loadVideo(name) {
+	if (!openSocket()) return;
+	if (state.midKind === "source") { state.midError = ""; state.midKind = ""; }
+	sendRaw({ t: "load", name: name });
+	paint();
+}
+
+function stepVideo(dir) {
+	if (!openSocket()) return;
+	if (state.midKind === "source") { state.midError = ""; state.midKind = ""; }
+	sendRaw({ t: dir < 0 ? "prev" : "next" });
+}
+
+pagePrev.addEventListener("click", () => movePage(-1));
+pageNext.addEventListener("click", () => movePage(1));
+videoPrev.addEventListener("click", () => stepVideo(-1));
+videoNext.addEventListener("click", () => stepVideo(1));
+grid.addEventListener("pointerdown", (event) => {
+	downCell = event.target.closest(".vc");
+	gridPid = event.pointerId;
+	gridX = event.clientX;
+	gridY = event.clientY;
+	gridMoved = false;
+	if (downCell) downCell.classList.add("press");
+	capture(grid, event);
+});
+grid.addEventListener("pointermove", (event) => {
+	if (event.pointerId !== gridPid) return;
+	if (Math.abs(event.clientX - gridX) + Math.abs(event.clientY - gridY) > 8) {
+		gridMoved = true;
+		if (downCell) downCell.classList.remove("press");
+	}
+});
+const gridUp = (event) => {
+	if (event.pointerId !== gridPid) return;
+	if (downCell) downCell.classList.remove("press");
+	const dir = gestures.videoSwipe({ dx: event.clientX - gridX, dy: event.clientY - gridY, threshold: 50 });
+	if (dir) movePage(dir);
+	else if (!gridMoved && downCell) loadVideo(downCell.dataset.name);
+	gridPid = null;
+	downCell = null;
+};
+grid.addEventListener("pointerup", gridUp);
+grid.addEventListener("pointercancel", gridUp);
+
+function measureGrid() {
+	const width = grid.clientWidth;
+	const height = grid.clientHeight;
+	if (!width || !height) return;
+	const cols = 5;
+	const cellW = (width - 6 * (cols - 1)) / cols;
+	const cellH = cellW * 9 / 16 + 4 + 16;
+	const ps = Math.max(cols, Math.floor((height + 6) / (cellH + 6)) * cols);
+	if (ps === state.pageSize) return;
+	state.pageSize = ps;
+	if (!state.paged) {
+		const at = state.videos.indexOf(state.remote.video);
+		if (at >= 0) state.page = Math.floor(at / ps);
+	}
+	paintVideos();
+}
+
+const blendLabel = h("span.pv");
+const blendGrid = h("div.bgrid");
+for (const cell of gestures.blendCells) {
+	const button = h("button.bb", { type: "button" }, cell.label);
+	button.dataset.index = String(cell.index);
+	button.style.setProperty("--fam", "var(--" + (FAM[cell.family] || "fn") + ")");
+	blendGrid.append(button);
+}
+let blendPid = null;
+function blendRects() {
+	const rects = [];
+	for (const el of blendGrid.children) {
+		const r = el.getBoundingClientRect();
+		rects.push({ index: Number(el.dataset.index), left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+	}
+	return rects;
+}
+function pickBlend(event) {
+	const index = gestures.blendAtPoint({ x: event.clientX, y: event.clientY, rects: blendRects() });
+	if (index == null || Number(state.local.record_blend_mode) === index) return;
+	sendSet("record_blend_mode", index);
+	paint();
+}
+blendGrid.addEventListener("pointerdown", (event) => {
+	if (!openSocket()) return;
+	capture(blendGrid, event);
+	blendPid = event.pointerId;
+	grab(["record_blend_mode"]);
+	pickBlend(event);
+});
+blendGrid.addEventListener("pointermove", (event) => {
+	if (event.pointerId !== blendPid) return;
+	pickBlend(event);
+});
+const blendUp = (event) => {
+	if (event.pointerId !== blendPid) return;
+	blendPid = null;
+	releaseGrab(["record_blend_mode"]);
+};
+blendGrid.addEventListener("pointerup", blendUp);
+blendGrid.addEventListener("pointercancel", blendUp);
+function famSwatch(family, text) {
+	return h("span", null, h("i", { style: "background:var(--" + family + ")" }), text);
+}
+
+const loopStartOut = h("b.num");
+const loopLenOut = h("b.num");
+const loopStartHandle = h("div.hd.s");
+const loopEndHandle = h("div.hd.e");
+const loopWin = h("div.win", null, loopStartHandle, loopEndHandle);
+const loopTrack = h("div.lr", null, loopWin);
+const runSeg = makeSeg([{ value: 0, label: "Free" }, { value: 1, label: "Trigger" }], (value) => pickInt("file_run_mode", value));
+const loopTog = makeTog("Loop");
+const pauseTog = makeTog("Pauze");
+loopTog.el.addEventListener("click", () => pickBool("file_loop"));
+pauseTog.el.addEventListener("click", () => pickBool("file_paused"));
+const loopPanel = h("div.panel.lrange", null,
+	h("div.ph", null, h("span.pt", null, "Video loop"), h("div.sp"), h("span.hint", null, "start"), loopStartOut, h("span.hint", null, "lengte"), loopLenOut),
+	loopTrack,
+	h("div.row", null, runSeg.el, h("div.sp"), loopTog.el, pauseTog.el));
+
+function bindLoop(el, part) {
+	let pid = null, origin = null, sx = 0;
+	el.addEventListener("pointerdown", (event) => {
+		if (!openSocket()) return;
+		event.stopPropagation();
+		capture(el, event);
+		pid = event.pointerId;
+		sx = event.clientX;
+		origin = { start: valueOf("file_loop_start", 0), length: valueOf("file_loop_length", 0) };
+		grab(["file_loop_start", "file_loop_length"]);
+	});
+	el.addEventListener("pointermove", (event) => {
+		if (event.pointerId !== pid) return;
+		const out = gestures.loopRangeDrag({
+			part: part,
+			start: origin.start,
+			length: origin.length,
+			dx: event.clientX - sx,
+			width: loopTrack.getBoundingClientRect().width,
+		});
+		sendSet("file_loop_start", out.start);
+		sendSet("file_loop_length", out.length);
+		paint();
+	});
+	const up = (event) => {
+		if (event.pointerId !== pid) return;
+		pid = null;
+		releaseGrab(["file_loop_start", "file_loop_length"]);
+	};
+	el.addEventListener("pointerup", up);
+	el.addEventListener("pointercancel", up);
+}
+bindLoop(loopStartHandle, "start");
+bindLoop(loopEndHandle, "end");
+bindLoop(loopWin, "body");
+
+const readX = h("b.num");
+const readY = h("b.num");
+const readS = h("b.num");
+const readR = h("b.num");
+const aspectTog = makeTog("Preserve aspect");
+const barsTog = makeTog("Black bars");
+aspectTog.el.classList.add("tog");
+barsTog.el.classList.add("tog");
+aspectTog.el.addEventListener("click", () => pickBool("video_aspect"));
+barsTog.el.addEventListener("click", () => pickBool("video_bars"));
+const resetBtn = h("button.btn", { type: "button" }, "Herstel");
+const frameImg = h("img", { alt: "", draggable: "false" });
+const simg = h("div.simg", null, frameImg);
+const frame = h("div.lframe", null, simg, h("span.flabel", null, "LOOP"));
+const outline = h("div.sout", null, h("span", null, "SOURCE"));
+const xh = h("div.xhair");
+const xv = h("div.xhair");
+const note = h("span.tpnote");
+const pad = h("div.tpad", null, xh, xv, frame, outline, note);
+const points = new Map();
+let shownFrame = null;
+let frameTries = 0;
+
+function currentTransform() {
+	return {
+		tx: valueOf("video_tx", 0),
+		ty: valueOf("video_ty", 0),
+		sx: valueOf("video_sx", 1),
+		sy: valueOf("video_sy", 1),
+		rot: valueOf("video_rot", 0),
+	};
+}
+
+function writeTransform(t) {
+	sendSet("video_tx", t.tx);
+	sendSet("video_ty", t.ty);
+	sendSet("video_sx", t.sx);
+	sendSet("video_sy", t.sy);
+	sendSet("video_rot", t.rot);
+	layoutFrame();
+}
+
+resetBtn.addEventListener("click", () => {
+	if (!openSocket()) return;
+	const id = gestures.identityTransform();
+	writeTransform(id);
+	paint();
+});
+pad.addEventListener("pointerdown", (event) => {
+	if (!openSocket()) return;
+	if (gestures.sourceIgnoresTransform(Number(state.local.source_kind))) return;
+	capture(pad, event);
+	points.set(event.pointerId, { x: event.clientX, y: event.clientY });
+	grab(transformNames);
+	pad.classList.add("touch");
+});
+pad.addEventListener("pointermove", (event) => {
+	if (!points.has(event.pointerId)) return;
+	const before = [...points.values()].map((p) => ({ x: p.x, y: p.y }));
+	const point = points.get(event.pointerId);
+	point.x = event.clientX;
+	point.y = event.clientY;
+	const after = [...points.values()];
+	const fr = frame.getBoundingClientRect();
+	if (fr.width <= 0 || fr.height <= 0) return;
+	if (!Number.isFinite(Number(state.local.source_kind))) return;
+	const cur = currentTransform();
+	let next = null;
+	if (after.length === 1 && before.length === 1) {
+		const moved = gestures.oneFingerMove({
+			tx: cur.tx, ty: cur.ty,
+			dx: after[0].x - before[0].x, dy: after[0].y - before[0].y,
+			frameWidth: fr.width, frameHeight: fr.height,
+			minX: schema.video_tx.min, maxX: schema.video_tx.max,
+			minY: schema.video_ty.min, maxY: schema.video_ty.max,
+		});
+		next = { tx: moved.tx, ty: moved.ty, sx: cur.sx, sy: cur.sy, rot: cur.rot };
+	} else if (after.length >= 2 && before.length >= 2) {
+		next = gestures.pinch({
+			tx: cur.tx, ty: cur.ty, sx: cur.sx, sy: cur.sy, rot: cur.rot,
+			ax0: before[0].x, ay0: before[0].y, bx0: before[1].x, by0: before[1].y,
+			ax1: after[0].x, ay1: after[0].y, bx1: after[1].x, by1: after[1].y,
+			frameWidth: fr.width, frameHeight: fr.height,
+			preserveAspect: !!state.local.video_aspect,
+			minX: schema.video_tx.min, maxX: schema.video_tx.max,
+			minY: schema.video_ty.min, maxY: schema.video_ty.max,
+			minS: schema.video_sx.min, maxS: schema.video_sx.max,
+			minR: schema.video_rot.min, maxR: schema.video_rot.max,
+		});
+	}
+	if (!next) return;
+	const applied = gestures.applyTransform(Number(state.local.source_kind), cur, next);
+	if (applied === cur) return;
+	writeTransform(applied);
+});
+const liftPoint = (event) => {
+	if (!points.has(event.pointerId)) return;
+	points.delete(event.pointerId);
+	if (points.size === 0) {
+		pad.classList.remove("touch");
+		releaseGrab(transformNames);
+	}
+};
+pad.addEventListener("pointerup", liftPoint);
+pad.addEventListener("pointercancel", liftPoint);
+
+function layoutFrame() {
+	const W = pad.clientWidth, H = pad.clientHeight;
+	if (!W || !H) return;
+	const fw = Math.min(W * 0.64, H * 0.64 * 16 / 9);
+	const fh = fw * 9 / 16;
+	const fl = (W - fw) / 2, ft = (H - fh) / 2;
+	frame.style.left = fl + "px";
+	frame.style.top = ft + "px";
+	frame.style.width = fw + "px";
+	frame.style.height = fh + "px";
+	xh.style.cssText = "left:0;right:0;height:1px;top:" + (H / 2) + "px";
+	xv.style.cssText = "top:0;bottom:0;width:1px;left:" + (W / 2) + "px";
+	const kind = Number(state.local.source_kind);
+	const framed = kind === 1 || kind === 3;
+	frame.classList.toggle("bars", !!state.local.video_bars && framed);
+	frame.classList.toggle("fillsrc", !framed);
+	outline.hidden = !framed;
+	note.textContent = framed ? "" : (kind === 0 ? "Shader" : "Zwart") + " vult de Loop en negeert de transform";
+	const t = currentTransform();
+	const ar = state.imageAspect || 16 / 9;
+	let bw = fw, bh = fh;
+	if (state.local.video_aspect) {
+		if (ar > 16 / 9) { bw = fw; bh = fw / ar; }
+		else { bh = fh; bw = fh * ar; }
+	}
+	const w = bw * t.sx;
+	const hh = bh * (state.local.video_aspect ? t.sx : t.sy);
+	const cx = fw * (0.5 + t.tx);
+	const cy = fh * (0.5 - t.ty);
+	const tr = "rotate(" + (-t.rot) + "rad)";
+	simg.style.left = (cx - w / 2) + "px";
+	simg.style.top = (cy - hh / 2) + "px";
+	simg.style.width = w + "px";
+	simg.style.height = hh + "px";
+	simg.style.transform = tr;
+	outline.style.left = (fl + cx - w / 2) + "px";
+	outline.style.top = (ft + cy - hh / 2) + "px";
+	outline.style.width = w + "px";
+	outline.style.height = hh + "px";
+	outline.style.transform = tr;
+	readX.textContent = t.tx.toFixed(2);
+	readY.textContent = t.ty.toFixed(2);
+	readS.textContent = state.local.video_aspect ? t.sx.toFixed(2) + "×" : t.sx.toFixed(2) + " × " + t.sy.toFixed(2);
+	readR.textContent = Math.round(t.rot * 180 / Math.PI) + "°";
+}
+
+function setFrameImage(name) {
+	if (name === shownFrame) return;
+	shownFrame = name;
+	state.imageAspect = 16 / 9;
+	frameTries = 0;
+	frameImg.onload = null;
+	frameImg.onerror = null;
+	if (!name) {
+		frameImg.removeAttribute("src");
+		frameImg.style.visibility = "hidden";
+		simg.style.background = "";
+		layoutFrame();
+		return;
+	}
+	const src = thumbUrl(name);
+	frameImg.onload = () => {
+		frameImg.style.visibility = "";
+		simg.style.background = "";
+		const ar = frameImg.naturalWidth / frameImg.naturalHeight;
+		if (ar) state.imageAspect = ar;
+		layoutFrame();
+	};
+	frameImg.onerror = () => {
+		simg.style.background = grad(name);
+		frameImg.style.visibility = "hidden";
+		if (++frameTries <= 30) {
+			setTimeout(() => {
+				if (shownFrame !== name || !frameImg.isConnected) return;
+				frameImg.style.visibility = "";
+				frameImg.src = src + "&try=" + frameTries;
+			}, 1000);
+		}
+	};
+	frameImg.style.visibility = "";
+	frameImg.src = src;
+}
+
+const envStageName = h("span.pv");
+const envTog = makeTog("Envelope");
+envTog.el.addEventListener("click", () => pickBool("env_enabled"));
+const envA = h("b.num"), envD = h("b.num"), envS = h("b.num"), envR = h("b.num");
+const envArea = svg("path", { class: "ea" });
+const envLine = svg("path", { class: "el" });
+const envGrid = svg("g");
+const envDot = svg("circle", { r: 6, class: "ed" });
+function makeHandle(label) {
+	const g = svg("g", { class: "eh" });
+	const hit = svg("circle", { r: 24, class: "hit" });
+	const vis = svg("circle", { r: 7, class: "vis" });
+	const text = svg("text", { "text-anchor": "middle" });
+	text.textContent = label;
+	g.append(hit, vis, text);
+	g.style.touchAction = "none";
+	return { g: g, hit: hit, vis: vis, text: text, place(x, y) {
+		hit.setAttribute("cx", x); hit.setAttribute("cy", y);
+		vis.setAttribute("cx", x); vis.setAttribute("cy", y);
+		text.setAttribute("x", x); text.setAttribute("y", y - 12);
+	} };
+}
+const handleA = makeHandle("A");
+const handleM = makeHandle("D·S");
+const handleR = makeHandle("R");
+const envSvg = svg("svg");
+envSvg.append(envGrid, envArea, envLine, handleA.g, handleM.g, handleR.g, envDot);
+const envBox = h("div.envbox", null, envSvg);
+const adsrPanel = h("div.panel.adsr", null,
+	h("div.ph", null, h("span.pt", null, "ADSR"), envStageName, h("div.sp"), envTog.el),
+	h("div.envvals", null, h("span", null, "A", envA), h("span", null, "D", envD), h("span", null, "S", envS), h("span", null, "R", envR)),
+	envBox);
+
+function geom() {
+	const W = envBox.clientWidth, H = envBox.clientHeight;
+	const p = 14, top = 24, bot = Math.max(top + 1, H - 14);
+	const inner = Math.max(0, W - 2 * p);
+	const sus = inner * 0.16;
+	const seg = (inner - sus) / 3;
+	const xOf = (t, maxTime) => {
+		if (!(maxTime > 0)) return 0;
+		const u = Math.min(maxTime, Math.max(0, Number(t) || 0)) / maxTime;
+		return Math.sqrt(u) * seg;
+	};
+	const attack = valueOf("env_attack", 0);
+	const decay = valueOf("env_decay", 0);
+	const sustain = Math.min(1, Math.max(0, valueOf("env_sustain", 1)));
+	const release = valueOf("env_release", 0);
+	const xa = p + xOf(attack, schema.env_attack.max);
+	const xd = xa + xOf(decay, schema.env_decay.max);
+	const xs = xd + sus;
+	const xr = xs + xOf(release, schema.env_release.max);
+	const ys = top + (1 - sustain) * (bot - top);
+	return { W: W, H: H, p: p, top: top, bot: bot, seg: seg, xOf: xOf, xa: xa, xd: xd, xs: xs, xr: xr, ys: ys };
+}
+
+function drawAdsr() {
+	const g = geom();
+	if (!g.W || !g.H) return;
+	envSvg.setAttribute("viewBox", "0 0 " + g.W + " " + g.H);
+	const P = [[g.p, g.bot], [g.xa, g.top], [g.xd, g.ys], [g.xs, g.ys], [g.xr, g.bot]];
+	const d = "M" + P.map((q) => q.join(",")).join(" L");
+	envLine.setAttribute("d", d);
+	envArea.setAttribute("d", d + " Z");
+	handleA.place(g.xa, g.top);
+	handleM.place(g.xd, g.ys);
+	handleR.place(g.xr, g.bot);
+	envGrid.replaceChildren();
+	for (const f of [0.25, 0.5, 0.75]) {
+		const y = g.top + f * (g.bot - g.top);
+		envGrid.append(svg("line", { class: "eg", x1: 0, x2: g.W, y1: y, y2: y }));
+	}
+	const stageN = Number(state.remote.stage) || 0;
+	if (!stageN) { envDot.style.display = "none"; return; }
+	const env = Number(state.remote.envelope) || 0;
+	const sustain = Math.min(1, Math.max(0, valueOf("env_sustain", 1)));
+	const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+	let q;
+	if (stageN === 1) q = lerp(P[0], P[1], env);
+	else if (stageN === 2) q = lerp(P[1], P[2], sustain < 1 ? (1 - env) / (1 - sustain) : 1);
+	else if (stageN === 3) q = lerp(P[2], P[3], 0.5);
+	else q = lerp(P[3], P[4], 1 - env / Math.max(state.relFrom, 0.001));
+	q[1] = g.bot - env * (g.bot - g.top);
+	envDot.style.display = "";
+	envDot.setAttribute("cx", q[0]);
+	envDot.setAttribute("cy", q[1]);
+}
+
+function bindAdsr(handleEl, handle) {
+	let pid = null, origin = null;
+	handleEl.addEventListener("pointerdown", (event) => {
+		if (!openSocket()) return;
+		event.stopPropagation();
+		event.preventDefault();
+		capture(handleEl, event);
+		pid = event.pointerId;
+		const g = geom();
+		const names = handle === "attack" ? ["env_attack"] : handle === "release" ? ["env_release"] : ["env_decay", "env_sustain"];
+		const timeName = names[0];
+		origin = {
+			attack: valueOf("env_attack", 0),
+			decay: valueOf("env_decay", 0),
+			sustain: valueOf("env_sustain", 1),
+			release: valueOf("env_release", 0),
+			px: g.xOf(valueOf(timeName, 0), schema[timeName].max),
+			x: event.clientX,
+			y: event.clientY,
+			names: names,
+		};
+		grab(names);
+	});
+	handleEl.addEventListener("pointermove", (event) => {
+		if (event.pointerId !== pid) return;
+		const g = geom();
+		const scale = Math.max(envBox.getBoundingClientRect().width / Math.max(1, envBox.clientWidth), 0.0001);
+		const timeName = origin.names[0];
+		const out = gestures.adsrDrag({
+			handle: handle,
+			attack: origin.attack, decay: origin.decay, sustain: origin.sustain, release: origin.release,
+			originPx: origin.px,
+			dx: (event.clientX - origin.x) / scale,
+			dy: (event.clientY - origin.y) / scale,
+			seg: g.seg,
+			sustainSpan: g.bot - g.top,
+			maxTime: schema[timeName].max,
+		});
+		if (handle === "attack") sendSet("env_attack", out.attack);
+		else if (handle === "release") sendSet("env_release", out.release);
+		else { sendSet("env_decay", out.decay); sendSet("env_sustain", out.sustain); }
+		paint();
+	});
+	const up = (event) => {
+		if (event.pointerId !== pid) return;
+		pid = null;
+		releaseGrab(origin.names);
+	};
+	handleEl.addEventListener("pointerup", up);
+	handleEl.addEventListener("pointercancel", up);
+}
+bindAdsr(handleA.g, "attack");
+bindAdsr(handleM.g, "middle");
+bindAdsr(handleR.g, "release");
+
+const fx1 = makeFader({ name: "fx_param1", label: "Mix", def: 0.8, off: () => Number(state.local.fx_mode) === 1, text: (v) => Number(state.local.fx_mode) === 3 ? String(Math.round(v * 12 + 1)) : v.toFixed(2) });
+const fx2 = makeFader({ name: "fx_param2", label: "Decay", def: 0.985, text: (v) => v.toFixed(3) });
+const fx3 = makeFader({ name: "fx_param3", label: "Zoom", def: 0, bipolar: true, text: (v) => (v >= 0 ? "+" : "") + v.toFixed(3) });
+const fxTog = makeTog("FX");
+const bakeTog = makeTog("Bake FX", "amber");
+fxTog.el.addEventListener("click", () => pickBool("fx_enabled"));
+bakeTog.el.addEventListener("click", () => pickBool("fx_commit"));
+const fxSeg = makeSeg(FX_MODES.map((name, i) => ({ value: i, label: name })), (value) => pickInt("fx_mode", value));
+const fxPanel = h("div.panel.fx", null,
+	h("div.ph", null, h("span.pt", null, "FX"), h("div.sp"), fxTog.el, bakeTog.el),
+	fxSeg.el, fx1.el, fx2.el, fx3.el);
+
+const bpmValue = h("span.bv.num");
+const bpmBox = h("div.bpm", null, bpmValue, h("span.u", null, "BPM"));
+const bpmDown = h("button.btn.sq", { type: "button" }, "−");
+const bpmUp = h("button.btn.sq", { type: "button" }, "+");
+const coupleTog = makeTog("Gekoppeld");
+coupleTog.el.addEventListener("click", () => pickBool("tempo_coupled"));
+let bpmPid = null, bpmOrigin = 0, bpmY = 0;
+bpmBox.addEventListener("pointerdown", (event) => {
+	if (!openSocket()) return;
+	capture(bpmBox, event);
+	bpmPid = event.pointerId;
+	bpmOrigin = valueOf("bpm", schema.bpm.min);
+	bpmY = event.clientY;
+	grab(["bpm"]);
+});
+bpmBox.addEventListener("pointermove", (event) => {
+	if (event.pointerId !== bpmPid) return;
+	sendSet("bpm", gestures.bpmDrag({ bpm: bpmOrigin, dy: event.clientY - bpmY, min: schema.bpm.min, max: schema.bpm.max }));
+	paint();
+});
+const bpmEnd = (event) => {
+	if (event.pointerId !== bpmPid) return;
+	bpmPid = null;
+	releaseGrab(["bpm"]);
+};
+bpmBox.addEventListener("pointerup", bpmEnd);
+bpmBox.addEventListener("pointercancel", bpmEnd);
+function bumpBpm(dir) {
+	if (!openSocket()) return;
+	sendSet("bpm", gestures.bpmDrag({ bpm: valueOf("bpm", schema.bpm.min), dy: -dir * 3, min: schema.bpm.min, max: schema.bpm.max }));
+	paint();
+}
+bpmDown.addEventListener("click", () => bumpBpm(-1));
+bpmUp.addEventListener("click", () => bumpBpm(1));
+const speed = makeFader({ name: "read_speed_mult", label: "Leessnelheid", def: 1, text: (v) => v.toFixed(2) });
+const tempoPanel = h("div.panel.tempo", null,
+	h("div.ph", null, h("span.pt", null, "Tempo"), h("span.hint", null, "sleep BPM omhoog/omlaag"), h("div.sp"), coupleTog.el),
+	h("div.row", null, bpmDown, bpmBox, bpmUp, h("div.sp")),
+	speed.el);
+
+const closeFx = h("button.btn", { type: "button" }, "Sluit");
+const fxOverlay = h("div.overlay", null,
+	h("div.ph", null, h("span.pt", null, "FX en Tempo"), h("span.hint", null, "de pads, Opacity en het trackpad blijven bereikbaar"), h("div.sp"), closeFx),
+	h("div.drawer", null, fxPanel, tempoPanel));
+closeFx.addEventListener("click", () => { state.overlay = null; paint(); });
+
+const fpsSeg = h("div.seg");
+const exportPath = h("p");
+const aspectSetup = makeTog("Preserve aspect");
+const barsSetup = makeTog("Black bars");
+aspectSetup.el.addEventListener("click", () => pickBool("video_aspect"));
+barsSetup.el.addEventListener("click", () => pickBool("video_bars"));
+const camValue = h("span.num");
+const camDown = h("button.btn.sq", { type: "button" }, "−");
+const camUp = h("button.btn.sq", { type: "button" }, "+");
+function stepCam(dir) {
+	if (!openSocket()) return;
+	const control = schema.webcam_index;
+	const cur = Math.round(valueOf("webcam_index", control.min));
+	sendSet("webcam_index", Math.min(control.max, Math.max(control.min, cur + dir)));
+	paint();
+}
+camDown.addEventListener("click", () => stepCam(-1));
+camUp.addEventListener("click", () => stepCam(1));
+const gain = makeFader({ name: "gain_mix", label: "Blend gain", def: 1, text: (v) => v.toFixed(2) });
+const setupFolderNames = h("p");
+const linkValue = h("p");
+const closeSetup = h("button.btn", { type: "button" }, "Sluit");
+const setupOverlay = h("div.overlay", null,
+	h("div.ph", null, h("span.pt", null, "Setup"), h("span.hint", null, "tweede laag · de pads blijven bereikbaar"), h("div.sp"), closeSetup),
+	h("div.ogrid", null,
+		h("div.osec", null, h("span.pt", null, "Export"),
+			h("p", null, "Export schrijft naar een .mov op de Mac. Het pad kies je daar."),
+			exportPath,
+			h("div.row", null, h("span.hint", null, "fps"), fpsSeg)),
+		h("div.osec", null, h("span.pt", null, "Source-framing"),
+			h("p", null, "Ook als schakelaar boven het trackpad."),
+			h("div.row", null, aspectSetup.el, barsSetup.el),
+			h("div.row", null, h("span.hint", null, "Webcam"), camDown, camValue, camUp)),
+		h("div.osec", null, h("span.pt", null, "Loop-weergave"), gain.el),
+		h("div.osec", null, h("span.pt", null, "Folder list"), setupFolderNames,
+			h("p", null, "Volgorde en mappen beheer je op de Mac.")),
+		h("div.osec", null, h("span.pt", null, "Ableton Link"),
+			h("p", null, "Link en peers staan alleen-lezen in de Web interface. Aanzetten gebeurt op de Mac."),
+			linkValue)));
+closeSetup.addEventListener("click", () => { state.overlay = null; paint(); });
+let fpsKey = "";
+
+const faders = [opacity, fx1, fx2, fx3, speed, gain];
+
+function paintFill(fill, value, min, max, mode) {
+	const span = max - min || 1;
+	const f = Math.min(1, Math.max(0, (Number(value) - min) / span));
+	if (mode === "v") fill.style.height = f * 100 + "%";
+	else if (mode === "bip") {
+		fill.style.left = Math.min(f, 0.5) * 100 + "%";
+		fill.style.width = Math.abs(f - 0.5) * 100 + "%";
+	} else fill.style.width = f * 100 + "%";
+}
+
+function paintTog(tog, on, text) {
+	tog.el.classList.toggle("on", !!on);
+	tog.status.textContent = text;
+}
+
+function paintSeg(seg, value) {
+	for (const button of seg.buttons) button.classList.toggle("on", Number(button.dataset.value) === Number(value));
+}
+
+function paintFolders() {
+	const key = state.folders.join("\n");
+	if (key !== folderKey) {
+		folderKey = key;
+		folderRow.replaceChildren();
+		for (const path of state.folders) {
+			const button = h("button.fchip", { type: "button" }, leaf(path));
 			button.dataset.path = path;
-			button.textContent = path.replace(/\/+$/, "").split("/").pop() || path;
 			button.addEventListener("click", () => {
-				if (socket.readyState !== WebSocket.OPEN) return;
-				sourceReason.textContent = "";
-				socket.send(JSON.stringify({ t: "folder", name: path }));
+				if (!openSocket()) return;
+				if (state.midKind === "folder") { state.midError = ""; state.midKind = ""; }
+				sendRaw({ t: "folder", name: path });
+				paint();
 			});
+			folderRow.append(button);
 		}
 	}
+	for (const button of folderRow.children) button.classList.toggle("on", button.dataset.path === state.local.videos_folder);
+	setupFolderNames.textContent = state.folders.map(leaf).join(" · ");
+}
 
-	const stages = ["idle", "attack", "decay", "sustain", "release"];
-	const live = (id, text) => { document.getElementById(`live-${id}`).textContent = text; };
+function paintVideos() {
+	const pages = pageCount();
+	if (state.page >= pages) state.page = pages - 1;
+	if (state.page < 0) state.page = 0;
+	const key = state.videos.join("\n") + "#" + state.page + "#" + state.pageSize;
+	if (key !== videoKey) {
+		videoKey = key;
+		const start = state.page * state.pageSize;
+		grid.replaceChildren();
+		for (const name of state.videos.slice(start, start + state.pageSize)) grid.append(videoCell(name));
+		if (!state.videos.length) grid.append(h("div.vempty", null, "Nog niets gekozen."));
+		grid.append(sourceOver);
+	}
+	const kind = Number(state.local.source_kind);
+	for (const cell of grid.querySelectorAll(".vc")) cell.classList.toggle("cur", kind === 1 && cell.dataset.name === state.remote.video);
+	const total = state.videos.length;
+	const start = state.page * state.pageSize;
+	pageLabel.textContent = total ? (start + 1) + "–" + Math.min(total, start + state.pageSize) + " / " + total : "0";
+	pagePrev.disabled = state.page === 0;
+	pageNext.disabled = state.page + 1 >= pages;
+	const other = kind === 0 || kind === 2 || kind === 3;
+	grid.classList.toggle("inactive", other);
+	sourceOver.hidden = !other;
+	if (other) {
+		const name = kind === 0 ? "Shader" : kind === 2 ? "Zwart" : "Webcam";
+		sourceOver.replaceChildren(h("div", null, "Source is ", h("b", null, name), ". Tik een Video om terug te gaan."));
+	}
+}
 
-	socket.onopen = () => { connection.textContent = "connected"; };
-	socket.onclose = () => {
-		connection.textContent = "disconnected";
-		for (const name in pads) stopPad(name);
-	};
-	socket.onmessage = (event) => {
-		const msg = JSON.parse(event.data);
-		if (msg.t === "snapshot") {
-			Object.assign(state, msg);
-			for (const name in controls) if (!busy(controls[name].el)) show(name);
-			adoptTransform();
-			live("loop", `${Math.round(state.loop * 100)}%`);
-			live("envelope", state.envelope.toFixed(2));
-			live("stage", stages[state.stage] || String(state.stage));
-			live("gate", state.gate ? "open" : "closed");
-			live("cue", state.cue ? "open" : "closed");
-			live("video", state.video || "none");
-			if ("folders" in msg) showFolders(msg.folders);
-			for (const button of foldersRow.children)
-				button.classList.toggle("current", button.dataset.path === state.videos_folder);
-			if ("videos" in msg) showVideos(msg.videos);
-			if (state.video !== followedVideo) {
-				followedVideo = state.video;
-				const at = videoNames.indexOf(state.video);
-				if (at >= 0) {
-					const next = Math.floor(at / pageSize);
-					if (next !== page) {
-						page = next;
-						renderVideos();
-					}
-				}
-			}
-			for (const button of videosGrid.children) button.classList.toggle("current", button.dataset.name === state.video);
-			pads.gate.el.classList.toggle("open", state.gate);
-			pads.cue.el.classList.toggle("open", state.cue);
-			exportState.textContent = state.record_enabled ? "running" : "stopped";
-			exportState.className = state.record_enabled ? "running" : "";
-			if (state.record_enabled) exportReason.textContent = "";
-		} else if (msg.t === "reject") {
-			if (controls[msg.name]) show(msg.name);
-			if (msg.name === "record_enabled") exportReason.textContent = msg.reason;
-			if (msg.name === "source") {
-				sourceReason.textContent = msg.reason;
-				show("source_kind");
-			}
-			if (msg.name === "folder") sourceReason.textContent = msg.reason;
+function paintFps() {
+	const cur = Number(state.local.record_fps);
+	const stops = [24, 25, 30, 50, 60];
+	const values = stops.slice();
+	if (Number.isFinite(cur) && !stops.some((stop) => Math.abs(stop - cur) < 0.01)) values.push(cur);
+	const key = values.join(",");
+	if (key !== fpsKey) {
+		fpsKey = key;
+		fpsSeg.replaceChildren();
+		for (const value of values) {
+			const button = h("button", { type: "button" }, String(value));
+			button.dataset.value = String(value);
+			button.addEventListener("click", () => pickInt("record_fps", value));
+			fpsSeg.append(button);
 		}
-	};
+	}
+	for (const button of fpsSeg.children) button.classList.toggle("on", Math.abs(Number(button.dataset.value) - cur) < 0.01);
+}
+
+function paint() {
+	conn.classList.toggle("lost", state.link !== "up");
+	connText.textContent = state.link === "up" ? "Verbonden" : "Verbinding weg · kijk op de Mac";
+	const loop = Number(state.remote.loop) || 0;
+	const env = Number(state.remote.envelope) || 0;
+	const stageN = Number(state.remote.stage) || 0;
+	loopFill.style.width = loop * 100 + "%";
+	loopPct.textContent = pct(loop);
+	envFill.style.width = env * 100 + "%";
+	envStage.textContent = STAGES[stageN] || "";
+	const writing = gateOpen();
+	const showing = cueOpen();
+	chipWrite.classList.toggle("on", writing && !showing);
+	chipLatch.classList.toggle("on", linkUp() && !!state.local.arm_record);
+	chipCue.classList.toggle("on", showing);
+	chipFx.classList.toggle("on", !!state.local.fx_enabled);
+	chipBake.classList.toggle("on", !!state.local.fx_enabled && !!state.local.fx_commit);
+	sourceNow.replaceChildren("Source ", h("b", null, sourceName()));
+	const fxMode = Number(state.local.fx_mode);
+	const fxName = state.local.fx_enabled ? (FX_MODES[fxMode] || "uit") : "uit";
+	fxBtnText.textContent = "FX " + fxName + " · " + compact(valueOf("bpm", 0), 1) + " BPM · " + compact(valueOf("read_speed_mult", 1), 2) + "×";
+	exportBtn.classList.toggle("on", state.exportOn);
+	exportText.textContent = state.exportOn ? clock(performance.now() - state.exportBase) : "Export";
+	exportReason.hidden = !state.exportReason;
+	exportReason.textContent = state.exportReason || "";
+	setupBtn.classList.toggle("on", state.overlay === "setup");
+	fxOverlay.hidden = state.overlay !== "fx";
+	setupOverlay.hidden = state.overlay !== "setup";
+
+	const unknown = !linkUp();
+	overdub.classList.toggle("unknown", unknown);
+	cuePad.classList.toggle("unknown", unknown);
+	latchBtn.classList.toggle("unknown", unknown);
+	cueVastBtn.classList.toggle("unknown", unknown);
+	overdub.classList.toggle("open", writing);
+	cuePad.classList.toggle("open", showing);
+	overdubFill.style.height = env * 100 + "%";
+	overdubStage.textContent = stageN ? (STAGES[stageN] || "") : "";
+	overdubSub.textContent = !linkUp() ? "" : state.local.arm_record ? "Latch · schrijft in Loop" : writing ? (showing ? "Cue actief · schrijft niet" : "schrijft in Loop") : "houd vast";
+	cueSub.textContent = !linkUp() ? "" : showing ? "toont Audition · schrijft niet" : "houd vast · Audition tonen";
+	latchBtn.classList.toggle("on", !!state.local.arm_record);
+	cueVastBtn.classList.toggle("on", !!state.local.cue_active);
+	latchStatus.textContent = !linkUp() ? "" : state.local.arm_record ? "aan · schrijft" : "uit";
+	cueVastStatus.textContent = !linkUp() ? "" : state.local.cue_active ? "aan" : "uit";
+
+	for (const fader of faders) {
+		const control = schema[fader.name];
+		const v = valueOf(fader.name, fader.def);
+		if (fader.name === "fx_param1") fader.label.textContent = (FX_LABELS[fxMode] || FX_LABELS[0])[0];
+		if (fader.name === "fx_param2") fader.label.textContent = (FX_LABELS[fxMode] || FX_LABELS[0])[1];
+		if (fader.name === "fx_param3") fader.label.textContent = (FX_LABELS[fxMode] || FX_LABELS[0])[2];
+		fader.value.textContent = fader.text(v);
+		paintFill(fader.fill, v, control.min, control.max, fader.vertical ? "v" : fader.bipolar ? "bip" : "h");
+		fader.el.classList.toggle("off", fader.off ? fader.off() : false);
+	}
+	paintSeg(kindSeg, state.local.source_kind);
+	paintFolders();
+	paintVideos();
+	const blendMode = Number(state.local.record_blend_mode) || 0;
+	let blendText = "";
+	for (const button of blendGrid.children) {
+		const on = Number(button.dataset.index) === blendMode;
+		button.classList.toggle("on", on);
+		if (on) blendText = button.textContent;
+	}
+	blendLabel.textContent = blendText;
+	const loopStart = valueOf("file_loop_start", 0);
+	const loopLen = valueOf("file_loop_length", 0);
+	loopWin.style.left = loopStart * 100 + "%";
+	loopWin.style.width = Math.max(0, loopLen) * 100 + "%";
+	loopStartOut.textContent = pct(loopStart);
+	loopLenOut.textContent = pct(loopLen);
+	paintSeg(runSeg, state.local.file_run_mode);
+	paintTog(loopTog, state.local.file_loop, state.local.file_loop ? "aan" : "uit");
+	paintTog(pauseTog, state.local.file_paused, state.local.file_paused ? "aan" : "uit");
+	const sourceKind = Number(state.local.source_kind);
+	loopPanel.classList.toggle("dimmed", Number.isFinite(sourceKind) && sourceKind !== 1);
+	paintTog(aspectTog, state.local.video_aspect, state.local.video_aspect ? "aan" : "uit");
+	paintTog(barsTog, state.local.video_bars, state.local.video_bars ? "aan" : "uit");
+	paintTog(aspectSetup, state.local.video_aspect, state.local.video_aspect ? "aan" : "uit");
+	paintTog(barsSetup, state.local.video_bars, state.local.video_bars ? "aan" : "uit");
+	setFrameImage(state.remote.video || "");
+	layoutFrame();
+	const stageName = stageN ? (STAGES[stageN] || "") : "";
+	envStageName.textContent = stageName;
+	envA.textContent = fmtT(valueOf("env_attack", 0));
+	envD.textContent = fmtT(valueOf("env_decay", 0));
+	envS.textContent = pct(valueOf("env_sustain", 0));
+	envR.textContent = fmtT(valueOf("env_release", 0));
+	paintTog(envTog, state.local.env_enabled, state.local.env_enabled ? "aan" : "uit");
+	adsrPanel.classList.toggle("envoff", !state.local.env_enabled);
+	drawAdsr();
+	paintSeg(fxSeg, state.local.fx_mode);
+	paintTog(fxTog, state.local.fx_enabled, state.local.fx_enabled ? "aan" : "uit");
+	const bakeOn = !!state.local.fx_commit;
+	const fxOn = !!state.local.fx_enabled;
+	bakeTog.el.classList.toggle("on", bakeOn);
+	bakeTog.status.textContent = bakeOn && fxOn ? "in Loop" : bakeOn ? "aan" : "uit";
+	fxPanel.classList.toggle("dimmed", !fxOn);
+	bpmValue.textContent = compact(valueOf("bpm", 0), 1);
+	paintTog(coupleTog, state.local.tempo_coupled, state.local.tempo_coupled ? "aan" : "uit");
+	paintFps();
+	camValue.textContent = String(Math.round(valueOf("webcam_index", 0)));
+	exportPath.textContent = state.local.record_path || "";
+	linkValue.textContent = state.local.link_enabled ? "aan" : "uit";
+	midError.hidden = !state.midError;
+	midError.textContent = state.midError || "";
+}
+
+fxBtn.addEventListener("click", () => {
+	state.overlay = state.overlay === "fx" ? null : "fx";
+	paint();
+});
+setupBtn.addEventListener("click", () => {
+	state.overlay = state.overlay === "setup" ? null : "setup";
+	paint();
+});
+exportBtn.addEventListener("click", () => {
+	if (!openSocket()) return;
+	sendSet("record_enabled", !state.local.record_enabled);
+	noteExport(!!state.local.record_enabled);
+	paint();
+});
+
+const main = h("main", null,
+	h("div.pcol", null, overdub, latchBtn, cuePad, cueVastBtn, panicBtn),
+	h("div.opcol", null, opacity.el),
+	h("div.col", null,
+		h("div.panel.videos", null,
+			h("div.ph", null, kindSeg.el),
+			folderRow, grid,
+			h("div.vfoot", null, pagePrev, pageLabel, pageNext, h("div.sp"),
+				h("span.hint", null, "Video"), videoPrev, videoNext)),
+		h("div.panel.blend", null,
+			h("div.ph", null, h("span.pt", null, "Blend"), blendLabel, h("div.sp"),
+				h("div.fams", null, famSwatch("fl", "licht"), famSwatch("fd", "donker"), famSwatch("fc", "contrast"), famSwatch("fx", "verschil")),
+				h("span.hint", null, "· tik of veeg")),
+			blendGrid),
+		loopPanel,
+		midError),
+	h("div.col", null,
+		h("div.panel.xf", null,
+			h("div.ph", null, h("span.pt", null, "Transform"), h("span.hint.clip", null, "1 vinger schuift · 2 vingers schalen en draaien"), h("div.sp"), aspectTog.el, barsTog.el),
+			pad,
+			h("div.xfread", null, h("span", null, "X", readX), h("span", null, "Y", readY), h("span", null, "Schaal", readS), h("span", null, "Draai", readR), h("div.sp"), resetBtn)),
+		h("div.adsr-slot", null, adsrPanel)),
+	setupOverlay, fxOverlay);
+stage.append(status, main);
+
+function fit() {
+	const vp = document.getElementById("viewport");
+	const w = 1366, hgt = 950;
+	const k = Math.min(vp.clientWidth / w, vp.clientHeight / hgt);
+	if (!Number.isFinite(k) || k <= 0) return;
+	stage.style.transform = "scale(" + k + ")";
+	document.getElementById("holder").style.width = (w * k) + "px";
+	document.getElementById("holder").style.height = (hgt * k) + "px";
+}
+
+function applySnapshot(msg) {
+	const prevExport = !!state.local.record_enabled;
+	for (const key of Object.keys(msg)) {
+		if (key === "t" || key === "videos" || key === "folders") continue;
+		state.remote[key] = msg[key];
+	}
+	if (Array.isArray(msg.videos)) state.videos = msg.videos.slice();
+	if (Array.isArray(msg.folders)) state.folders = msg.folders.slice();
+	for (const name of Object.keys(schema)) {
+		if (state.grabbed.has(name)) continue;
+		if (name in msg) state.local[name] = msg[name];
+	}
+	if ("source_error" in msg) {
+		if (msg.source_error) {
+			state.midError = msg.source_error;
+			state.midKind = "source";
+		} else if (state.midKind === "source") {
+			state.midError = "";
+			state.midKind = "";
+		}
+	}
+	if (msg.video !== state.followed) {
+		state.followed = msg.video;
+		state.paged = false;
+	}
+	if (!state.paged) {
+		const at = state.videos.indexOf(state.remote.video);
+		if (at >= 0) state.page = Math.floor(at / Math.max(1, state.pageSize));
+	}
+	const stageN = Number(state.remote.stage) || 0;
+	if (stageN === 4 && state.relStage !== 4) state.relFrom = Number(state.remote.envelope) || 0;
+	state.relStage = stageN;
+	const nowExport = !!state.local.record_enabled;
+	if (nowExport !== prevExport || nowExport !== state.exportOn) noteExport(nowExport);
+	else if (nowExport) state.exportReason = "";
+	paint();
+}
+
+function applyReject(msg) {
+	if (msg.name && schema[msg.name] && Object.prototype.hasOwnProperty.call(state.remote, msg.name) && !state.grabbed.has(msg.name))
+		state.local[msg.name] = state.remote[msg.name];
+	if (msg.name === "record_enabled") {
+		state.exportReason = msg.reason || "";
+		noteExport(!!state.local.record_enabled);
+	}
+	if (msg.name === "source" || msg.name === "folder") {
+		state.midError = msg.reason || "";
+		state.midKind = msg.name;
+	}
+	paint();
+}
+
+socket.onopen = () => { state.link = "up"; paint(); };
+socket.onclose = () => {
+	state.link = "down";
+	stopHold("gate", false);
+	stopHold("cue", false);
+	state.fingers.gate = false;
+	state.fingers.cue = false;
+	points.clear();
+	pad.classList.remove("touch");
+	releaseGrab([...state.grabbed]);
+};
+socket.onmessage = (event) => {
+	let msg;
+	try { msg = JSON.parse(event.data); } catch (err) { return; }
+	if (!msg || typeof msg !== "object") return;
+	if (msg.t === "snapshot") applySnapshot(msg);
+	else if (msg.t === "reject") applyReject(msg);
+};
+
+document.addEventListener("gesturestart", (event) => event.preventDefault());
+document.addEventListener("contextmenu", (event) => {
+	if (event.target.closest("img")) event.preventDefault();
+});
+window.addEventListener("resize", fit);
+const ro = new ResizeObserver(() => { measureGrid(); layoutFrame(); drawAdsr(); });
+ro.observe(grid);
+ro.observe(pad);
+ro.observe(envBox);
+fit();
+paint();
+measureGrid();
+requestAnimationFrame(function tick() {
+	if (state.exportOn) exportText.textContent = clock(performance.now() - state.exportBase);
+	requestAnimationFrame(tick);
+});
 </script>
 </body>
 </html>

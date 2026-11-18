@@ -602,6 +602,13 @@ bool RemoteSession::handle(int fd) {
 		std::ifstream in(webDir() / "index.html", std::ios::binary);
 		if (in) {
 			std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+			const std::string gesturesMark = "/*GESTURES*/";
+			size_t gestureAt = body.find(gesturesMark);
+			if (gestureAt != std::string::npos) {
+				std::ifstream gesturesIn(webDir() / "gestures.js", std::ios::binary);
+				std::string gestures((std::istreambuf_iterator<char>(gesturesIn)), std::istreambuf_iterator<char>());
+				body.replace(gestureAt, gesturesMark.size(), gestures);
+			}
 			const std::string placeholder = "/*CONTROL_SCHEMA*/null";
 			size_t at = body.find(placeholder);
 			if (at != std::string::npos) body.replace(at, placeholder.size(), controlSchemaJson());
