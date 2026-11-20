@@ -93,6 +93,12 @@ add_executable(setup_test
 )
 target_include_directories(setup_test PRIVATE app/src)
 
+add_custom_target(gestures_test
+  COMMAND node ${CMAKE_SOURCE_DIR}/app/tests/gestures_test.js
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  VERBATIM
+)
+
 if(APPLE)
   # Provide Info.plist for bundle (required for camera privacy and Continuity Camera)
   set_target_properties(video_looper PROPERTIES
