@@ -81,6 +81,16 @@ GateState combineHolds(GateInputs in) {
 	return {in.latch || in.space || in.pad, in.cueLatch || in.cueKey || in.cuePad};
 }
 
+bool overdubIsBlack(bool eraseHeld, bool sourceGate, bool cueActive, bool envEnabled, int envPhase, bool& latched) {
+	if (eraseHeld)
+		latched = true;
+	else if (sourceGate || cueActive)
+		latched = false;
+	else if (!envEnabled || envPhase == 0)
+		latched = false;
+	return latched;
+}
+
 std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const std::vector<std::string>& videos,
                            const std::vector<std::string>& folders, bool catalog, const std::string& sourceError) {
 	std::string out = "{\"t\":\"snapshot\"";
@@ -107,8 +117,8 @@ std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const
 	if (params.getInt("source_kind") == 1) video = std::filesystem::path(params.getString("file_path")).filename();
 	out += ",\"loop\":" + jsonNumber(live.loop) + ",\"envelope\":" + jsonNumber(live.envelope) +
 	       ",\"stage\":" + std::to_string(live.stage) + ",\"gate\":" + (live.gate ? "true" : "false") +
-	       ",\"cue\":" + (live.cue ? "true" : "false") + ",\"video\":" + jsonString(video) +
-	       ",\"source_error\":" + jsonString(sourceError);
+	       ",\"cue\":" + (live.cue ? "true" : "false") + ",\"erase\":" + (live.erase ? "true" : "false") +
+	       ",\"video\":" + jsonString(video) + ",\"source_error\":" + jsonString(sourceError);
 	if (!catalog) return out + "}";
 	out += ",\"videos\":[";
 	for (size_t i = 0; i < videos.size(); ++i)

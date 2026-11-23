@@ -199,10 +199,10 @@ static bool waitFor(const RemoteSession& session, int count) {
 	return false;
 }
 
-static bool waitPads(const RemoteSession& session, bool gate, bool cue) {
+static bool waitPads(const RemoteSession& session, bool gate, bool cue, bool erase = false) {
 	for (int i = 0; i < 100; ++i) {
 		RemoteSession::PadState p = session.pads();
-		if (p.gate == gate && p.cue == cue) return true;
+		if (p.gate == gate && p.cue == cue && p.erase == erase) return true;
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 	return false;
@@ -413,6 +413,20 @@ int main() {
 	          !combineHolds({false, false, false, false, false, true}).gate,
 	      "18. a Cue pad opens Cue and not the gate");
 	{
+		bool latched = false;
+		check(overdubIsBlack(true, false, false, true, 1, latched) && latched, "18. Erase writes black");
+		check(overdubIsBlack(false, false, false, true, 4, latched), "18. the release tail stays black");
+		check(!overdubIsBlack(false, false, false, true, 0, latched) && !latched, "18. idle drops the black image");
+		check(overdubIsBlack(true, true, false, true, 3, latched), "18. Erase wins over a Source overdub");
+		check(!overdubIsBlack(false, true, false, true, 3, latched) && !latched,
+		      "18. a Source overdub takes the image back");
+		latched = true;
+		check(!overdubIsBlack(false, false, true, true, 4, latched) && !latched, "18. Cue takes the image back");
+		latched = true;
+		check(!overdubIsBlack(false, false, false, false, 4, latched) && !latched,
+		      "18. a disabled envelope has no black tail");
+	}
+	{
 		RemoteSession session(tokenFile, "127.0.0.1", 0);
 		session.setClock(fakeClock);
 		session.setEnabled(true);
@@ -464,7 +478,8 @@ int main() {
 		params.setFloat("bpm", 128.0f);
 		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"gate"})");
 		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"cue"})");
-		check(waitPads(session, true, true), "22. both pads are down before panic");
+		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"erase"})");
+		check(waitPads(session, true, true, true), "22. the pads are down before panic");
 		sendFrame(client.fd, 0x1, R"({"t":"panic"})");
 		std::vector<RemoteSet> sets = waitDrain(session);
 		for (const RemoteSet& set : sets) {
@@ -474,19 +489,23 @@ int main() {
 		}
 		p = session.pads();
 		check(sets.size() == 1 && sets[0].kind == RemoteKind::Panic, "22. panic drains as one Panic item");
-		check(!params.getBool("arm_record") && !params.getBool("cue_active") && !p.gate && !p.cue,
-		      "22. after panic the Latch, the latched Cue, and both pads are clear");
+		check(!params.getBool("arm_record") && !params.getBool("cue_active") && !p.gate && !p.cue && !p.erase,
+		      "22. after panic the Latch, the latched Cue, and the pads are clear");
 		check(params.getFloat("bpm") == 128.0f, "22. panic leaves other params alone");
+		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"erase"})");
+		check(waitPads(session, false, false, true), "22. an Erase hold opens Erase and not the gate");
+		sendFrame(client.fd, 0x1, R"({"t":"release","name":"erase"})");
+		check(waitPads(session, false, false, false), "22. releasing Erase drops it");
 
 		params.setString("file_path", "/tmp/videos/clip.mov");
 		params.setInt("source_kind", 1);
-		publish(session, params, {0.25f, 0.5f, 3, true, false});
+		publish(session, params, {0.25f, 0.5f, 3, true, false, true});
 		std::string payload = readText(client);
 		check(field(payload, "loop") == "0.25" && field(payload, "envelope") == "0.5" && field(payload, "stage") == "3",
 		      "23. the client reads loop, envelope, and stage");
 		check(field(payload, "video") == "\"clip.mov\"", "23. the client reads \"video\":\"clip.mov\"");
-		check(field(payload, "gate") == "true" && field(payload, "cue") == "false",
-		      "23. the client reads the gate and Cue flags");
+		check(field(payload, "gate") == "true" && field(payload, "cue") == "false" && field(payload, "erase") == "true",
+		      "23. the client reads the gate, Cue, and Erase flags");
 		params.setInt("source_kind", 0);
 		publish(session, params);
 		check(field(readText(client), "video") == "\"\"", "23. video is empty when the Source is not a Video");
@@ -851,8 +870,8 @@ int main() {
 			if (data.find("\"e\":\"hold\"") != std::string::npos && data.find("clip.mp4") != std::string::npos) break;
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
-		check(data.find("\"e\":\"set\"") != std::string::npos && data.find("\"name\":\"fx_mode\"") != std::string::npos &&
-		          data.find("\"v\":5") != std::string::npos,
+		check(data.find("\"e\":\"set\"") != std::string::npos &&
+		          data.find("\"name\":\"fx_mode\"") != std::string::npos && data.find("\"v\":5") != std::string::npos,
 		      "43. a use gesture is appended to the usage file");
 		check(data.find("\"v\":\"clip.mp4\"") != std::string::npos, "43. a dub name is kept on the gesture");
 		int fxLines = 0;

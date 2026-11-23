@@ -10,6 +10,10 @@ A live VJ instrument that loops video and lets the performer layer a live source
 Writing the live Source into the loop, shaped by the blend mode, opacity, and ADSR envelope.
 _Avoid_: Record, recording
 
+**Erase**:
+An Overdub that writes black instead of the Source. It mixes toward black, shaped by opacity and the ADSR, and ignores the blend mode.
+_Avoid_: Clear, wipe
+
 **Overdub gate**:
 The momentary control that opens an Overdub while held.
 _Avoid_: Record gate, rec

@@ -106,7 +106,7 @@ File and webcam frames are drawn into the Source, then that image is what an Ove
 
 **Web interface grid** (`app/web/index.html`): Select loads the tapped Video as the Source. Dub does that and Commits it, so the Video is written into the Loop at full opacity from its start to its end and stays the Source. The page sends the filenames on screen; `PageCache` opens those Videos on a background thread so a tap swaps a ready one in. A Video that is not ready yet still loads, and a Dub Commits when that load swaps in.
 
-**File Trigger mode** (`file_run_mode == 1`): on rising edge of record gate or cue, `restartFileAtLoopStart()` if source is File.
+**File Trigger mode** (`file_run_mode == 1`): on rising edge of the Source overdub gate or Cue, `restartFileAtLoopStart()` if source is File. Erase does not restart it.
 
 ---
 
@@ -125,7 +125,9 @@ File and webcam frames are drawn into the Source, then that image is what an Ove
 
 **Cue** (`C` held or `cue_active`): presents audition (loop + live overlay) but **skips** `writeAndSwap`.
 
-**Record gate**: `arm_record` UI **or** Space held. With envelope on, `shouldRecordOnRelease` latches so release still writes while envelope > 0. Cue clears that latch while active.
+**Record gate**: Latch (`arm_record`) **or** Space held **or** the Overdub pad **or** Erase. With the envelope on, `shouldRecordOnRelease` latches so release still writes while the envelope is above 0. Cue clears that latch while active.
+
+**Erase** (Web interface hold under Overdub): opens that same gate, so the ADSR runs as an Overdub, and the image is opaque black rather than the Source. The blend mode is bypassed: the write is Mix, so the envelope fades the Loop toward black. Opacity still scales it. Source FX is not applied to the black. While Erase is held it wins over Latch, Space, and the Overdub pad. Releasing it while one of those still holds the gate switches the image back to the Source immediately. Releasing it with the gate closed keeps writing black through the release tail. Cue still skips the ring write. Commit still writes the Video.
 
 **ADSR** (`env_*`, default on): phases 0 idle → 1 attack → 2 decay → 3 sustain → 4 release. Disabled or `commit_active` → opacity is binary (gate/commit) rather than enveloped. `writeOpacity = record_blend_opacity * envOrGate`.
 
@@ -210,7 +212,7 @@ Keys used elsewhere but not all initialized at startup (rely on get defaults): e
 
 `~/Library/Application Support/video-looper/setup.json` is written 0.2 s after the setup stops changing, and again on quit. Launch applies it after the defaults, so a missing or broken file leaves the defaults. Restored fields: blend, opacity, blend gain, envelope, FX, Source FX, Source kind and transform, black bars, preserve aspect, webcam, video loop / pause / run mode / loop range, current Video, Folder list, tempo, whether the Web interface is on, export path and export fps. Latch, latched Cue, and Export start off. Link, the preview window, playheads, Mac UI visibility, the URL token, and the window are not in the file. A folder that cannot be read is dropped. If the current Video cannot be opened, the Source stays a Video, nothing is loaded, and the Web interface keeps the load failure on its snapshot. The Loop's frames are not restored (ADR-0003). A restored Video's first frame is the start of its saved loop range.
 
-`web-use.jsonl` in that same folder is an append-only record of Web interface gestures, one JSON object per line: `at` (UTC), `e` (`set`, `hold`, `release`, `open`, `close`, `chain`, `tap`, `act`), `name`, and `v` when the gesture has a value. A fader, blend swipe, transform, or envelope drag is one `set` when the finger lifts, with the value it landed on. A held Overdub gate or Cue is one `hold` and one `release`, not the repeats that keep the pad down. Opening the ADSR/opacity layer or Setup is `open` / `close`. The file keeps its newest lines once it passes 4 MB. It is not restored into the instrument and it is not sent off the Mac.
+`web-use.jsonl` in that same folder is an append-only record of Web interface gestures, one JSON object per line: `at` (UTC), `e` (`set`, `hold`, `release`, `open`, `close`, `chain`, `tap`, `act`), `name`, and `v` when the gesture has a value. A fader, blend swipe, transform, or envelope drag is one `set` when the finger lifts, with the value it landed on. A held Overdub gate, Erase, or Cue is one `hold` and one `release`, not the repeats that keep the pad down. Opening the ADSR/opacity layer or Setup is `open` / `close`. The file keeps its newest lines once it passes 4 MB. It is not restored into the instrument and it is not sent off the Mac.
 
 ---
 
