@@ -136,6 +136,13 @@ int App::run() {
 	auditionFboA = createFbo(auditionTexA);
 	auditionTexB = createTexture2D(fbw, fbh);
 	auditionFboB = createFbo(auditionTexB);
+	GLuint blackTex = createTexture2D(1, 1);
+	{
+		const unsigned char blackPx[4] = {0, 0, 0, 255};
+		glBindTexture(GL_TEXTURE_2D, blackTex);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, blackPx);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
 
 	HotReload hot;
 	hot.watch(vsPath);
@@ -590,13 +597,17 @@ int App::run() {
 		static float envVal = 0.0f;
 		static int envPhase = 0;
 		static bool gatePrev = false;
+		static bool sourcePrev = false;
+		static bool blackLatched = false;
 		bool commitActive = params.getBool("commit_active", false);
 		bool spaceHeld = (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS);
 		bool cHeld = (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS);
 		GateState combine = combineHolds({params.getBool("arm_record", false), spaceHeld, pads.gate,
 		                                  params.getBool("cue_active", false), cHeld, pads.cue});
+		bool sourceGate = combine.gate;
+		bool eraseHeld = pads.erase;
 		bool cueActive = combine.cue;
-		bool recGate = combine.gate;
+		bool recGate = sourceGate || eraseHeld;
 
 		if (cueActive) shouldRecordOnRelease = false;
 		if (recGate) shouldRecordOnRelease = true;
@@ -665,15 +676,18 @@ int App::run() {
 				break;
 			}
 		}
-		// On rising edge of record or cue, optionally trigger file playback
-		if ((recGate || cueActive) && !gatePrev) {
+		// On rising edge of a Source overdub or Cue, optionally trigger file playback. Erase does not.
+		if ((sourceGate || cueActive) && !sourcePrev) {
 			if (params.getInt("file_run_mode", 0) == 1) {
 				if (params.getInt("source_kind", (int)SourceKind::Shader) == (int)SourceKind::File) {
 					source.restartFileAtLoopStart();
 				}
 			}
 		}
+		sourcePrev = sourceGate || cueActive;
 		gatePrev = recGate || cueActive;
+		bool paintBlack =
+			overdubIsBlack(eraseHeld, sourceGate, cueActive, envEnabled, envPhase, blackLatched) && !commitActive;
 
 		float writeOpacity = params.getFloat("record_blend_opacity", 1.0f) *
 		                     (commitActive || !envEnabled ? ((recGate || commitActive) ? 1.0f : 0.0f) : envVal);
@@ -704,10 +718,13 @@ int App::run() {
 			liveSource = sourceFx.process(fbw, fbh, liveSource, liveSource, 0.0f, mode, p1, p2, p3, repeatBlend, quad);
 		}
 
+		GLuint dubImage = paintBlack ? blackTex : liveSource;
+		int dubMode = paintBlack ? 0 : recordBlendMode;
+
 		// Perform writes unless cueing (monitor only)
 		if (!cueActive) {
 			looper.writeAndSwap(fbw, fbh, shaderBlit, shaderBlendTwo, quad, idx0, wraps, recordingActive, writeOpacity,
-			                    recordBlendMode, fxCommit, fx.getPrevOutputTexture(), liveSource);
+			                    dubMode, fxCommit && !paintBlack, fx.getPrevOutputTexture(), dubImage);
 		}
 
 		// Present audition / normal
@@ -734,10 +751,10 @@ int App::run() {
 			glBindTexture(GL_TEXTURE_2D, auditionTexA);
 			shaderBlendTwo.setUniform("uTex0", 0);
 			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, liveSource);
+			glBindTexture(GL_TEXTURE_2D, dubImage);
 			shaderBlendTwo.setUniform("uTex1", 1);
 			shaderBlendTwo.setUniform("uMix", writeOpacity);
-			shaderBlendTwo.setUniform("uMode", recordBlendMode);
+			shaderBlendTwo.setUniform("uMode", dubMode);
 			quad.draw();
 
 			// Present B
@@ -772,10 +789,10 @@ int App::run() {
 			glBindTexture(GL_TEXTURE_2D, auditionTexA);
 			shaderBlendTwo.setUniform("uTex0", 0);
 			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, liveSource);
+			glBindTexture(GL_TEXTURE_2D, dubImage);
 			shaderBlendTwo.setUniform("uTex1", 1);
 			shaderBlendTwo.setUniform("uMix", writeOpacity);
-			shaderBlendTwo.setUniform("uMode", recordBlendMode);
+			shaderBlendTwo.setUniform("uMode", dubMode);
 			quad.draw();
 
 			// Present B
@@ -955,7 +972,8 @@ int App::run() {
 		}
 
 		if (remote.enabled()) {
-			RemoteLive live{(float(idx0) + mixf) / float(ring.size()), envVal, envPhase, recGate, cueActive};
+			RemoteLive live{
+				(float(idx0) + mixf) / float(ring.size()), envVal, envPhase, sourceGate, cueActive, paintBlack};
 			std::vector<std::string> folderPaths = folders.paths();
 			bool catalogChanged = videoNames != sentVideoNames || folderPaths != sentFolderPaths;
 			std::string full = remoteSnapshot(params, live, videoNames, folderPaths, true, sourceFailure);
@@ -1005,5 +1023,6 @@ int App::run() {
 	if (auditionTexA) glDeleteTextures(1, &auditionTexA);
 	if (auditionFboB) glDeleteFramebuffers(1, &auditionFboB);
 	if (auditionTexB) glDeleteTextures(1, &auditionTexB);
+	if (blackTex) glDeleteTextures(1, &blackTex);
 	return 0;
 }

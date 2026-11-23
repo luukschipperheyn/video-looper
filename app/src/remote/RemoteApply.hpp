@@ -32,6 +32,7 @@ struct RemoteLive {
 	int stage = 0;
 	bool gate = false;
 	bool cue = false;
+	bool erase = false;
 };
 
 struct GateInputs {
@@ -52,6 +53,9 @@ struct GateState {
 // source_kind 3 (webcam) is not written; startWebcam asks the caller to load the webcam instead.
 ApplyResult applyRemoteSet(ParamBus& params, const RemoteSet& set);
 GateState combineHolds(GateInputs in);
+// Black stays latched through an Erase release tail. A Source overdub or Cue takes the image back
+// immediately. envPhase 0, or a disabled envelope, drops the latch once Erase is up.
+bool overdubIsBlack(bool eraseHeld, bool sourceGate, bool cueActive, bool envEnabled, int envPhase, bool& latched);
 // videos are the filenames of the Videos in the current Videos folder; folders are the Folder list's full paths.
 // catalog false omits those lists, for the per-frame update. A new client still gets them from the stored snapshot.
 std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live = {},

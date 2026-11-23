@@ -25,6 +25,8 @@ button:disabled{opacity:.35}
 #two-hands .drawer{grid-template-columns:1fr}
 #two-hands main{position:relative;display:grid;grid-template-columns:196px 1fr 520px;gap:10px;padding:10px;min-height:0}
 #two-hands .pcol{display:grid;grid-template-rows:3fr 76px 2fr 76px 92px;gap:8px;min-height:0}
+#two-hands .odub{display:flex;flex-direction:column;gap:8px;min-height:0;height:100%}
+#two-hands .odub>.pad.rec{flex:1;min-height:0}
 #two-hands .rcol{display:grid;grid-template-rows:minmax(0,1fr) 490px;gap:10px}
 #two-hands .rcol>.panel{min-height:0}
 #two-hands .rcol>.xf{height:100%;overflow:hidden}
@@ -120,6 +122,11 @@ button:disabled{opacity:.35}
 .pad.cue{border-color:#1f5450;background:#0f1a19}
 .pad.cue.open{border-color:var(--cue);background:#123a37}
 .pad.cue.open .sb{color:#d2fffb}
+.pad.erase{flex:0 0 84px;border-color:#8b939c;background:#171b1f;color:#e8eef4}
+.pad.erase .sb{color:#b7c0c8}
+.pad.erase .fill{background:linear-gradient(0deg,#ffffff66,#ffffff18)}
+.pad.erase.open{border-color:#fff;background:#2a3138}
+.pad.erase.open .sb,.pad.erase .stg{color:#fff}
 .ptog{position:relative;border-radius:12px;border:2px solid var(--line2);background:var(--panel2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:6px 4px;min-height:0}
 .ptog .led{width:12px;height:12px;border-radius:50%;background:#3a4045}
 .ptog .pn{font-size:13px;font-weight:650;text-align:center}
@@ -251,8 +258,8 @@ const state = {
 	remote: {},
 	local: {},
 	grabbed: new Set(),
-	fingers: { gate: false, cue: false },
-	holds: { gate: 0, cue: 0 },
+	fingers: { gate: false, cue: false, erase: false },
+	holds: { gate: 0, cue: 0, erase: 0 },
 	videos: [],
 	folders: [],
 	page: 0,
@@ -424,6 +431,10 @@ function cueOpen() {
 	return linkUp() && (state.fingers.cue || !!state.local.cue_active || !!state.remote.cue);
 }
 
+function eraseOpen() {
+	return linkUp() && (state.fingers.erase || !!state.remote.erase);
+}
+
 function sourceName() {
 	const kind = Number(state.local.source_kind);
 	if (kind === 0) return "Shader";
@@ -589,6 +600,10 @@ const overdubFill = h("div.fill");
 const overdubStage = h("span.stg");
 const overdubSub = h("div.sb");
 const overdub = h("div.pad.rec", null, overdubFill, h("div.top", null, h("div.nm", null, "Overdub"), overdubStage), overdubSub);
+const eraseFill = h("div.fill");
+const eraseStage = h("span.stg");
+const eraseSub = h("div.sb");
+const erase = h("div.pad.erase", null, eraseFill, h("div.top", null, h("div.nm", null, "Erase"), eraseStage), eraseSub);
 const latchStatus = h("div.ps");
 const latchBtn = h("button.ptog.rec", { type: "button" }, h("i.led"), h("div.pn", null, "Latch"), latchStatus);
 const cueSub = h("div.sb");
@@ -597,6 +612,7 @@ const cueVastStatus = h("div.ps");
 const cueVastBtn = h("button.ptog.cue", { type: "button" }, h("i.led"), h("div.pn", null, "Cue vast"), cueVastStatus);
 const panicBtn = h("button.panic", { type: "button" }, h("div", null, "PANIC"), h("div.psub", null, "Latch, Cue en gates los"));
 bindHold("gate", overdub);
+bindHold("erase", erase);
 bindHold("cue", cuePad);
 latchBtn.addEventListener("click", () => {
 	if (!linkUp() || !openSocket()) return;
@@ -614,9 +630,11 @@ panicBtn.addEventListener("click", () => {
 	if (!openSocket()) return;
 	sendRaw({ t: "panic" });
 	if (stopHold("gate", false)) noteUse("release", "gate");
+	if (stopHold("erase", false)) noteUse("release", "erase");
 	if (stopHold("cue", false)) noteUse("release", "cue");
 	noteUse("act", "panic");
 	state.fingers.gate = false;
+	state.fingers.erase = false;
 	state.fingers.cue = false;
 	paint();
 });
@@ -1518,8 +1536,9 @@ function paint() {
 	envFill.style.width = env * 100 + "%";
 	envStage.textContent = STAGES[stageN] || "";
 	const writing = gateOpen();
+	const erasing = eraseOpen();
 	const showing = cueOpen();
-	chipWrite.classList.toggle("on", writing && !showing);
+	chipWrite.classList.toggle("on", (writing || erasing) && !showing);
 	chipLatch.classList.toggle("on", linkUp() && !!state.local.arm_record);
 	chipCue.classList.toggle("on", showing);
 	chipFx.classList.toggle("on", !!state.local.fx_enabled);
@@ -1540,14 +1559,19 @@ function paint() {
 
 	const unknown = !linkUp();
 	overdub.classList.toggle("unknown", unknown);
+	erase.classList.toggle("unknown", unknown);
 	cuePad.classList.toggle("unknown", unknown);
 	latchBtn.classList.toggle("unknown", unknown);
 	cueVastBtn.classList.toggle("unknown", unknown);
 	overdub.classList.toggle("open", writing);
+	erase.classList.toggle("open", erasing);
 	cuePad.classList.toggle("open", showing);
-	overdubFill.style.height = env * 100 + "%";
-	overdubStage.textContent = stageN ? (STAGES[stageN] || "") : "";
+	overdubFill.style.height = (writing || !erasing ? env : 0) * 100 + "%";
+	eraseFill.style.height = (erasing ? env : 0) * 100 + "%";
+	overdubStage.textContent = (writing || !erasing) && stageN ? (STAGES[stageN] || "") : "";
+	eraseStage.textContent = erasing && stageN ? (STAGES[stageN] || "") : "";
 	overdubSub.textContent = !linkUp() ? "" : state.local.arm_record ? "Latch · schrijft in Loop" : writing ? (showing ? "Cue actief · schrijft niet" : "schrijft in Loop") : "houd vast";
+	eraseSub.textContent = !linkUp() ? "" : erasing ? (showing ? "Cue actief · schrijft niet" : "schrijft zwart in Loop") : "houd vast";
 	cueSub.textContent = !linkUp() ? "" : showing ? "toont Audition · schrijft niet" : "houd vast · Audition tonen";
 	latchBtn.classList.toggle("on", !!state.local.arm_record);
 	cueVastBtn.classList.toggle("on", !!state.local.cue_active);
@@ -1652,7 +1676,7 @@ exportBtn.addEventListener("click", () => {
 });
 
 const main = h("main", null,
-	h("div.pcol", null, overdub, latchBtn, cuePad, cueVastBtn, panicBtn),
+	h("div.pcol", null, h("div.odub", null, overdub, erase), latchBtn, cuePad, cueVastBtn, panicBtn),
 	h("div.col", null,
 		h("div.panel.videos", null,
 			h("div.ph", null, kindSeg.el, h("div.sp"), tapSeg.el),
@@ -1741,8 +1765,10 @@ socket.onopen = () => { state.link = "up"; paint(); };
 socket.onclose = () => {
 	state.link = "down";
 	stopHold("gate", false);
+	stopHold("erase", false);
 	stopHold("cue", false);
 	state.fingers.gate = false;
+	state.fingers.erase = false;
 	state.fingers.cue = false;
 	points.clear();
 	pad.classList.remove("touch");

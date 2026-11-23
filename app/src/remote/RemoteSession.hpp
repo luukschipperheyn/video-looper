@@ -24,6 +24,7 @@ public:
 	struct PadState {
 		bool gate;
 		bool cue;
+		bool erase;
 	};
 
 	explicit RemoteSession(std::filesystem::path tokenFile);
@@ -66,6 +67,7 @@ private:
 	struct Holds {
 		TimePoint gate = TimePoint::min();
 		TimePoint cue = TimePoint::min();
+		TimePoint erase = TimePoint::min();
 	};
 
 	void serve();

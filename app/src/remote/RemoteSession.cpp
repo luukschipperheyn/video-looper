@@ -517,6 +517,7 @@ bool RemoteSession::readFrames(Client& client) {
 			std::lock_guard<std::mutex> lock(holdMutex);
 			if (msg.name == "\"gate\"") holds[client.fd].gate = at;
 			if (msg.name == "\"cue\"") holds[client.fd].cue = at;
+			if (msg.name == "\"erase\"") holds[client.fd].erase = at;
 		} else if (msg.type == "\"panic\"") {
 			{
 				std::lock_guard<std::mutex> lock(holdMutex);
@@ -588,11 +589,12 @@ void RemoteSession::noteUse(const std::string& eventRaw, const std::string& name
 
 RemoteSession::PadState RemoteSession::pads() const {
 	TimePoint since = clock.load()() - std::chrono::milliseconds(silenceMs.load());
-	PadState out{false, false};
+	PadState out{false, false, false};
 	std::lock_guard<std::mutex> lock(holdMutex);
 	for (const auto& [fd, h] : holds) {
 		out.gate = out.gate || h.gate > since;
 		out.cue = out.cue || h.cue > since;
+		out.erase = out.erase || h.erase > since;
 	}
 	return out;
 }
