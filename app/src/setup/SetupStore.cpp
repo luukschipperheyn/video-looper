@@ -29,15 +29,20 @@ struct StringKey {
 };
 
 const BoolKey kBools[] = {
-	{"env_enabled", &PerformanceSetup::env_enabled},   {"fx_enabled", &PerformanceSetup::fx_enabled},
-	{"fx_commit", &PerformanceSetup::fx_commit},       {"video_bars", &PerformanceSetup::video_bars},
-	{"video_aspect", &PerformanceSetup::video_aspect}, {"file_loop", &PerformanceSetup::file_loop},
-	{"file_paused", &PerformanceSetup::file_paused},   {"tempo_coupled", &PerformanceSetup::tempo_coupled},
-	{"ipad_page", &PerformanceSetup::ipad_page},
+	{"env_enabled", &PerformanceSetup::env_enabled},     {"fx_enabled", &PerformanceSetup::fx_enabled},
+	{"fx_commit", &PerformanceSetup::fx_commit},         {"source_fx_enabled", &PerformanceSetup::source_fx_enabled},
+	{"video_bars", &PerformanceSetup::video_bars},       {"video_aspect", &PerformanceSetup::video_aspect},
+	{"file_loop", &PerformanceSetup::file_loop},         {"file_paused", &PerformanceSetup::file_paused},
+	{"tempo_coupled", &PerformanceSetup::tempo_coupled}, {"ipad_page", &PerformanceSetup::ipad_page},
 };
 const IntKey kInts[] = {
 	{"record_blend_mode", &PerformanceSetup::record_blend_mode},
 	{"fx_mode", &PerformanceSetup::fx_mode},
+	{"fx_count", &PerformanceSetup::fx_count},
+	{"fx_repeat_blend", &PerformanceSetup::fx_repeat_blend},
+	{"source_fx_mode", &PerformanceSetup::source_fx_mode},
+	{"source_fx_count", &PerformanceSetup::source_fx_count},
+	{"source_fx_repeat_blend", &PerformanceSetup::source_fx_repeat_blend},
 	{"source_kind", &PerformanceSetup::source_kind},
 	{"webcam_index", &PerformanceSetup::webcam_index},
 	{"file_run_mode", &PerformanceSetup::file_run_mode},
@@ -52,6 +57,9 @@ const FloatKey kFloats[] = {
 	{"fx_param1", &PerformanceSetup::fx_param1},
 	{"fx_param2", &PerformanceSetup::fx_param2},
 	{"fx_param3", &PerformanceSetup::fx_param3},
+	{"source_fx_param1", &PerformanceSetup::source_fx_param1},
+	{"source_fx_param2", &PerformanceSetup::source_fx_param2},
+	{"source_fx_param3", &PerformanceSetup::source_fx_param3},
 	{"video_tx", &PerformanceSetup::video_tx},
 	{"video_ty", &PerformanceSetup::video_ty},
 	{"video_sx", &PerformanceSetup::video_sx},

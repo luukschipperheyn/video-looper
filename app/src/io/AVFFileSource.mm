@@ -29,6 +29,7 @@ struct AVFFileSource::Impl {
 	// Loop range state (normalized 0..1)
 	float loopStartPct = 0.0f;
 	float loopEndPct = 1.0f;
+	bool ended = false;
 };
 
 // (Re)create a reader at the current loop range (private member)
@@ -68,6 +69,7 @@ bool AVFFileSource::recreateReaderAtRangeStart() {
 	impl->output = out;
 	[impl->reader startReading];
 	impl->timeAccumulatorSeconds = 0.0; // reset timing on restart
+	impl->ended = false;
 	return true;
 }
 
@@ -134,6 +136,7 @@ void AVFFileSource::stop() {
 	impl->frameData.clear();
 	impl->width = impl->height = 0;
 	impl->newFrame = false;
+	impl->ended = false;
 }
 
 bool AVFFileSource::isOpen() const {
@@ -149,6 +152,8 @@ bool AVFFileSource::decode(int framesToAdvance) {
 			if (impl->loop) {
 				// Restart at loop start within selected range
 				recreateReaderAtRangeStart();
+			} else {
+				impl->ended = true;
 			}
 			if (sample) {
 				CFRelease(sample);
@@ -240,4 +245,8 @@ void AVFFileSource::setLoopRange(float startPct, float endPct) {
 void AVFFileSource::restartAtLoopStart() {
 	if (!impl || !impl->asset) return;
 	recreateReaderAtRangeStart();
+}
+
+bool AVFFileSource::ended() const {
+	return impl->ended;
 }

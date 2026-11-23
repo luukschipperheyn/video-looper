@@ -5,15 +5,16 @@
 
 class ParamBus;
 
-enum class RemoteKind { Set, Panic, Prev, Next, Webcam, Load, Folder };
+enum class RemoteKind { Set, Panic, Prev, Next, Webcam, Load, Folder, Dub, Page };
 
 // One message from the iPad for the main thread. For a Set, raw is the JSON value token as sent: true, false,
-// 140, or "x". A Load carries the Video's filename as name, a Folder the Videos folder's full path. The other
-// kinds carry no name or value.
+// 140, or "x". A Load or Dub carries the Video's filename as name, a Folder the Videos folder's full path. A Page
+// carries the filenames of the Videos on screen in names. The other kinds carry no name or value.
 struct RemoteSet {
 	std::string name;
 	std::string raw;
 	RemoteKind kind = RemoteKind::Set;
+	std::vector<std::string> names;
 };
 
 struct ApplyResult {

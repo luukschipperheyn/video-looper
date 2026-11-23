@@ -21,14 +21,14 @@ button:disabled{opacity:.35}
 	display:flex;align-items:center;justify-content:center;overflow:hidden}
 #holder{position:relative}
 #two-hands{position:absolute;left:0;top:0;width:1366px;height:950px;transform-origin:0 0;background:var(--bg);overflow:hidden;border-radius:16px;
-	display:grid;grid-template-rows:44px 1fr;--ovl-left:296px;--ovl-right:540px}
+	display:grid;grid-template-rows:44px 1fr;--ovl-left:206px;--ovl-right:540px}
 #two-hands .drawer{grid-template-columns:1fr}
-#two-hands main{position:relative;display:grid;grid-template-columns:196px 80px 1fr 520px;gap:10px;padding:10px;min-height:0}
+#two-hands main{position:relative;display:grid;grid-template-columns:196px 1fr 520px;gap:10px;padding:10px;min-height:0}
 #two-hands .pcol{display:grid;grid-template-rows:3fr 76px 2fr 76px 92px;gap:8px;min-height:0}
-#two-hands .opcol{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 8px}
-#two-hands .opcol .fader{flex:1;min-height:0}
-#two-hands .adsr-slot{height:220px;display:flex;flex:none}
-#two-hands .adsr-slot .adsr{flex:1}
+#two-hands .rcol{display:grid;grid-template-rows:minmax(0,1fr) 490px;gap:10px}
+#two-hands .rcol>.panel{min-height:0}
+#two-hands .rcol>.xf{height:100%;overflow:hidden}
+#two-hands .rcol>.fx{overflow:auto}
 .panel{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:8px;min-height:0;min-width:0}
 .ph{display:flex;align-items:center;gap:8px;min-height:24px}
 .pt{font-size:11px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);white-space:nowrap}
@@ -43,7 +43,18 @@ button:disabled{opacity:.35}
 .col{display:flex;flex-direction:column;gap:10px;min-height:0;min-width:0}
 .seg{display:flex;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:2px;gap:2px;min-width:0}
 .seg button{flex:1;height:34px;border-radius:6px;font-size:13px;color:var(--dim);padding:0 8px;white-space:nowrap}
+.seg.modes{flex-wrap:wrap}
+.seg.modes button{flex:1 1 30%;height:32px;font-size:12px;padding:0 4px}
+.fx .seg.modes{flex-wrap:nowrap}
+.fx .seg.modes button{flex:1 1 0;height:30px;font-size:11px;padding:0 2px}
+.fx .bb{height:34px;font-size:11px}
+.seg.chain{flex:none;width:210px}
+.fxedit{display:flex;flex-direction:column;gap:8px;min-height:0}
 .seg button.on{background:var(--text);color:#111;font-weight:650}
+.seg.tapseg{flex:none}
+.seg.tapseg button{flex:none;padding:0 12px}
+.vgrid.dub .vc .th{border-color:#6b2a25}
+.vgrid.dub .vc.cur .th{border-color:var(--rec)}
 .tog{height:34px;padding:0 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line2);display:inline-flex;align-items:center;gap:7px;font-size:12px;white-space:nowrap}
 .tog .led{width:8px;height:8px;border-radius:50%;background:#3a4045;flex:none}
 .tog .st{color:var(--faint);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
@@ -70,6 +81,8 @@ button:disabled{opacity:.35}
 .fader.v .ticks{background:repeating-linear-gradient(0deg,transparent 0 calc(10% - 1px),#ffffff14 calc(10% - 1px) 10%)}
 .fader.big .fv{font-size:20px}
 .fader.big .fh{font-size:13px}
+.fader.dense .ft{height:32px}
+.fader.dense .fh{font-size:11px}
 .status{display:flex;align-items:center;gap:14px;padding:0 10px 0 14px;border-bottom:1px solid var(--line);background:#101314;font-size:12px;min-width:0}
 .conn{display:flex;align-items:center;gap:6px;white-space:nowrap}
 .conn .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
@@ -188,7 +201,10 @@ button:disabled{opacity:.35}
 .ogrid{display:grid;grid-template-columns:1fr;gap:10px;align-content:start;overflow:hidden}
 .osec{display:flex;flex-direction:column;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
 .osec p{margin:0;font-size:12px;color:var(--dim);line-height:1.4}
-.drawer{display:grid;grid-template-columns:1fr;gap:10px;align-content:start;overflow:hidden}
+.drawer{display:flex;flex-direction:column;gap:10px;overflow:auto;flex:1;min-height:0}
+.drawer .panel{flex:none;min-height:min-content}
+.drawer .panel.adsr{height:300px}
+.blendpick{display:flex;flex-direction:column;gap:4px}
 #mid-error{color:var(--amber);padding:0 4px}
 </style>
 </head>
@@ -201,18 +217,33 @@ button:disabled{opacity:.35}
 const schema = /*CONTROL_SCHEMA*/null;
 const dragValue = gestures.relativeDrag;
 const token = new URLSearchParams(location.search).get("token") || "";
-const FX_MODES = ["Feedback", "Diff", "Chroma", "Kaleido", "Blur"];
+const FX_MODES = ["Feedback", "Diff", "Chroma", "Kaleido", "Blur", "Repeat", "Grid"];
 const FX_LABELS = [
 	["Mix", "Decay", "Zoom"],
-	["ongebruikt in deze modus", "Schaal", "Decay"],
+	["ongebruikt", "Schaal", "Decay"],
 	["Chroma", "Decay", "Zoom"],
 	["Segmenten", "Decay", "Zoom"],
-	["Mix + radius", "Decay", "Zoom"],
+	["Radius", "Decay", "Zoom"],
+	["Afstand", "Hoek", "Aantal"],
+	["Afstand", "Hoek", "Aantal"],
 ];
+const REPEAT_MODE = 5;
+const GRID_MODE = 6;
+const GRID_MAX = 6;
 const STAGES = ["idle", "attack", "decay", "sustain", "release"];
 const FAM = { none: "fn", light: "fl", dark: "fd", contrast: "fc", difference: "fx" };
 const transformNames = ["video_tx", "video_ty", "video_sx", "video_sy", "video_rot"];
 const NS = "http://www.w3.org/2000/svg";
+
+function storedTap() {
+	try { return localStorage.getItem("vl-tap") === "dub" ? "dub" : "select"; }
+	catch (err) { return "select"; }
+}
+
+function storedChain() {
+	try { return localStorage.getItem("vl-fx") === "source" ? "source" : "program"; }
+	catch (err) { return "program"; }
+}
 
 const state = {
 	overlay: null,
@@ -227,6 +258,8 @@ const state = {
 	page: 0,
 	pageSize: 5,
 	paged: false,
+	tap: storedTap(),
+	fxChain: storedChain(),
 	followed: undefined,
 	exportBase: 0,
 	exportOn: false,
@@ -299,6 +332,36 @@ function sendSet(name, value) {
 
 function sendRaw(msg) {
 	if (openSocket()) socket.send(JSON.stringify(msg));
+}
+
+// One gesture, not each move. The Mac appends these to web-use.jsonl.
+function noteUse(event, name, value) {
+	const msg = { t: "use", e: event, name: name };
+	if (value !== undefined) msg.v = value;
+	sendRaw(msg);
+}
+
+function endGrab(names) {
+	for (const name of names) {
+		if (state.grabbed.has(name)) noteUse("set", name, state.local[name]);
+	}
+	releaseGrab(names);
+}
+
+function showOverlay(name) {
+	const prev = state.overlay;
+	const next = prev === name ? null : name;
+	state.overlay = next;
+	if (prev && prev !== next) noteUse("close", prev);
+	if (next) noteUse("open", next);
+	paint();
+}
+
+function closeOverlay() {
+	if (!state.overlay) return;
+	noteUse("close", state.overlay);
+	state.overlay = null;
+	paint();
 }
 
 function grab(names) {
@@ -374,7 +437,10 @@ function stopHold(name, notify) {
 	clearInterval(state.holds[name]);
 	state.holds[name] = 0;
 	state.fingers[name] = false;
-	if (notify) sendRaw({ t: "release", name: name });
+	if (notify) {
+		sendRaw({ t: "release", name: name });
+		noteUse("release", name);
+	}
 	return true;
 }
 
@@ -384,6 +450,7 @@ function startHold(name, el, event) {
 	state.fingers[name] = true;
 	const send = () => sendRaw({ t: "hold", name: name });
 	send();
+	noteUse("hold", name);
 	state.holds[name] = setInterval(send, 100);
 	paint();
 }
@@ -425,12 +492,13 @@ function bindFader(track, fader) {
 		if (restored || event.pointerId !== pid) return;
 		const rect = track.getBoundingClientRect();
 		const control = schema[fader.name];
+		const span = fader.span ? fader.span() : null;
 		const value = dragValue({
 			value: origin,
 			deltaPx: fader.vertical ? -(event.clientY - sy) : event.clientX - sx,
 			trackPx: fader.vertical ? rect.height : rect.width,
-			min: control.min,
-			max: control.max,
+			min: span ? span.min : control.min,
+			max: span ? span.max : control.max,
 		});
 		sendSet(fader.name, value);
 		paint();
@@ -439,7 +507,7 @@ function bindFader(track, fader) {
 		if (event.pointerId !== pid) return;
 		pid = null;
 		restored = false;
-		releaseGrab([fader.name]);
+		endGrab([fader.name]);
 	};
 	track.addEventListener("pointerup", up);
 	track.addEventListener("pointercancel", up);
@@ -450,9 +518,9 @@ function makeFader(o) {
 	const value = h("span.fv.num");
 	const label = h("span.fl", null, o.label || "");
 	const track = h("div.ft", null, fill, o.ticks ? h("div.ticks") : null);
-	const el = h("div.fader" + (o.vertical ? ".v" : "") + (o.bipolar ? ".bip" : "") + (o.big ? ".big" : ""), null,
+	const el = h("div.fader" + (o.vertical ? ".v" : "") + (o.bipolar ? ".bip" : "") + (o.big ? ".big" : "") + (o.dense ? ".dense" : ""), null,
 		h("div.fh", null, label, value), track);
-	const fader = { el: el, fill: fill, value: value, label: label, name: o.name, def: o.def, vertical: !!o.vertical, bipolar: !!o.bipolar, off: o.off, text: o.text };
+	const fader = { el: el, fill: fill, value: value, label: label, name: o.name, def: o.def, vertical: !!o.vertical, bipolar: !!o.bipolar, off: o.off, text: o.text, span: o.span };
 	bindFader(track, fader);
 	return fader;
 }
@@ -478,6 +546,7 @@ function makeSeg(options, onPick) {
 function pickInt(name, value) {
 	if (!openSocket()) return;
 	sendSet(name, value);
+	noteUse("set", name, state.local[name]);
 	paint();
 }
 
@@ -486,6 +555,7 @@ function pickBool(name) {
 	const next = !state.local[name];
 	sendSet(name, next);
 	if (name === "video_aspect" && next) sendSet("video_sy", state.local.video_sx);
+	noteUse("set", name, state.local[name]);
 	paint();
 }
 
@@ -500,6 +570,7 @@ const chipWrite = h("span.chip.rec", null, "Schrijft");
 const chipLatch = h("span.chip.rec", null, "Latch");
 const chipCue = h("span.chip.cue", null, "Cue");
 const chipFx = h("span.chip.fx", null, "FX");
+const chipSourceFx = h("span.chip.fx", null, "Source FX");
 const chipBake = h("span.chip.bake", null, "Bake FX");
 const sourceNow = h("div.nowv");
 const fxBtnText = h("span");
@@ -511,7 +582,7 @@ const setupBtn = h("button.btn", { type: "button" }, "Setup");
 const status = h("div.status", null, conn,
 	h("div.meter", null, "Loop", h("div.bar.lbar", null, loopFill), loopPct),
 	h("div.meter", null, "Env", h("div.bar.ebar", null, envFill), envStage),
-	h("div.chips", null, chipWrite, chipLatch, chipCue, chipFx, chipBake),
+	h("div.chips", null, chipWrite, chipLatch, chipCue, chipFx, chipSourceFx, chipBake),
 	sourceNow, h("div.sp"), fxBtn, exportReason, exportBtn, setupBtn);
 
 const overdubFill = h("div.fill");
@@ -530,28 +601,42 @@ bindHold("cue", cuePad);
 latchBtn.addEventListener("click", () => {
 	if (!linkUp() || !openSocket()) return;
 	sendSet("arm_record", !state.local.arm_record);
+	noteUse("set", "arm_record", state.local.arm_record);
 	paint();
 });
 cueVastBtn.addEventListener("click", () => {
 	if (!linkUp() || !openSocket()) return;
 	sendSet("cue_active", !state.local.cue_active);
+	noteUse("set", "cue_active", state.local.cue_active);
 	paint();
 });
 panicBtn.addEventListener("click", () => {
 	if (!openSocket()) return;
 	sendRaw({ t: "panic" });
-	stopHold("gate", false);
-	stopHold("cue", false);
+	if (stopHold("gate", false)) noteUse("release", "gate");
+	if (stopHold("cue", false)) noteUse("release", "cue");
+	noteUse("act", "panic");
 	state.fingers.gate = false;
 	state.fingers.cue = false;
 	paint();
 });
 
-const opacity = makeFader({ name: "record_blend_opacity", label: "Opacity", def: 1, vertical: true, big: true, ticks: true, text: pct });
+const opacity = makeFader({ name: "record_blend_opacity", label: "Opacity", def: 1, big: true, ticks: true, text: pct });
 
 const kindSeg = makeSeg(
 	[{ value: 1, label: "Video" }, { value: 3, label: "Webcam" }, { value: 0, label: "Shader" }, { value: 2, label: "Zwart" }],
 	(value) => pickInt("source_kind", value));
+const tapSeg = makeSeg(
+	[{ value: "select", label: "Select" }, { value: "dub", label: "Dub" }],
+	(value) => {
+		state.tap = value;
+		try { localStorage.setItem("vl-tap", value); } catch (err) {}
+		noteUse("tap", value);
+		paintTap();
+		paintVideos();
+	});
+tapSeg.el.classList.add("tapseg");
+paintTap();
 const folderRow = h("div.folders");
 const grid = h("div.vgrid");
 const sourceOver = h("div.vover");
@@ -562,6 +647,7 @@ const videoPrev = h("button.btn.sq", { type: "button" }, "◂");
 const videoNext = h("button.btn.sq", { type: "button" }, "▸");
 const midError = h("div.hint", { id: "mid-error" });
 let videoKey = "";
+let primedKey = "";
 let folderKey = "";
 let downCell = null;
 let gridPid = null;
@@ -609,6 +695,7 @@ function movePage(dir) {
 	if (next === state.page) return;
 	state.page = next;
 	state.paged = true;
+	noteUse("act", "page", next);
 	paintVideos();
 }
 
@@ -616,13 +703,37 @@ function loadVideo(name) {
 	if (!openSocket()) return;
 	if (state.midKind === "source") { state.midError = ""; state.midKind = ""; }
 	sendRaw({ t: "load", name: name });
+	noteUse("act", "load", name);
 	paint();
+}
+
+function tapVideo(name) {
+	if (state.tap !== "dub") {
+		loadVideo(name);
+		return;
+	}
+	if (!openSocket()) return;
+	if (state.midKind === "source") { state.midError = ""; state.midKind = ""; }
+	sendRaw({ t: "dub", name: name });
+	noteUse("act", "dub", name);
+	paint();
+}
+
+function primePage() {
+	if (state.grabbed.has("file_loop_start") || state.grabbed.has("file_loop_length")) return;
+	const start = state.page * state.pageSize;
+	const names = state.videos.slice(start, start + state.pageSize);
+	const key = names.join("\n") + "@" + valueOf("file_loop_start", 0) + "," + valueOf("file_loop_length", 1);
+	if (key === primedKey || !openSocket()) return;
+	primedKey = key;
+	sendRaw({ t: "page", names: names });
 }
 
 function stepVideo(dir) {
 	if (!openSocket()) return;
 	if (state.midKind === "source") { state.midError = ""; state.midKind = ""; }
 	sendRaw({ t: dir < 0 ? "prev" : "next" });
+	noteUse("act", "step", dir < 0 ? "prev" : "next");
 }
 
 pagePrev.addEventListener("click", () => movePage(-1));
@@ -650,7 +761,7 @@ const gridUp = (event) => {
 	if (downCell) downCell.classList.remove("press");
 	const dir = gestures.videoSwipe({ dx: event.clientX - gridX, dy: event.clientY - gridY, threshold: 50 });
 	if (dir) movePage(dir);
-	else if (!gridMoved && downCell) loadVideo(downCell.dataset.name);
+	else if (!gridMoved && downCell) tapVideo(downCell.dataset.name);
 	gridPid = null;
 	downCell = null;
 };
@@ -711,7 +822,7 @@ blendGrid.addEventListener("pointermove", (event) => {
 const blendUp = (event) => {
 	if (event.pointerId !== blendPid) return;
 	blendPid = null;
-	releaseGrab(["record_blend_mode"]);
+	endGrab(["record_blend_mode"]);
 };
 blendGrid.addEventListener("pointerup", blendUp);
 blendGrid.addEventListener("pointercancel", blendUp);
@@ -762,7 +873,7 @@ function bindLoop(el, part) {
 	const up = (event) => {
 		if (event.pointerId !== pid) return;
 		pid = null;
-		releaseGrab(["file_loop_start", "file_loop_length"]);
+		endGrab(["file_loop_start", "file_loop_length"]);
 	};
 	el.addEventListener("pointerup", up);
 	el.addEventListener("pointercancel", up);
@@ -817,6 +928,7 @@ resetBtn.addEventListener("click", () => {
 	if (!openSocket()) return;
 	const id = gestures.identityTransform();
 	writeTransform(id);
+	noteUse("act", "reset");
 	paint();
 });
 pad.addEventListener("pointerdown", (event) => {
@@ -871,7 +983,7 @@ const liftPoint = (event) => {
 	points.delete(event.pointerId);
 	if (points.size === 0) {
 		pad.classList.remove("touch");
-		releaseGrab(transformNames);
+		endGrab(transformNames);
 	}
 };
 pad.addEventListener("pointerup", liftPoint);
@@ -1094,7 +1206,7 @@ function bindAdsr(handleEl, handle) {
 	const up = (event) => {
 		if (event.pointerId !== pid) return;
 		pid = null;
-		releaseGrab(origin.names);
+		endGrab(origin.names);
 	};
 	handleEl.addEventListener("pointerup", up);
 	handleEl.addEventListener("pointercancel", up);
@@ -1103,17 +1215,105 @@ bindAdsr(handleA.g, "attack");
 bindAdsr(handleM.g, "middle");
 bindAdsr(handleR.g, "release");
 
-const fx1 = makeFader({ name: "fx_param1", label: "Mix", def: 0.8, off: () => Number(state.local.fx_mode) === 1, text: (v) => Number(state.local.fx_mode) === 3 ? String(Math.round(v * 12 + 1)) : v.toFixed(2) });
-const fx2 = makeFader({ name: "fx_param2", label: "Decay", def: 0.985, text: (v) => v.toFixed(3) });
-const fx3 = makeFader({ name: "fx_param3", label: "Zoom", def: 0, bipolar: true, text: (v) => (v >= 0 ? "+" : "") + v.toFixed(3) });
+function makeBlendPick(name) {
+	const grid = h("div.bgrid");
+	for (const cell of gestures.blendCells) {
+		const button = h("button.bb", { type: "button" }, cell.label);
+		button.dataset.index = String(cell.index);
+		button.style.setProperty("--fam", "var(--" + (FAM[cell.family] || "fn") + ")");
+		grid.append(button);
+	}
+	let pid = null;
+	function rects() {
+		const out = [];
+		for (const el of grid.children) {
+			const r = el.getBoundingClientRect();
+			out.push({ index: Number(el.dataset.index), left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+		}
+		return out;
+	}
+	function pick(event) {
+		const index = gestures.blendAtPoint({ x: event.clientX, y: event.clientY, rects: rects() });
+		if (index == null || Number(state.local[name]) === index) return;
+		sendSet(name, index);
+		paint();
+	}
+	grid.addEventListener("pointerdown", (event) => {
+		if (!openSocket()) return;
+		capture(grid, event);
+		pid = event.pointerId;
+		pick(event);
+	});
+	grid.addEventListener("pointermove", (event) => {
+		if (event.pointerId !== pid) return;
+		pick(event);
+	});
+	const up = (event) => {
+		if (event.pointerId !== pid) return;
+		pid = null;
+		noteUse("set", name, state.local[name]);
+	};
+	grid.addEventListener("pointerup", up);
+	grid.addEventListener("pointercancel", up);
+	const label = h("span.pv");
+	return { el: h("div.blendpick", null, h("div.ph", null, h("span.pt", null, "Blend"), label), grid), grid: grid, label: label };
+}
+function paintBlendPick(pick, value) {
+	let text = "";
+	for (const button of pick.grid.children) {
+		const on = Number(button.dataset.index) === Number(value);
+		button.classList.toggle("on", on);
+		if (on) text = button.textContent;
+	}
+	pick.label.textContent = text;
+}
+function stampMode(mode) {
+	return mode === REPEAT_MODE || mode === GRID_MODE;
+}
+function fxParamText(mode, which, v) {
+	if (stampMode(mode) && which === 1) return Math.round(v * 100) + "%";
+	if (stampMode(mode) && which === 2) return Math.round(v * 360) + "°";
+	if (which === 1 && mode === 3) return String(Math.round(v * 12 + 1));
+	if (which === 3 && mode !== 1) return (v >= 0 ? "+" : "") + v.toFixed(3);
+	return which === 2 ? v.toFixed(3) : v.toFixed(2);
+}
+const fx1 = makeFader({ name: "fx_param1", label: "Mix", def: 0.8, dense: true, off: () => Number(state.local.fx_mode) === 1, text: (v) => fxParamText(Number(state.local.fx_mode), 1, v) });
+const fx2 = makeFader({ name: "fx_param2", label: "Decay", def: 0.985, dense: true, text: (v) => fxParamText(Number(state.local.fx_mode), 2, v) });
+const fx3 = makeFader({ name: "fx_param3", label: "Zoom", def: 0, bipolar: true, dense: true, text: (v) => fxParamText(Number(state.local.fx_mode), 3, v) });
+const fxCount = makeFader({ name: "fx_count", label: "Aantal", def: 4, dense: true, text: (v) => String(Math.min(Math.round(v), Number(state.local.fx_mode) === GRID_MODE ? GRID_MAX : 16)), span: () => Number(state.local.fx_mode) === GRID_MODE ? { min: 0, max: GRID_MAX } : null });
+const fxBlend = makeBlendPick("fx_repeat_blend");
 const fxTog = makeTog("FX");
 const bakeTog = makeTog("Bake FX", "amber");
 fxTog.el.addEventListener("click", () => pickBool("fx_enabled"));
 bakeTog.el.addEventListener("click", () => pickBool("fx_commit"));
 const fxSeg = makeSeg(FX_MODES.map((name, i) => ({ value: i, label: name })), (value) => pickInt("fx_mode", value));
+fxSeg.el.classList.add("modes");
+const sfx1 = makeFader({ name: "source_fx_param1", label: "Afstand", def: 0.12, dense: true, off: () => Number(state.local.source_fx_mode) === 1, text: (v) => fxParamText(Number(state.local.source_fx_mode), 1, v) });
+const sfx2 = makeFader({ name: "source_fx_param2", label: "Hoek", def: 0, dense: true, text: (v) => fxParamText(Number(state.local.source_fx_mode), 2, v) });
+const sfx3 = makeFader({ name: "source_fx_param3", label: "Zoom", def: 0, bipolar: true, dense: true, text: (v) => fxParamText(Number(state.local.source_fx_mode), 3, v) });
+const sfxCount = makeFader({ name: "source_fx_count", label: "Aantal", def: 4, dense: true, text: (v) => String(Math.min(Math.round(v), Number(state.local.source_fx_mode) === GRID_MODE ? GRID_MAX : 16)), span: () => Number(state.local.source_fx_mode) === GRID_MODE ? { min: 0, max: GRID_MAX } : null });
+const sfxBlend = makeBlendPick("source_fx_repeat_blend");
+const sfxTog = makeTog("Source FX");
+sfxTog.el.addEventListener("click", () => pickBool("source_fx_enabled"));
+const sfxSeg = makeSeg(FX_MODES.map((name, i) => ({ value: i, label: name })), (value) => pickInt("source_fx_mode", value));
+sfxSeg.el.classList.add("modes");
+const sfxHint = h("span.hint");
+const chainSeg = makeSeg(
+	[{ value: "program", label: "Program" }, { value: "source", label: "Source" }],
+	(value) => {
+		state.fxChain = value;
+		try { localStorage.setItem("vl-fx", value); } catch (err) {}
+		noteUse("chain", value);
+		paint();
+	});
+chainSeg.el.classList.add("chain");
+const chainHint = h("span.hint.clip");
+const fxEdit = h("div.fxedit", null, fxSeg.el, fx1.el, fx2.el, fx3.el, fxCount.el, fxBlend.el);
+const sfxEdit = h("div.fxedit", null, sfxSeg.el, sfx1.el, sfx2.el, sfx3.el, sfxCount.el, sfxBlend.el, sfxHint);
 const fxPanel = h("div.panel.fx", null,
-	h("div.ph", null, h("span.pt", null, "FX"), h("div.sp"), fxTog.el, bakeTog.el),
-	fxSeg.el, fx1.el, fx2.el, fx3.el);
+	h("div.ph", null, h("span.pt", null, "FX"), chainSeg.el, chainHint, h("div.sp")),
+	h("div.row", null, fxTog.el, bakeTog.el, h("div.sp"), sfxTog.el),
+	fxEdit, sfxEdit);
 
 const bpmValue = h("span.bv.num");
 const bpmBox = h("div.bpm", null, bpmValue, h("span.u", null, "BPM"));
@@ -1138,13 +1338,14 @@ bpmBox.addEventListener("pointermove", (event) => {
 const bpmEnd = (event) => {
 	if (event.pointerId !== bpmPid) return;
 	bpmPid = null;
-	releaseGrab(["bpm"]);
+	endGrab(["bpm"]);
 };
 bpmBox.addEventListener("pointerup", bpmEnd);
 bpmBox.addEventListener("pointercancel", bpmEnd);
 function bumpBpm(dir) {
 	if (!openSocket()) return;
 	sendSet("bpm", gestures.bpmDrag({ bpm: valueOf("bpm", schema.bpm.min), dy: -dir * 3, min: schema.bpm.min, max: schema.bpm.max }));
+	noteUse("set", "bpm", state.local.bpm);
 	paint();
 }
 bpmDown.addEventListener("click", () => bumpBpm(-1));
@@ -1155,11 +1356,12 @@ const tempoPanel = h("div.panel.tempo", null,
 	h("div.row", null, bpmDown, bpmBox, bpmUp, h("div.sp")),
 	speed.el);
 
-const closeFx = h("button.btn", { type: "button" }, "Sluit");
-const fxOverlay = h("div.overlay", null,
-	h("div.ph", null, h("span.pt", null, "FX en Tempo"), h("span.hint", null, "de pads, Opacity en het trackpad blijven bereikbaar"), h("div.sp"), closeFx),
-	h("div.drawer", null, fxPanel, tempoPanel));
-closeFx.addEventListener("click", () => { state.overlay = null; paint(); });
+const opacityPanel = h("div.panel", null, opacity.el);
+const closeMix = h("button.btn", { type: "button" }, "Sluit");
+const mixOverlay = h("div.overlay", null,
+	h("div.ph", null, h("span.pt", null, "ADSR, Opacity en Tempo"), h("span.hint", null, "de pads, FX en het trackpad blijven bereikbaar"), h("div.sp"), closeMix),
+	h("div.drawer", null, opacityPanel, adsrPanel, tempoPanel));
+closeMix.addEventListener("click", closeOverlay);
 
 const fpsSeg = h("div.seg");
 const exportPath = h("p");
@@ -1175,6 +1377,7 @@ function stepCam(dir) {
 	const control = schema.webcam_index;
 	const cur = Math.round(valueOf("webcam_index", control.min));
 	sendSet("webcam_index", Math.min(control.max, Math.max(control.min, cur + dir)));
+	noteUse("set", "webcam_index", state.local.webcam_index);
 	paint();
 }
 camDown.addEventListener("click", () => stepCam(-1));
@@ -1200,10 +1403,10 @@ const setupOverlay = h("div.overlay", null,
 		h("div.osec", null, h("span.pt", null, "Ableton Link"),
 			h("p", null, "Link en peers staan alleen-lezen in de Web interface. Aanzetten gebeurt op de Mac."),
 			linkValue)));
-closeSetup.addEventListener("click", () => { state.overlay = null; paint(); });
+closeSetup.addEventListener("click", closeOverlay);
 let fpsKey = "";
 
-const faders = [opacity, fx1, fx2, fx3, speed, gain];
+const faders = [opacity, fx1, fx2, fx3, fxCount, sfx1, sfx2, sfx3, sfxCount, speed, gain];
 
 function paintFill(fill, value, min, max, mode) {
 	const span = max - min || 1;
@@ -1224,6 +1427,14 @@ function paintSeg(seg, value) {
 	for (const button of seg.buttons) button.classList.toggle("on", Number(button.dataset.value) === Number(value));
 }
 
+function paintChoice(seg, value) {
+	for (const button of seg.buttons) button.classList.toggle("on", button.dataset.value === String(value));
+}
+
+function paintTap() {
+	for (const button of tapSeg.buttons) button.classList.toggle("on", button.dataset.value === state.tap);
+}
+
 function paintFolders() {
 	const key = state.folders.join("\n");
 	if (key !== folderKey) {
@@ -1236,6 +1447,7 @@ function paintFolders() {
 				if (!openSocket()) return;
 				if (state.midKind === "folder") { state.midError = ""; state.midKind = ""; }
 				sendRaw({ t: "folder", name: path });
+				noteUse("act", "folder", path);
 				paint();
 			});
 			folderRow.append(button);
@@ -1265,6 +1477,8 @@ function paintVideos() {
 	pageLabel.textContent = total ? (start + 1) + "–" + Math.min(total, start + state.pageSize) + " / " + total : "0";
 	pagePrev.disabled = state.page === 0;
 	pageNext.disabled = state.page + 1 >= pages;
+	grid.classList.toggle("dub", state.tap === "dub");
+	primePage();
 	const other = kind === 0 || kind === 2 || kind === 3;
 	grid.classList.toggle("inactive", other);
 	sourceOver.hidden = !other;
@@ -1309,17 +1523,19 @@ function paint() {
 	chipLatch.classList.toggle("on", linkUp() && !!state.local.arm_record);
 	chipCue.classList.toggle("on", showing);
 	chipFx.classList.toggle("on", !!state.local.fx_enabled);
+	chipSourceFx.classList.toggle("on", !!state.local.source_fx_enabled);
 	chipBake.classList.toggle("on", !!state.local.fx_enabled && !!state.local.fx_commit);
 	sourceNow.replaceChildren("Source ", h("b", null, sourceName()));
 	const fxMode = Number(state.local.fx_mode);
-	const fxName = state.local.fx_enabled ? (FX_MODES[fxMode] || "uit") : "uit";
-	fxBtnText.textContent = "FX " + fxName + " · " + compact(valueOf("bpm", 0), 1) + " BPM · " + compact(valueOf("read_speed_mult", 1), 2) + "×";
+	const srcMode = Number(state.local.source_fx_mode);
+	fxBtnText.textContent = (state.local.env_enabled ? "ADSR aan" : "ADSR uit") + " · " + pct(valueOf("record_blend_opacity", 1)) + " · " + compact(valueOf("bpm", 0), 1) + " BPM";
 	exportBtn.classList.toggle("on", state.exportOn);
 	exportText.textContent = state.exportOn ? clock(performance.now() - state.exportBase) : "Export";
 	exportReason.hidden = !state.exportReason;
 	exportReason.textContent = state.exportReason || "";
 	setupBtn.classList.toggle("on", state.overlay === "setup");
-	fxOverlay.hidden = state.overlay !== "fx";
+	fxBtn.classList.toggle("on", state.overlay === "mix");
+	mixOverlay.hidden = state.overlay !== "mix";
 	setupOverlay.hidden = state.overlay !== "setup";
 
 	const unknown = !linkUp();
@@ -1341,14 +1557,25 @@ function paint() {
 	for (const fader of faders) {
 		const control = schema[fader.name];
 		const v = valueOf(fader.name, fader.def);
-		if (fader.name === "fx_param1") fader.label.textContent = (FX_LABELS[fxMode] || FX_LABELS[0])[0];
-		if (fader.name === "fx_param2") fader.label.textContent = (FX_LABELS[fxMode] || FX_LABELS[0])[1];
-		if (fader.name === "fx_param3") fader.label.textContent = (FX_LABELS[fxMode] || FX_LABELS[0])[2];
+		const labelsFor = fader.name.startsWith("source_fx_param") ? (FX_LABELS[srcMode] || FX_LABELS[0]) : (FX_LABELS[fxMode] || FX_LABELS[0]);
+		if (fader.name === "fx_param1" || fader.name === "source_fx_param1") fader.label.textContent = labelsFor[0];
+		if (fader.name === "fx_param2" || fader.name === "source_fx_param2") fader.label.textContent = labelsFor[1];
+		if (fader.name === "fx_param3" || fader.name === "source_fx_param3") fader.label.textContent = labelsFor[2];
+		if (fader.name === "fx_param3") fader.el.hidden = stampMode(fxMode);
+		if (fader.name === "fx_count") fader.el.hidden = !stampMode(fxMode);
+		if (fader.name === "source_fx_param3") fader.el.hidden = stampMode(srcMode);
+		if (fader.name === "source_fx_count") fader.el.hidden = !stampMode(srcMode);
+		const span = fader.span ? fader.span() : null;
 		fader.value.textContent = fader.text(v);
-		paintFill(fader.fill, v, control.min, control.max, fader.vertical ? "v" : fader.bipolar ? "bip" : "h");
+		paintFill(fader.fill, v, span ? span.min : control.min, span ? span.max : control.max, fader.vertical ? "v" : fader.bipolar ? "bip" : "h");
 		fader.el.classList.toggle("off", fader.off ? fader.off() : false);
 	}
+	fxBlend.el.hidden = !stampMode(fxMode);
+	sfxBlend.el.hidden = !stampMode(srcMode);
+	paintBlendPick(fxBlend, valueOf("fx_repeat_blend", 6));
+	paintBlendPick(sfxBlend, valueOf("source_fx_repeat_blend", 6));
 	paintSeg(kindSeg, state.local.source_kind);
+	paintTap();
 	paintFolders();
 	paintVideos();
 	const blendMode = Number(state.local.record_blend_mode) || 0;
@@ -1386,12 +1613,24 @@ function paint() {
 	adsrPanel.classList.toggle("envoff", !state.local.env_enabled);
 	drawAdsr();
 	paintSeg(fxSeg, state.local.fx_mode);
+	paintSeg(sfxSeg, state.local.source_fx_mode);
 	paintTog(fxTog, state.local.fx_enabled, state.local.fx_enabled ? "aan" : "uit");
+	paintTog(sfxTog, state.local.source_fx_enabled, state.local.source_fx_enabled ? "aan" : "uit");
+	sfxHint.hidden = !stampMode(srcMode);
+	sfxHint.textContent = srcMode === GRID_MODE
+		? "Afstand geldt voor beide assen. Hoek 0 wijst naar rechts, de tweede as staat daar haaks op. Aantal is per as. De blend legt elke kopie op de vorige; zwart dekt niet."
+		: "Afstand is een deel van de hoogte, hoek 0 wijst naar rechts, aantal zijn extra kopieën. De blend legt elke kopie op de vorige; zwart dekt niet.";
+	const showProgram = state.fxChain !== "source";
+	fxEdit.hidden = !showProgram;
+	sfxEdit.hidden = showProgram;
+	chainHint.textContent = showProgram ? "op het Program" : "vóór Audition en Overdub";
+	paintChoice(chainSeg, state.fxChain);
+	fxEdit.classList.toggle("dimmed", !state.local.fx_enabled);
+	sfxEdit.classList.toggle("dimmed", !state.local.source_fx_enabled);
 	const bakeOn = !!state.local.fx_commit;
 	const fxOn = !!state.local.fx_enabled;
 	bakeTog.el.classList.toggle("on", bakeOn);
 	bakeTog.status.textContent = bakeOn && fxOn ? "in Loop" : bakeOn ? "aan" : "uit";
-	fxPanel.classList.toggle("dimmed", !fxOn);
 	bpmValue.textContent = compact(valueOf("bpm", 0), 1);
 	paintTog(coupleTog, state.local.tempo_coupled, state.local.tempo_coupled ? "aan" : "uit");
 	paintFps();
@@ -1402,27 +1641,21 @@ function paint() {
 	midError.textContent = state.midError || "";
 }
 
-fxBtn.addEventListener("click", () => {
-	state.overlay = state.overlay === "fx" ? null : "fx";
-	paint();
-});
-setupBtn.addEventListener("click", () => {
-	state.overlay = state.overlay === "setup" ? null : "setup";
-	paint();
-});
+fxBtn.addEventListener("click", () => showOverlay("mix"));
+setupBtn.addEventListener("click", () => showOverlay("setup"));
 exportBtn.addEventListener("click", () => {
 	if (!openSocket()) return;
 	sendSet("record_enabled", !state.local.record_enabled);
+	noteUse("set", "record_enabled", state.local.record_enabled);
 	noteExport(!!state.local.record_enabled);
 	paint();
 });
 
 const main = h("main", null,
 	h("div.pcol", null, overdub, latchBtn, cuePad, cueVastBtn, panicBtn),
-	h("div.opcol", null, opacity.el),
 	h("div.col", null,
 		h("div.panel.videos", null,
-			h("div.ph", null, kindSeg.el),
+			h("div.ph", null, kindSeg.el, h("div.sp"), tapSeg.el),
 			folderRow, grid,
 			h("div.vfoot", null, pagePrev, pageLabel, pageNext, h("div.sp"),
 				h("span.hint", null, "Video"), videoPrev, videoNext)),
@@ -1433,13 +1666,13 @@ const main = h("main", null,
 			blendGrid),
 		loopPanel,
 		midError),
-	h("div.col", null,
+	h("div.col.rcol", null,
 		h("div.panel.xf", null,
 			h("div.ph", null, h("span.pt", null, "Transform"), h("span.hint.clip", null, "1 vinger schuift · 2 vingers schalen en draaien"), h("div.sp"), aspectTog.el, barsTog.el),
 			pad,
 			h("div.xfread", null, h("span", null, "X", readX), h("span", null, "Y", readY), h("span", null, "Schaal", readS), h("span", null, "Draai", readR), h("div.sp"), resetBtn)),
-		h("div.adsr-slot", null, adsrPanel)),
-	setupOverlay, fxOverlay);
+		fxPanel),
+	setupOverlay, mixOverlay);
 stage.append(status, main);
 
 function fit() {

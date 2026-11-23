@@ -12,6 +12,7 @@
 #include "gl/Shader.hpp"
 #include "gl/FullscreenQuad.hpp"
 #include "gl/FxPipeline.hpp"
+#include "util/Repeat.hpp"
 #include "buffer/RingBuffer.hpp"
 #include "looper/LooperEngine.hpp"
 #include "util/HotReload.hpp"
@@ -74,6 +75,7 @@ int App::run() {
 	SourceController source;
 	source.init(fbw, fbh);
 	FxPipeline fx;
+	FxPipeline sourceFx;
 	// Audition render targets
 	GLuint auditionTexA = 0, auditionTexB = 0;
 	GLuint auditionFboA = 0, auditionFboB = 0;
@@ -93,12 +95,15 @@ int App::run() {
 	std::string feedbackKaleidoFragPath = std::string(SHADER_DIR) + "/feedback_kaleido.frag";
 	std::string blurXFragPath = std::string(SHADER_DIR) + "/fx_blur_x.frag";
 	std::string blurYFragPath = std::string(SHADER_DIR) + "/fx_blur_y.frag";
+	std::string repeatFragPath = std::string(SHADER_DIR) + "/fx_repeat.frag";
 	shaderTest.loadFromFiles(vsPath, testFragPath);
 	shaderBlit.loadFromFiles(vsPath, blitFragPath);
 	shaderFit.loadFromFiles(vsPath, fitFragPath);
 	shaderBlendTwo.loadFromFiles(vsPath, blendTwoFragPath);
 	fx.init(fbw, fbh, vsPath, feedbackFragPath, feedbackDiffFragPath, feedbackChromaFragPath, feedbackKaleidoFragPath,
-	        blurXFragPath, blurYFragPath);
+	        blurXFragPath, blurYFragPath, repeatFragPath);
+	sourceFx.init(fbw, fbh, vsPath, feedbackFragPath, feedbackDiffFragPath, feedbackChromaFragPath,
+	              feedbackKaleidoFragPath, blurXFragPath, blurYFragPath, repeatFragPath);
 
 	// Create audition targets
 	auditionTexA = createTexture2D(fbw, fbh);
@@ -173,6 +178,15 @@ int App::run() {
 	params.setFloat("fx_param1", 0.8f);
 	params.setFloat("fx_param2", 0.985f);
 	params.setFloat("fx_param3", 0.0f);
+	params.setInt("fx_count", 4);
+	params.setInt("fx_repeat_blend", 6);
+	params.setBool("source_fx_enabled", false);
+	params.setInt("source_fx_mode", kRepeatFxMode);
+	params.setFloat("source_fx_param1", 0.12f);
+	params.setFloat("source_fx_param2", 0.0f);
+	params.setFloat("source_fx_param3", 0.0f);
+	params.setInt("source_fx_count", 4);
+	params.setInt("source_fx_repeat_blend", 6);
 	params.setBool("env_enabled", true);
 	params.setFloat("env_attack", 0.05f);
 	params.setFloat("env_decay", 0.20f);
@@ -190,6 +204,7 @@ int App::run() {
 	std::filesystem::path support =
 		std::filesystem::path(home ? home : ".") / "Library/Application Support/video-looper";
 	RemoteSession remote(support / "remote-token");
+	remote.setUsageFile(support / "web-use.jsonl");
 	std::string remoteSnapshotSent;
 	VideoThumbs thumbs;
 	std::vector<std::string> videoPaths;
@@ -303,11 +318,11 @@ int App::run() {
 				}
 				if (edgePressed(GLFW_KEY_BACKSLASH, prevBackslash)) {
 					int m = params.getInt("fx_mode", 0);
-					if (m < 4) params.setInt("fx_mode", m + 1);
+					if (m < kGridFxMode) params.setInt("fx_mode", m + 1);
 				}
 				// Load Random File (v)
 				if (edgePressed(GLFW_KEY_V, prevV)) {
-					source.triggerLoadRandomFile();
+					source.triggerLoadRandomFile(params);
 				}
 			}
 		}
@@ -342,6 +357,7 @@ int App::run() {
 			ring.setup(fbw, fbh, 120);
 			source.resize(fbw, fbh);
 			fx.resize(fbw, fbh);
+			sourceFx.resize(fbw, fbh);
 			looper.resize(fbw, fbh);
 			// Recreate audition targets
 			if (auditionFboA) glDeleteFramebuffers(1, &auditionFboA);
@@ -370,7 +386,7 @@ int App::run() {
 		if (hot.changed(vsPath) || hot.changed(fitFragPath)) shaderFit.loadFromFiles(vsPath, fitFragPath);
 		if (hot.changed(vsPath) || hot.changed(blendTwoFragPath))
 			shaderBlendTwo.loadFromFiles(vsPath, blendTwoFragPath);
-		fx.hotReload(hot);
+		sourceFx.applyReload(fx.hotReload(hot));
 
 		// Manage recording state edge transitions
 		static bool prevRecEnabled = false;
@@ -523,6 +539,19 @@ int App::run() {
 						                 params.getFloat("file_loop_length", 1.0f));
 					break;
 				}
+				case RemoteKind::Dub: {
+					std::string path = videoByName(videoPaths, set.name);
+					if (path.empty())
+						remote.send(rejectFrame("source", "no such video"));
+					else
+						source.queueDub(path, params.getFloat("file_loop_start", 0.0f),
+						                params.getFloat("file_loop_length", 1.0f));
+					break;
+				}
+				case RemoteKind::Page:
+					source.primePage(videosByName(videoPaths, set.names), params.getFloat("file_loop_start", 0.0f),
+					                 params.getFloat("file_loop_length", 1.0f));
+					break;
 				case RemoteKind::Folder:
 					if (folders.select(set.name))
 						source.showFolder(set.name, folders.current()->videos, params);
@@ -640,10 +669,21 @@ int App::run() {
 
 		bool recordingActive = commitActive || (envEnabled ? (shouldRecordOnRelease && (envVal > 0.0f)) : recGate);
 
+		GLuint liveSource = source.getPreviewTexture();
+		if (params.getBool("source_fx_enabled", false) && liveSource != 0) {
+			int mode = params.getInt("source_fx_mode", kRepeatFxMode);
+			float p1 = params.getFloat("source_fx_param1", 0.12f);
+			float p2 = params.getFloat("source_fx_param2", 0.0f);
+			float p3 = params.getFloat("source_fx_param3", 0.0f);
+			if (fxStampsCopies(mode)) p3 = static_cast<float>(params.getInt("source_fx_count", 4));
+			int repeatBlend = params.getInt("source_fx_repeat_blend", 6);
+			liveSource = sourceFx.process(fbw, fbh, liveSource, liveSource, 0.0f, mode, p1, p2, p3, repeatBlend, quad);
+		}
+
 		// Perform writes unless cueing (monitor only)
 		if (!cueActive) {
 			looper.writeAndSwap(fbw, fbh, shaderBlit, shaderBlendTwo, quad, idx0, wraps, recordingActive, writeOpacity,
-			                    recordBlendMode, fxCommit, fx.getPrevOutputTexture(), source.getPreviewTexture());
+			                    recordBlendMode, fxCommit, fx.getPrevOutputTexture(), liveSource);
 		}
 
 		// Present audition / normal
@@ -670,7 +710,7 @@ int App::run() {
 			glBindTexture(GL_TEXTURE_2D, auditionTexA);
 			shaderBlendTwo.setUniform("uTex0", 0);
 			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, source.getPreviewTexture());
+			glBindTexture(GL_TEXTURE_2D, liveSource);
 			shaderBlendTwo.setUniform("uTex1", 1);
 			shaderBlendTwo.setUniform("uMix", writeOpacity);
 			shaderBlendTwo.setUniform("uMode", recordBlendMode);
@@ -708,7 +748,7 @@ int App::run() {
 			glBindTexture(GL_TEXTURE_2D, auditionTexA);
 			shaderBlendTwo.setUniform("uTex0", 0);
 			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, source.getPreviewTexture());
+			glBindTexture(GL_TEXTURE_2D, liveSource);
 			shaderBlendTwo.setUniform("uTex1", 1);
 			shaderBlendTwo.setUniform("uMix", writeOpacity);
 			shaderBlendTwo.setUniform("uMode", recordBlendMode);
@@ -729,9 +769,11 @@ int App::run() {
 				float p1p = params.getFloat("fx_param1", 0.8f);
 				float p2p = params.getFloat("fx_param2", 0.985f);
 				float p3p = params.getFloat("fx_param3", 0.0f);
+				if (fxStampsCopies(fxMode)) p3p = static_cast<float>(params.getInt("fx_count", 4));
+				int repeatBlend = params.getInt("fx_repeat_blend", 6);
 				float baseMix = mixf * gainMix;
-				GLuint fxOut =
-					fx.process(w, h, ring.textureAt(idx0), ring.textureAt(idx1), baseMix, fxMode, p1p, p2p, p3p, quad);
+				GLuint fxOut = fx.process(w, h, ring.textureAt(idx0), ring.textureAt(idx1), baseMix, fxMode, p1p, p2p,
+				                          p3p, repeatBlend, quad);
 				glViewport(0, 0, w, h);
 				shaderBlit.use();
 				glActiveTexture(GL_TEXTURE0);
@@ -774,7 +816,7 @@ int App::run() {
 				glBindTexture(GL_TEXTURE_2D, auditionTexA);
 				shaderBlendTwo.setUniform("uTex0", 0);
 				glActiveTexture(GL_TEXTURE1);
-				glBindTexture(GL_TEXTURE_2D, source.getPreviewTexture());
+				glBindTexture(GL_TEXTURE_2D, liveSource);
 				shaderBlendTwo.setUniform("uTex1", 1);
 				shaderBlendTwo.setUniform("uMix", previewOpacity);
 				shaderBlendTwo.setUniform("uMode", recordBlendMode);
@@ -807,7 +849,7 @@ int App::run() {
 			glBindTexture(GL_TEXTURE_2D, auditionTexA);
 			shaderBlendTwo.setUniform("uTex0", 0);
 			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, source.getPreviewTexture());
+			glBindTexture(GL_TEXTURE_2D, liveSource);
 			shaderBlendTwo.setUniform("uTex1", 1);
 			shaderBlendTwo.setUniform("uMix", params.getFloat("record_blend_opacity", 1.0f));
 			shaderBlendTwo.setUniform("uMode", params.getInt("record_blend_mode", 0));

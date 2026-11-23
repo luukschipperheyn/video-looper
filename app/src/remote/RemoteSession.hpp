@@ -7,10 +7,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+
+class UsageLog;
 
 // Serves the iPad page and its WebSocket. The URL token is required until setTokenRequired(false). The network
 // thread only reads the published snapshot, thumbnails, the token, that flag, and queued frames, and queues the
@@ -45,6 +48,9 @@ public:
 	// A pad is down while any client's latest hold on it is younger than the silence window.
 	PadState pads() const;
 	void setSilenceWindow(int ms) { silenceMs = ms; }
+	// Call before setEnabled. The network thread appends Web interface gestures to this file.
+	// An empty path records nothing. Control messages are not written; the page sends a use for each gesture.
+	void setUsageFile(std::filesystem::path path) { usagePath = std::move(path); }
 	void setClock(TimePoint (*fn)()) { clock = fn; }
 	std::string token() const { return tok; }
 	std::string url() const;
@@ -63,6 +69,7 @@ private:
 	};
 
 	void serve();
+	void noteUse(const std::string& event, const std::string& name, const std::string& value);
 	bool handle(int fd);
 	bool readFrames(Client& client);
 	bool waitReadable(int fd);
@@ -90,4 +97,6 @@ private:
 	std::map<int, Holds> holds; // keyed by client fd
 	std::atomic<int> silenceMs{300};
 	std::atomic<TimePoint (*)()> clock{&std::chrono::steady_clock::now};
+	std::filesystem::path usagePath;
+	std::unique_ptr<UsageLog> usage; // created on the network thread; destroyed after that thread has joined
 };

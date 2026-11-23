@@ -1,6 +1,9 @@
 #include "gl/FxPipeline.hpp"
 
 #include "util/GlUtils.hpp"
+#include "util/Repeat.hpp"
+
+#include <cmath>
 
 FxPipeline::FxPipeline() : w(0), h(0), postFront(0) {
 	postTex[0] = 0;
@@ -16,7 +19,7 @@ FxPipeline::~FxPipeline() {
 void FxPipeline::init(int width, int height, const std::string& vertexPath, const std::string& feedbackFrag,
                       const std::string& feedbackDiffFrag, const std::string& feedbackChromaFrag,
                       const std::string& feedbackKaleidoFrag, const std::string& blurXFrag,
-                      const std::string& blurYFrag) {
+                      const std::string& blurYFrag, const std::string& repeatFrag) {
 	w = width;
 	h = height;
 	vsPath = vertexPath;
@@ -26,6 +29,7 @@ void FxPipeline::init(int width, int height, const std::string& vertexPath, cons
 	feedbackKaleidoFragPath = feedbackKaleidoFrag;
 	blurXFragPath = blurXFrag;
 	blurYFragPath = blurYFrag;
+	repeatFragPath = repeatFrag;
 
 	shaderFeedback.loadFromFiles(vsPath, feedbackFragPath);
 	shaderFeedbackDiff.loadFromFiles(vsPath, feedbackDiffFragPath);
@@ -33,6 +37,7 @@ void FxPipeline::init(int width, int height, const std::string& vertexPath, cons
 	shaderFeedbackKaleido.loadFromFiles(vsPath, feedbackKaleidoFragPath);
 	shaderBlurX.loadFromFiles(vsPath, blurXFragPath);
 	shaderBlurY.loadFromFiles(vsPath, blurYFragPath);
+	shaderRepeat.loadFromFiles(vsPath, repeatFragPath);
 
 	allocateTargets(w, h);
 	setWrapRepeat();
@@ -57,34 +62,65 @@ void FxPipeline::registerWatches(HotReload& hot) {
 	hot.watch(feedbackKaleidoFragPath);
 	hot.watch(blurXFragPath);
 	hot.watch(blurYFragPath);
+	hot.watch(repeatFragPath);
 }
 
-void FxPipeline::hotReload(HotReload& hot) {
-	if (hot.changed(vsPath) || hot.changed(feedbackFragPath)) {
-		shaderFeedback.loadFromFiles(vsPath, feedbackFragPath);
-	}
-	if (hot.changed(vsPath) || hot.changed(feedbackDiffFragPath)) {
-		shaderFeedbackDiff.loadFromFiles(vsPath, feedbackDiffFragPath);
-	}
-	if (hot.changed(vsPath) || hot.changed(feedbackChromaFragPath)) {
-		shaderFeedbackChroma.loadFromFiles(vsPath, feedbackChromaFragPath);
-	}
-	if (hot.changed(vsPath) || hot.changed(feedbackKaleidoFragPath)) {
-		shaderFeedbackKaleido.loadFromFiles(vsPath, feedbackKaleidoFragPath);
-	}
-	if (hot.changed(vsPath) || hot.changed(blurXFragPath)) {
-		shaderBlurX.loadFromFiles(vsPath, blurXFragPath);
-	}
-	if (hot.changed(vsPath) || hot.changed(blurYFragPath)) {
-		shaderBlurY.loadFromFiles(vsPath, blurYFragPath);
-	}
+FxReload FxPipeline::hotReload(HotReload& hot) {
+	FxReload reload;
+	reload.vertex = hot.changed(vsPath);
+	reload.feedback = hot.changed(feedbackFragPath);
+	reload.diff = hot.changed(feedbackDiffFragPath);
+	reload.chroma = hot.changed(feedbackChromaFragPath);
+	reload.kaleido = hot.changed(feedbackKaleidoFragPath);
+	reload.blurX = hot.changed(blurXFragPath);
+	reload.blurY = hot.changed(blurYFragPath);
+	reload.repeat = hot.changed(repeatFragPath);
+	applyReload(reload);
+	return reload;
+}
+
+void FxPipeline::applyReload(const FxReload& reload) {
+	if (reload.vertex || reload.feedback) shaderFeedback.loadFromFiles(vsPath, feedbackFragPath);
+	if (reload.vertex || reload.diff) shaderFeedbackDiff.loadFromFiles(vsPath, feedbackDiffFragPath);
+	if (reload.vertex || reload.chroma) shaderFeedbackChroma.loadFromFiles(vsPath, feedbackChromaFragPath);
+	if (reload.vertex || reload.kaleido) shaderFeedbackKaleido.loadFromFiles(vsPath, feedbackKaleidoFragPath);
+	if (reload.vertex || reload.blurX) shaderBlurX.loadFromFiles(vsPath, blurXFragPath);
+	if (reload.vertex || reload.blurY) shaderBlurY.loadFromFiles(vsPath, blurYFragPath);
+	if (reload.vertex || reload.repeat) shaderRepeat.loadFromFiles(vsPath, repeatFragPath);
 }
 
 GLuint FxPipeline::process(int viewportW, int viewportH, GLuint ringTex0, GLuint ringTex1, float baseMix, int fxMode,
-                           float p1, float p2, float p3, FullscreenQuad& quad) {
+                           float p1, float p2, float p3, int repeatBlend, FullscreenQuad& quad) {
 	int postWrite = 1 - postFront;
 	glBindFramebuffer(GL_FRAMEBUFFER, postFbo[postWrite]);
 	glViewport(0, 0, viewportW, viewportH);
+
+	if (fxStampsCopies(fxMode)) {
+		float fw = static_cast<float>(w);
+		float fh = static_cast<float>(h);
+		bool grid = fxMode == kGridFxMode;
+		RepeatStep step = repeatStep(p1, p2, fw, fh);
+		RepeatStep across = grid ? repeatStep(p1, p2 + 0.25f, fw, fh) : RepeatStep{0.0f, 0.0f};
+		int copies = grid ? gridCopies(static_cast<int>(std::lround(p3)))
+		                  : repeatCopies(static_cast<int>(std::lround(p3)));
+		shaderRepeat.use();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, ringTex0);
+		shaderRepeat.setUniform("uTex0", 0);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, ringTex1);
+		shaderRepeat.setUniform("uTex1", 1);
+		shaderRepeat.setUniform("uBaseMix", baseMix);
+		shaderRepeat.setUniform("uStep", step.x, step.y);
+		shaderRepeat.setUniform("uStep2", across.x, across.y);
+		shaderRepeat.setUniform("uCount", static_cast<float>(copies));
+		shaderRepeat.setUniform("uBlend", repeatBlend);
+		shaderRepeat.setUniform("uGrid", grid ? 1 : 0);
+		quad.draw();
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		postFront = postWrite;
+		return postTex[postWrite];
+	}
 
 	ShaderProgram* fxShaderPtr;
 	if (fxMode == 1)

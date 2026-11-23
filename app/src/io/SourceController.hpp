@@ -12,6 +12,7 @@
 #include "io/VideoSource.hpp"
 #include "io/AVFWebcamSource.hpp"
 #include "io/AVFFileSource.hpp"
+#include "io/PageCache.hpp"
 #include "io/SourceLoad.hpp"
 
 class SourceController {
@@ -28,8 +29,8 @@ public:
 	// Advance sources and populate preview texture. Returns true if a new frame was uploaded.
 	bool tickAndGrab(double nowSeconds, double dtSeconds, ParamBus& params);
 
-	// Load a random file from the current folder selection immediately
-	void triggerLoadRandomFile();
+	// Load a random Video from the current Videos folder as the Source. Does not Commit.
+	void triggerLoadRandomFile(ParamBus& params);
 
 	// Restart file playback at current loop start if file source is active
 	void restartFileAtLoopStart();
@@ -39,9 +40,13 @@ public:
 	void loadPrevFile(ParamBus& params);
 	void loadNextFile(ParamBus& params);
 	void loadVideo(const std::string& path, float loopStart = 0, float loopLength = 1);
+	// Selects path and Commits it into the Loop once it is the Source.
+	void queueDub(const std::string& path, float loopStart, float loopLength);
+	// Opens these Videos ahead of a tap. paths are full paths. An empty list drops the page.
+	void primePage(const std::vector<std::string>& paths, float loopStart, float loopLength);
 	void loadWebcam(int index);
 	// Why the latest load failed, once. Empty if none.
-	std::string takeLoadFailure() { return load.takeFailure(); }
+	std::string takeLoadFailure();
 	// True on the frame a load replaced the live Source.
 	bool loadSwapped() const { return swappedLoad; }
 	// Full paths of the Videos in the current Videos folder, as of the last scan.
@@ -65,6 +70,13 @@ private:
 	void ensureFrameTexture();
 	bool swapInLoaded(ParamBus& params);
 	void ensureSource(ParamBus& params);
+	// Applies a queued Select or Dub. True when a ready Video was swapped in and its first frame presented.
+	bool applyRequest(double nowSeconds, ParamBus& params);
+	bool installReady(const std::string& path, float loopStart, float loopLength, ParamBus& params);
+	void beginCommit(double nowSeconds, ParamBus& params, const std::string& path);
+	void cancelCommit(ParamBus& params);
+	void presentFrame(const std::vector<unsigned char>& bgra, int width, int height);
+	void queueVideo(const std::string& path, float loopStart, float loopLength, bool dub);
 	void startLoad(const LoadRequest& request);
 	void runLoads();
 	std::string openSpare(const LoadRequest& request);
@@ -105,6 +117,16 @@ private:
 
 	std::vector<std::string> videoFiles;
 	std::string lastVideosFolder;
+	PageCache pages;
+	struct PendingVideo {
+		bool on = false;
+		bool dub = false;
+		std::string path;
+		float loopStart = 0;
+		float loopLength = 1;
+	};
+	PendingVideo pendingVideo;
+	std::string dubOnSwap;
 	bool commitRequested;
 	bool committing;
 	double commitStartTime;

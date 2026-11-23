@@ -621,6 +621,20 @@ int main() {
 		check(res.rfind("HTTP/1.1 200", 0) == 0 && res.substr(res.find("\r\n\r\n") + 4) == "x",
 		      "31. a percent-encoded name finds its thumbnail");
 
+		sendFrame(client.fd, 0x1, R"({"t":"dub","name":"b.mov"})");
+		sets = waitDrain(session);
+		check(sets.size() == 1 && sets[0].kind == RemoteKind::Dub && sets[0].name == "b.mov",
+		      "43. dub drains as one Dub item naming b.mov");
+		sendFrame(client.fd, 0x1, R"({"t":"page","names":["a.mov","b.mov"]})");
+		sets = waitDrain(session);
+		check(sets.size() == 1 && sets[0].kind == RemoteKind::Page && sets[0].names.size() == 2 &&
+		          sets[0].names[0] == "a.mov" && sets[0].names[1] == "b.mov",
+		      "44. page drains as one Page item naming the Videos on it");
+		sendFrame(client.fd, 0x1, R"({"t":"page","names":[]})");
+		sets = waitDrain(session);
+		check(sets.size() == 1 && sets[0].kind == RemoteKind::Page && sets[0].names.empty(),
+		      "44. an empty page drains as a Page with no Videos");
+
 		close(client.fd);
 	}
 
@@ -636,6 +650,11 @@ int main() {
 	check(videoByName(folder, "b.mov") == "/v/b.mov", "33. videoByName finds a path by filename");
 	check(videoByName(folder, "c.mov").empty() && videoByName(folder, "v/b.mov").empty(),
 	      "33. videoByName returns empty for an unknown name");
+	check(videosByName(folder, {"b.mov", "nope", "a.mov"}) == std::vector<std::string>{"/v/b.mov", "/v/a.mov"},
+	      "33. videosByName keeps the names that are in the folder, in order");
+	check(!commitReachedEnd(true, false, true) && !commitReachedEnd(false, true, true) &&
+	          !commitReachedEnd(false, false, false) && commitReachedEnd(false, false, true),
+	      "45. a Commit ends only when the Video produces no frame, is not looping, and the reader has ended");
 
 	check(stepVideo({}, "/v/a.mov", 1).empty() && stepVideo({}, "", -1).empty(), "27. an empty list steps to nothing");
 	const std::vector<std::string> abc = {"a", "b", "c"};
@@ -809,6 +828,39 @@ int main() {
 		check(session.tokenRequired() && httpGet(port, "/").rfind("HTTP/1.1 403", 0) == 0,
 		      "42. GET / without a token returns 403 when the token is back on");
 		check(session.url().find("?token=" + token) != std::string::npos, "42. the URL carries the token again");
+	}
+	{
+		auto log = dir / "web-use.jsonl";
+		RemoteSession session(tokenFile, "127.0.0.1", 0);
+		session.setUsageFile(log);
+		session.setEnabled(true);
+		Ws client = openClient(session.port(), session.token());
+		sendFrame(client.fd, 0x1, setFrame("fx_mode", "5"));
+		sendFrame(client.fd, 0x1, "{\"t\":\"use\",\"e\":\"set\",\"name\":\"fx_mode\",\"v\":5}");
+		sendFrame(client.fd, 0x1, "{\"t\":\"use\",\"e\":\"act\",\"name\":\"dub\",\"v\":\"clip.mp4\"}");
+		sendFrame(client.fd, 0x1, "{\"t\":\"use\",\"e\":\"hold\",\"name\":\"gate\"}");
+		sendFrame(client.fd, 0x1, "{\"t\":\"use\",\"e\":\"nope\",\"name\":\"x\"}");
+		sendFrame(client.fd, 0x1, "{\"t\":\"use\",\"name\":\"fx_mode\"}");
+		std::vector<RemoteSet> sets = waitDrain(session);
+		check(sets.size() == 1 && sets[0].kind == RemoteKind::Set && sets[0].name == "fx_mode",
+		      "43. a use does not enter the control queue");
+		std::string data;
+		for (int i = 0; i < 100; ++i) {
+			std::ifstream in(log);
+			data.assign(std::istreambuf_iterator<char>(in), {});
+			if (data.find("\"e\":\"hold\"") != std::string::npos && data.find("clip.mp4") != std::string::npos) break;
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		check(data.find("\"e\":\"set\"") != std::string::npos && data.find("\"name\":\"fx_mode\"") != std::string::npos &&
+		          data.find("\"v\":5") != std::string::npos,
+		      "43. a use gesture is appended to the usage file");
+		check(data.find("\"v\":\"clip.mp4\"") != std::string::npos, "43. a dub name is kept on the gesture");
+		int fxLines = 0;
+		for (size_t at = 0; (at = data.find("fx_mode", at)) != std::string::npos; at += 7)
+			++fxLines;
+		check(fxLines == 1, "43. a control set is not logged unless the page sends use");
+		check(data.find("nope") == std::string::npos, "43. an unknown gesture is not stored");
+		close(client.fd);
 	}
 	std::filesystem::remove_all(dir);
 	std::printf("%s (%d failures)\n", failures ? "FAILED" : "ALL PASSED", failures);

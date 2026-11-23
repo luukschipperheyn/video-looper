@@ -45,12 +45,14 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/io/AVFFileSource.mm
   app/src/io/AVFRecorder.mm
   app/src/io/SourceController.cpp
+  app/src/io/PageCache.cpp
   app/src/io/SourceLoad.cpp
   app/src/io/FolderList.cpp
   app/src/io/VideoThumbs.mm
   app/src/util/MacFileDialog.mm
   app/src/remote/RemoteSession.cpp
   app/src/remote/RemoteApply.cpp
+  app/src/remote/UsageLog.cpp
   app/src/remote/QrCode.cpp
   app/src/setup/SetupStore.cpp
   ${imgui_SOURCE_DIR}/imgui.cpp
@@ -74,6 +76,7 @@ add_executable(remote_session_test
   app/tests/remote_session_test.cpp
   app/src/remote/RemoteSession.cpp
   app/src/remote/RemoteApply.cpp
+  app/src/remote/UsageLog.cpp
   app/src/ui/ParamBus.cpp
   app/src/io/SourceLoad.cpp
   app/src/io/FolderList.cpp
@@ -81,8 +84,17 @@ add_executable(remote_session_test
 target_include_directories(remote_session_test PRIVATE app/src)
 target_compile_definitions(remote_session_test PRIVATE WEB_DIR="${CMAKE_SOURCE_DIR}/app/web")
 
+add_executable(usage_log_test
+  app/tests/usage_log_test.cpp
+  app/src/remote/UsageLog.cpp
+)
+target_include_directories(usage_log_test PRIVATE app/src)
+
 add_executable(contain_rect_test app/tests/contain_rect_test.cpp)
 target_include_directories(contain_rect_test PRIVATE app/src)
+
+add_executable(repeat_test app/tests/repeat_test.cpp)
+target_include_directories(repeat_test PRIVATE app/src)
 
 add_executable(setup_test
   app/tests/setup_test.cpp

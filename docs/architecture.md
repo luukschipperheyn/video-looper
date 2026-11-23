@@ -42,10 +42,11 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/buffer/RingBuffer.*` | Dual-bank GPU textures/FBOs (`frameCount` frames × 2 banks); front = read, back = write |
 | `app/src/looper/LooperEngine.*` | Read-head advance, multi-slot write/copy to back bank, bank swap on wrap, playhead overlay |
 | `app/src/io/SourceController.*` | Source kind routing, preview tex/FBO, folder scan, random **commit**, prev/next file |
+| `app/src/io/PageCache.*` | Opens the Videos on the Web interface's current page ahead of a tap |
 | `app/src/io/AVFFileSource.*` / `AVFWebcamSource.*` | File decode / camera → GL texture |
 | `app/src/io/AVFRecorder.*` | BGRA frames → `.mov` |
 | `app/src/io/VideoSource.hpp` | `SourceKind { Shader, File, Black, Webcam }`, `IVideoSource` |
-| `app/src/gl/FxPipeline.*` | Feedback / Diff / Chroma / Kaleido / Blur post; ping-pong targets; hot-reload |
+| `app/src/gl/FxPipeline.*` | Feedback / Diff / Chroma / Kaleido / Blur / Repeat / Grid; one pipeline on the Program, one on the Source; ping-pong targets; hot-reload |
 | `app/src/gl/Shader.*`, `FullscreenQuad.*`, `util/GlUtils.hpp` | GL helpers |
 | `app/src/ui/ParamBus.*` | String-keyed bool/float/int/string bag (no schema validation) |
 | `app/src/setup/SetupStore.*` | Performance setup saved when a control settles and restored at launch |
@@ -97,11 +98,13 @@ Ring size is fixed at **120** frames at current framebuffer resolution (`ring.se
 
 File and webcam frames are drawn into the Source, then that image is what an Overdub writes. **Preserve aspect** (`video_aspect`, default on) fits them with contain: the image fills the loop's width or its height. Off stretches them to the loop frame first. **Black bars** (`video_bars`, default on) paints the unused side black; off leaves it transparent, so the Loop shows through and an Overdub does not paint it. The Web interface Source trackpad drags with one finger to translate. A pinch moves by the midpoint and scales and rotates (`video_tx`, `video_ty`, `video_sx`, `video_sy`, `video_rot`, identity at 0, 0, 1, 1, 0). With Preserve aspect on, a pinch scales both axes together. Shader and Black ignore the transform and fill the loop frame. The switches are on the Mac Source section and the Web interface Source section.
 
-**Folder / random commit** (`SourceController`):
+**Folder / random Video** (`SourceController`):
 
 - `videos_folder` scanned for `.mp4/.mov/.m4v/.mkv/.avi`  
-- `V` / “Load Random File” → `commitRequested` → pick file, set `commit_active`, force `file_loop=false`, write into ring at full opacity until file ends (no new frames + non-looping) then restore loop setting  
+- `V` / “Load Random File” picks a Video from the current Videos folder and loads it as the Source, the same way Prev and Next do. It does not Commit.
 - Prev/Next cycle folder list and load immediately (clears commit state)
+
+**Web interface grid** (`app/web/index.html`): Select loads the tapped Video as the Source. Dub does that and Commits it, so the Video is written into the Loop at full opacity from its start to its end and stays the Source. The page sends the filenames on screen; `PageCache` opens those Videos on a background thread so a tap swaps a ready one in. A Video that is not ready yet still loads, and a Dub Commits when that load swaps in.
 
 **File Trigger mode** (`file_run_mode == 1`): on rising edge of record gate or cue, `restartFileAtLoopStart()` if source is File.
 
@@ -134,19 +137,19 @@ File and webcam frames are drawn into the Source, then that image is what an Ove
 
 ## FX
 
-`FxPipeline::process` when `fx_enabled` and not in cue/record present path:
+Two chains, each an `FxPipeline`. **Program FX** (`fx_enabled`) runs on the present path when not cueing or overdubbing. **Source FX** (`source_fx_enabled`) runs on the framed Source; Cue, the Audition, an Overdub, and the inset preview all use that image. Source FX does not change the Loop until an Overdub writes it. Each chain keeps its own previous frame, so feedback on one does not leak into the other. Source FX adds two full-frame targets, not ring frames.
 
 | Mode | Name | Notes |
 |------|------|--------|
-| 0 | Feedback | default |
+| 0 | Feedback | Program FX default |
 | 1 | Difference | |
 | 2 | Chromatic | |
 | 3 | Kaleido | |
-| 4 | Blur | separable X then Y |
+| 4 | Blur | separable X then Y, after the feedback pass |
+| 5 | Repeat | extra copies along one step. Distance is `param1` as a fraction of the frame height. Angle is `param2` in turns (0 points right, increasing turns upward). Count is `fx_count` or `source_fx_count`, 0..16 extra copies. Copies combine with `fx_repeat_blend` or `source_fx_repeat_blend` (the Overdub blend modes, default Lighten). Black does not cover; a copy landing on empty black is placed as itself. Samples outside the frame are black. |
+| 6 | Grid | the same stamp on that step and on the perpendicular step (`turns + 0.25`). Count is extra copies along each axis, 0..6, so a count of 4 is a 5×5 grid. Same distance, blend, and black-does-not-cover rule as Repeat. |
 
-Params: `fx_param1/2/3`. `fx_commit` + `fx_enabled` writes previous FX output into the ring instead of live preview blend.
-
-Shaders hot-reload via `HotReload` watches under `app/shaders/`.
+Program params: `fx_param1/2/3`. Source params: `source_fx_param1/2/3`. Source FX defaults to Repeat, distance 0.12, angle 0, count 4. `fx_commit` + Program `fx_enabled` writes the previous Program FX output into the ring instead of the live Source. Shaders hot-reload via `HotReload` watches under `app/shaders/`. The Program pipeline reads the watches; the Source pipeline reloads from that same result, because a watch reports a change only once per edit.
 
 ---
 
@@ -188,7 +191,7 @@ Separate from looper “record into ring”:
 | `1`–`9`, `0` | `record_blend_opacity` = 0.1…0.9, 1.0 |
 | `-` / `=` | Prev/next `source_kind` — **only through Black** (`=` stops at Black; Webcam not reachable via hotkey) |
 | `[` / `]` | Prev/next `record_blend_mode` (0–11) |
-| `'` / `\` | Prev/next `fx_mode` (0–4) |
+| `'` / `\` | Prev/next `fx_mode` (0–6) |
 | `V` | Random file commit trigger |
 | Space | Hold = record gate |
 | `C` | Hold = cue (monitor only) |
@@ -205,7 +208,9 @@ Keys used elsewhere but not all initialized at startup (rely on get defaults): e
 
 ## Saved setup
 
-`~/Library/Application Support/video-looper/setup.json` is written 0.2 s after the setup stops changing, and again on quit. Launch applies it after the defaults, so a missing or broken file leaves the defaults. Restored fields: blend, opacity, blend gain, envelope, FX, Source kind and transform, black bars, preserve aspect, webcam, video loop / pause / run mode / loop range, current Video, Folder list, tempo, whether the Web interface is on, export path and export fps. Latch, latched Cue, and Export start off. Link, the preview window, playheads, Mac UI visibility, the URL token, and the window are not in the file. A folder that cannot be read is dropped. If the current Video cannot be opened, the Source stays a Video, nothing is loaded, and the Web interface keeps the load failure on its snapshot. The Loop's frames are not restored (ADR-0003). A restored Video's first frame is the start of its saved loop range.
+`~/Library/Application Support/video-looper/setup.json` is written 0.2 s after the setup stops changing, and again on quit. Launch applies it after the defaults, so a missing or broken file leaves the defaults. Restored fields: blend, opacity, blend gain, envelope, FX, Source FX, Source kind and transform, black bars, preserve aspect, webcam, video loop / pause / run mode / loop range, current Video, Folder list, tempo, whether the Web interface is on, export path and export fps. Latch, latched Cue, and Export start off. Link, the preview window, playheads, Mac UI visibility, the URL token, and the window are not in the file. A folder that cannot be read is dropped. If the current Video cannot be opened, the Source stays a Video, nothing is loaded, and the Web interface keeps the load failure on its snapshot. The Loop's frames are not restored (ADR-0003). A restored Video's first frame is the start of its saved loop range.
+
+`web-use.jsonl` in that same folder is an append-only record of Web interface gestures, one JSON object per line: `at` (UTC), `e` (`set`, `hold`, `release`, `open`, `close`, `chain`, `tap`, `act`), `name`, and `v` when the gesture has a value. A fader, blend swipe, transform, or envelope drag is one `set` when the finger lifts, with the value it landed on. A held Overdub gate or Cue is one `hold` and one `release`, not the repeats that keep the pad down. Opening the ADSR/opacity layer or Setup is `open` / `close`. The file keeps its newest lines once it passes 4 MB. It is not restored into the instrument and it is not sent off the Mac.
 
 ---
 
@@ -242,10 +247,10 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 
 1. **Bank coherence** — non-recording path copies unread-back slots so after a wrap the new front is a complete loop; recording overdubs into those slots.  
 2. **Cue never mutates the ring** — audition only.  
-3. **Commit** forces recording-active writes at opacity 1 and bypasses ADSR; ends when file stops producing frames while non-looping.  
+3. **Commit** forces recording-active writes at opacity 1 and bypasses ADSR; ends when the reader is exhausted while the Video is not looping. A tick that holds the current frame does not end it.  
 4. **Resize invalidates** ring contents (full `setup` destroy/recreate) and aborts disk recording. Accepted for now by the owner; don't change it as a side effect.  
 5. **Read interpolation** — present mixes `idx0`/`idx1` with `gain_mix`; write path uses integer slot indices.  
-6. **FX present vs commit** — live FX is a present-path effect unless `fx_commit` bakes last FX texture into the loop.  
+6. **FX present vs commit** — Program FX is a present-path effect unless `fx_commit` bakes the last Program FX texture into the loop. Source FX is on the framed Source before the Audition and an Overdub.  
 7. **Preview vs main** — inset/separate preview shows `auditionTexB` (loop + live overlay); debug toggle shows the back-bank slot instead.
 
 ---

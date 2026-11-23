@@ -27,7 +27,7 @@ The control that releases the Latch, the latched Cue, and a held Overdub gate or
 _Avoid_: reset, clear
 
 **Commit**:
-Writing one whole Video into the Loop at full opacity from its start to its end, bypassing the envelope. The Video is picked at random from the Videos folder.
+Writing one whole Video into the Loop at full opacity from its start to its end, bypassing the envelope.
 _Avoid_: Load random file
 
 **Bake FX**:
@@ -65,6 +65,20 @@ The image the audience sees: the loop as presented, including FX.
 _Avoid_: Output, main view
 
 "Preview" is a verb or UI label (to preview the Audition), never a term for one of these images.
+
+### FX
+
+**Source FX**:
+FX on the Source, after framing and before the Audition or an Overdub.
+_Avoid_: input FX, pre-FX
+
+**Repeat**:
+An FX that keeps the image and stamps extra copies in one direction. Distance is the gap, as a fraction of the frame height. Angle is the direction; zero points right and increasing angle turns upward. The count is how many extra copies. Black stays black.
+_Avoid_: echo, tile, array, kaleido
+
+**Grid**:
+An FX that keeps the image and stamps extra copies on two axes. The first axis is the Repeat direction. The second stands square to it. Distance is the gap on both axes. The count is how many extra copies along each axis. Black stays black.
+_Avoid_: tile, array, kaleido
 
 ### Getting video out
 

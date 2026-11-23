@@ -25,6 +25,14 @@ int main() {
 	params.setBool("env_enabled", false);
 	params.setFloat("env_attack", 0.1f);
 	params.setFloat("fx_param2", 0.985f);
+	params.setInt("fx_count", 6);
+	params.setInt("fx_repeat_blend", 1);
+	params.setBool("source_fx_enabled", true);
+	params.setInt("source_fx_mode", 5);
+	params.setFloat("source_fx_param1", 0.2f);
+	params.setFloat("source_fx_param2", 0.25f);
+	params.setInt("source_fx_count", 3);
+	params.setInt("source_fx_repeat_blend", 6);
 	params.setInt("source_kind", 1);
 	params.setFloat("video_tx", -1.5f);
 	params.setFloat("video_rot", 0.25f);
@@ -87,7 +95,13 @@ int main() {
 	check(near(fresh.getFloat("record_blend_opacity"), 0.25f), "opacity comes back");
 	check(near(fresh.getFloat("gain_mix"), 0.5f), "blend gain comes back");
 	check(!fresh.getBool("env_enabled") && near(fresh.getFloat("env_attack"), 0.1f), "envelope comes back");
-	check(near(fresh.getFloat("fx_param2"), 0.985f), "FX comes back");
+	check(near(fresh.getFloat("fx_param2"), 0.985f) && fresh.getInt("fx_count") == 6 &&
+	          fresh.getInt("fx_repeat_blend") == 1,
+	      "FX comes back");
+	check(fresh.getBool("source_fx_enabled") && fresh.getInt("source_fx_mode") == 5 &&
+	          near(fresh.getFloat("source_fx_param1"), 0.2f) && near(fresh.getFloat("source_fx_param2"), 0.25f) &&
+	          fresh.getInt("source_fx_count") == 3 && fresh.getInt("source_fx_repeat_blend") == 6,
+	      "Source FX comes back");
 	check(fresh.getInt("source_kind") == 1, "a missing Video stays the Source");
 	check(fresh.getString("file_path") == "/Movies/a \"b\".mov", "the Video path comes back");
 	check(near(fresh.getFloat("video_tx"), -1.5f) && near(fresh.getFloat("video_rot"), 0.25f), "transform comes back");

@@ -23,6 +23,15 @@ struct PerformanceSetup {
 	float fx_param1 = 0.8f;
 	float fx_param2 = 0.985f;
 	float fx_param3 = 0;
+	int fx_count = 4;
+	int fx_repeat_blend = 6;
+	bool source_fx_enabled = false;
+	int source_fx_mode = 5;
+	float source_fx_param1 = 0.12f;
+	float source_fx_param2 = 0;
+	float source_fx_param3 = 0;
+	int source_fx_count = 4;
+	int source_fx_repeat_blend = 6;
 	int source_kind = 0;
 	float video_tx = 0;
 	float video_ty = 0;

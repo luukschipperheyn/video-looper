@@ -10,6 +10,10 @@ Read these before changing behavior or naming things:
 
 Decisions that touch the area you are about to change live in `docs/adr/`. If that directory or a file in it is missing, proceed.
 
+## UI
+
+A UI change goes in the Web interface.
+
 ## Agent skills
 
 ### Issue tracker

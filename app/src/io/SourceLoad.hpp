@@ -58,6 +58,14 @@ private:
 std::string stepVideo(const std::vector<std::string>& files, const std::string& current, int delta);
 // The path in files whose filename is name, or empty.
 std::string videoByName(const std::vector<std::string>& files, const std::string& name);
+// The paths in files whose filenames are names, in that order. Unknown names are left out.
+std::vector<std::string> videosByName(const std::vector<std::string>& files, const std::vector<std::string>& names);
+
+// A Commit ends once the Video is not looping and its reader has no further frame. A tick that only holds the
+// current frame does not end it.
+inline bool commitReachedEnd(bool frameAdvanced, bool looping, bool readerEnded) {
+	return !frameAdvanced && !looping && readerEnded;
+}
 
 // True only on the frame a still Source (shader 0 or black 2) is chosen. Staying there must not cancel a Video load.
 bool stillSourceCancelsLoad(int kind, int previousKind);
