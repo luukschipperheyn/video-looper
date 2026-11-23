@@ -27,6 +27,9 @@ public:
 	// Restart playback at current loop start immediately
 	void restartAtLoopStart();
 
+	// True after a non-looping read passes the end of the range, until the reader is recreated.
+	bool ended() const;
+
 private:
 	struct Impl;
 	Impl* impl;

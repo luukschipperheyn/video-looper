@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "util/MacFileDialog.hpp"
+#include "util/Repeat.hpp"
 #include "remote/QrCode.hpp"
 #include <algorithm>
 #include <cstring>
@@ -76,8 +77,10 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 					params.setString("file_path", std::string(buf));
 				}
 				if (ImGui::Button("Browse...")) {
-					macOpenFileDialogAsync("Select Video File", [source](std::string p) {
-						if (!p.empty() && source) source->loadVideo(p);
+					macOpenFileDialogAsync("Select Video File", [source, &params](std::string p) {
+						if (!p.empty() && source)
+							source->loadVideo(p, params.getFloat("file_loop_start", 0.0f),
+							                  params.getFloat("file_loop_length", 1.0f));
 					});
 				}
 				static char fbuf[512];
@@ -105,7 +108,7 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 				}
 				// ImGui::SameLine();
 				if (ImGui::Button("Load Random File")) {
-					if (source) source->triggerLoadRandomFile();
+					if (source) source->triggerLoadRandomFile(params);
 				}
 				if (ImGui::Button("Prev File")) {
 					if (source) source->loadPrevFile(params);
@@ -187,25 +190,66 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			ImGui::Separator();
 			ImGui::TextUnformatted("FX");
 			ImGui::Separator();
+			const char* fxModes[] = {"Feedback", "Difference", "Chromatic", "Kaleido", "Blur", "Repeat", "Grid"};
+			auto drawFxKnobs = [&](const char* id, int mode, const char* k1, const char* k2, const char* k3,
+			                       const char* kCount, const char* kBlend, float d1, float d2, float d3, int dCount) {
+				ImGui::PushID(id);
+				if (fxStampsCopies(mode)) {
+					float dist = params.getFloat(k1, d1) * 100.0f;
+					if (ImGui::SliderFloat("Distance", &dist, 0.0f, 100.0f, "%.0f%%"))
+						params.setFloat(k1, dist / 100.0f);
+					float deg = params.getFloat(k2, d2) * 360.0f;
+					if (ImGui::SliderFloat("Angle", &deg, 0.0f, 360.0f, "%.0f deg")) params.setFloat(k2, deg / 360.0f);
+					int copies = params.getInt(kCount, dCount);
+					int maxCopies = mode == kGridFxMode ? kGridMaxCopies : kRepeatMaxCopies;
+					int shown = std::min(copies, maxCopies);
+					if (ImGui::SliderInt("Copies", &shown, 0, maxCopies) && shown != std::min(copies, maxCopies))
+						params.setInt(kCount, shown);
+					int blend = params.getInt(kBlend, 6);
+					if (ImGui::Combo("Blend", &blend, blendModes, 12)) params.setInt(kBlend, blend);
+				} else {
+					float p1 = params.getFloat(k1, d1);
+					float p2 = params.getFloat(k2, d2);
+					float p3 = params.getFloat(k3, d3);
+					if (mode == 3) {
+						float segments = p1 * 12.0f + 1.0f;
+						if (ImGui::SliderFloat("Segments", &segments, 1.0f, 13.0f, "%.0f"))
+							params.setFloat(k1, (segments - 1.0f) / 12.0f);
+					} else if (mode != 1) {
+						const char* first = mode == 2 ? "Chroma" : mode == 4 ? "Radius" : "Mix";
+						if (ImGui::SliderFloat(first, &p1, 0.0f, 1.0f)) params.setFloat(k1, p1);
+					}
+					const char* second = mode == 1 ? "Scale" : "Decay";
+					if (ImGui::SliderFloat(second, &p2, 0.0f, 1.0f)) params.setFloat(k2, p2);
+					const char* third = mode == 1 ? "Decay" : "Zoom";
+					if (ImGui::SliderFloat(third, &p3, -0.05f, 0.05f)) params.setFloat(k3, p3);
+				}
+				ImGui::PopID();
+			};
 			bool fxEn = params.getBool("fx_enabled", false);
 			if (ImGui::Checkbox("FX Enabled", &fxEn)) params.setBool("fx_enabled", fxEn);
 			bool fxC = params.getBool("fx_commit", false);
 			if (ImGui::Checkbox("Commit FX to Loop", &fxC)) params.setBool("fx_commit", fxC);
 			int fxMode = params.getInt("fx_mode", 0);
-			const char* fxModes[] = {"Feedback", "Difference", "Chromatic", "Kaleido", "Blur"};
-			if (ImGui::Combo("FX Mode", &fxMode, fxModes, 5)) params.setInt("fx_mode", fxMode);
-			float p1 = params.getFloat("fx_param1", 0.8f);
-			float p2 = params.getFloat("fx_param2", 0.985f);
-			float p3 = params.getFloat("fx_param3", 0.0f);
-			if (ImGui::SliderFloat("Param 1", &p1, 0.0f, 1.0f)) params.setFloat("fx_param1", p1);
-			if (ImGui::SliderFloat("Param 2", &p2, 0.0f, 1.0f)) params.setFloat("fx_param2", p2);
-			if (ImGui::SliderFloat("Param 3", &p3, -0.05f, 0.05f)) params.setFloat("fx_param3", p3);
+			if (ImGui::Combo("FX Mode", &fxMode, fxModes, 7)) params.setInt("fx_mode", fxMode);
+			drawFxKnobs("program", fxMode, "fx_param1", "fx_param2", "fx_param3", "fx_count", "fx_repeat_blend", 0.8f,
+			            0.985f, 0.0f, 4);
 
 			ImGui::Separator();
-			ImGui::TextUnformatted("iPad");
+			ImGui::TextUnformatted("Source FX");
+			ImGui::Separator();
+			bool srcFx = params.getBool("source_fx_enabled", false);
+			if (ImGui::Checkbox("Source FX", &srcFx)) params.setBool("source_fx_enabled", srcFx);
+			int srcMode = params.getInt("source_fx_mode", kRepeatFxMode);
+			if (ImGui::Combo("Source FX Mode", &srcMode, fxModes, 7)) params.setInt("source_fx_mode", srcMode);
+			drawFxKnobs("source", srcMode, "source_fx_param1", "source_fx_param2", "source_fx_param3",
+			            "source_fx_count", "source_fx_repeat_blend", 0.12f, 0.0f, 0.0f, 4);
+
+			ImGui::Separator();
+			ImGui::TextUnformatted("Web interface");
 			ImGui::Separator();
 			bool ipad = params.getBool("ipad_page", false);
-			if (ImGui::Checkbox("iPad page", &ipad)) params.setBool("ipad_page", ipad);
+			if (ImGui::Checkbox("Web interface", &ipad)) params.setBool("ipad_page", ipad);
 			bool token = params.getBool("ipad_token", true);
 			if (ImGui::Checkbox("URL token", &token)) params.setBool("ipad_token", token);
 			float silence = params.getFloat("silence_ms", 300.0f);

@@ -6,10 +6,13 @@
 #include <vector>
 
 struct LoadRequest {
-	uint64_t id;
-	bool webcam; // false means a Video path
+	uint64_t id = 0;
+	bool webcam = false; // false means a Video path
 	std::string path;
-	int webcamIndex;
+	int webcamIndex = 0;
+	// Where a Video starts. The first decoded frame is inside this range.
+	float loopStart = 0;
+	float loopLength = 1;
 };
 
 // One Source load at a time, and the Source it last committed. resolve runs on the loading thread; everything
@@ -17,7 +20,7 @@ struct LoadRequest {
 class SourceLoad {
 public:
 	// Each request cancels the one in flight.
-	LoadRequest requestVideo(std::string path);
+	LoadRequest requestVideo(std::string path, float loopStart = 0, float loopLength = 1);
 	LoadRequest requestWebcam(int index);
 	// Drops a load that has not swapped, including one that is already ready.
 	void cancel();
@@ -55,6 +58,14 @@ private:
 std::string stepVideo(const std::vector<std::string>& files, const std::string& current, int delta);
 // The path in files whose filename is name, or empty.
 std::string videoByName(const std::vector<std::string>& files, const std::string& name);
+// The paths in files whose filenames are names, in that order. Unknown names are left out.
+std::vector<std::string> videosByName(const std::vector<std::string>& files, const std::vector<std::string>& names);
+
+// A Commit ends once the Video is not looping and its reader has no further frame. A tick that only holds the
+// current frame does not end it.
+inline bool commitReachedEnd(bool frameAdvanced, bool looping, bool readerEnded) {
+	return !frameAdvanced && !looping && readerEnded;
+}
 
 // True only on the frame a still Source (shader 0 or black 2) is chosen. Staying there must not cancel a Video load.
 bool stillSourceCancelsLoad(int kind, int previousKind);

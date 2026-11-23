@@ -4,8 +4,8 @@
 #include <filesystem>
 #include <utility>
 
-LoadRequest SourceLoad::requestVideo(std::string p) {
-	return request({0, false, std::move(p), 0});
+LoadRequest SourceLoad::requestVideo(std::string p, float loopStart, float loopLength) {
+	return request({0, false, std::move(p), 0, loopStart, loopLength});
 }
 
 LoadRequest SourceLoad::requestWebcam(int index) {
@@ -100,4 +100,13 @@ std::string videoByName(const std::vector<std::string>& files, const std::string
 	auto it = std::find_if(files.begin(), files.end(),
 	                       [&](const std::string& f) { return std::filesystem::path(f).filename() == name; });
 	return it != files.end() ? *it : std::string();
+}
+
+std::vector<std::string> videosByName(const std::vector<std::string>& files, const std::vector<std::string>& names) {
+	std::vector<std::string> out;
+	for (const std::string& name : names) {
+		std::string path = videoByName(files, name);
+		if (!path.empty()) out.push_back(std::move(path));
+	}
+	return out;
 }

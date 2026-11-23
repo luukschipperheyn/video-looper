@@ -14,7 +14,7 @@ struct Control {
 	bool writable;
 };
 
-// Every param the iPad page sees. Writable numbers are clamped to min..max; bools are not clamped.
+// Every param the Web interface sees. Writable numbers are clamped to min..max; bools are not clamped.
 inline constexpr Control kControls[] = {
 	{"record_enabled", ControlType::Bool, 0, 0, true},
 	{"record_fps", ControlType::Float, 1, 240, true},
@@ -44,10 +44,19 @@ inline constexpr Control kControls[] = {
 	{"env_release", ControlType::Float, 0, 5, true},
 	{"fx_enabled", ControlType::Bool, 0, 0, true},
 	{"fx_commit", ControlType::Bool, 0, 0, true},
-	{"fx_mode", ControlType::Int, 0, 4, true},
+	{"fx_mode", ControlType::Int, 0, 6, true},
 	{"fx_param1", ControlType::Float, 0, 1, true},
 	{"fx_param2", ControlType::Float, 0, 1, true},
 	{"fx_param3", ControlType::Float, -0.05f, 0.05f, true},
+	{"fx_count", ControlType::Int, 0, 16, true},
+	{"fx_repeat_blend", ControlType::Int, 0, 11, true},
+	{"source_fx_enabled", ControlType::Bool, 0, 0, true},
+	{"source_fx_mode", ControlType::Int, 0, 6, true},
+	{"source_fx_param1", ControlType::Float, 0, 1, true},
+	{"source_fx_param2", ControlType::Float, 0, 1, true},
+	{"source_fx_param3", ControlType::Float, -0.05f, 0.05f, true},
+	{"source_fx_count", ControlType::Int, 0, 16, true},
+	{"source_fx_repeat_blend", ControlType::Int, 0, 11, true},
 	{"bpm", ControlType::Float, 40, 240, true},
 	{"read_speed_mult", ControlType::Float, 0.25f, 4, true},
 	{"tempo_coupled", ControlType::Bool, 0, 0, true},

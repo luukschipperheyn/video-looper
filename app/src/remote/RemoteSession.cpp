@@ -1,5 +1,7 @@
 #include "remote/RemoteSession.hpp"
 
+#include "remote/UsageLog.hpp"
+
 #include "remote/ControlSchema.hpp"
 
 #include <CommonCrypto/CommonDigest.h>
@@ -149,13 +151,24 @@ bool isJsonValue(const std::string& raw) {
 }
 
 // The fields of one client message, each as its raw JSON token, or empty when absent.
+// names is the plain strings of a "names" array.
 struct Message {
 	std::string type;
+	std::string event;
 	std::string name;
 	std::string value;
+	std::vector<std::string> names;
 };
 
+// A non-empty JSON string token with no escapes, without its quotes. An empty token "" is rejected.
+bool plainString(const std::string& raw, std::string& out) {
+	if (raw.size() < 3 || raw[0] != '"' || raw.find('\\') != std::string::npos) return false;
+	out = raw.substr(1, raw.size() - 2);
+	return true;
+}
+
 // Parses one flat JSON object such as {"t":"set","name":"...","value":<bool|number|string>} with keys in any order.
+// "names" may be an array of strings.
 bool parseMessage(const std::string& json, Message& out) {
 	size_t i = 0;
 	auto skipSpace = [&] {
@@ -187,24 +200,42 @@ bool parseMessage(const std::string& json, Message& out) {
 		return !raw.empty();
 	};
 
+	auto stringArray = [&](std::vector<std::string>& dest) {
+		if (!expect('[')) return false;
+		skipSpace();
+		if (i < json.size() && json[i] == ']') {
+			++i;
+			return true;
+		}
+		do {
+			std::string item;
+			std::string plain;
+			if (!token(item) || !plainString(item, plain)) return false;
+			dest.push_back(std::move(plain));
+		} while (expect(','));
+		return expect(']');
+	};
+
 	std::string key, raw;
 	if (!expect('{')) return false;
 	do {
-		if (!token(key) || key[0] != '"' || !expect(':') || !token(raw)) return false;
-		if (key == "\"t\"") out.type = raw;
-		if (key == "\"name\"") out.name = raw;
-		if (key == "\"value\"") out.value = raw;
+		if (!token(key) || key[0] != '"' || !expect(':')) return false;
+		skipSpace();
+		if (i < json.size() && json[i] == '[') {
+			std::vector<std::string> items;
+			if (!stringArray(items)) return false;
+			if (key == "\"names\"") out.names = std::move(items);
+		} else {
+			if (!token(raw)) return false;
+			if (key == "\"t\"") out.type = raw;
+			if (key == "\"e\"") out.event = raw;
+			if (key == "\"name\"") out.name = raw;
+			if (key == "\"value\"" || key == "\"v\"") out.value = raw;
+		}
 	} while (expect(','));
 	if (!expect('}')) return false;
 	skipSpace();
 	return i == json.size();
-}
-
-// A non-empty JSON string token with no escapes, without its quotes.
-bool plainString(const std::string& raw, std::string& out) {
-	if (raw.size() < 3 || raw[0] != '"' || raw.find('\\') != std::string::npos) return false;
-	out = raw.substr(1, raw.size() - 2);
-	return true;
 }
 
 bool toSet(const Message& msg, RemoteSet& out) {
@@ -503,9 +534,56 @@ bool RemoteSession::readFrames(Client& client) {
 			set.kind = msg.type == "\"load\"" ? RemoteKind::Load : RemoteKind::Folder;
 			std::lock_guard<std::mutex> lock(queueMutex);
 			inbox.push_back(std::move(set));
+		} else if (msg.type == "\"dub\"" && plainString(msg.name, set.name)) {
+			set.kind = RemoteKind::Dub;
+			std::lock_guard<std::mutex> lock(queueMutex);
+			inbox.push_back(std::move(set));
+		} else if (msg.type == "\"use\"") {
+			noteUse(msg.event, msg.name, msg.value);
+		} else if (msg.type == "\"page\"") {
+			set.kind = RemoteKind::Page;
+			set.names = std::move(msg.names);
+			std::lock_guard<std::mutex> lock(queueMutex);
+			inbox.push_back(std::move(set));
 		}
 	}
 	return true;
+}
+
+namespace {
+
+constexpr int kUsageNameMax = 64;
+constexpr int kUsageValueMax = 512;
+
+bool usageToken(const std::string& raw, std::string& plain, int maxLen) {
+	if (!plainString(raw, plain) || int(plain.size()) > maxLen) return false;
+	return plain.find_first_of("\r\n") == std::string::npos;
+}
+
+bool usageEvent(const std::string& event) {
+	return event == "set" || event == "hold" || event == "release" || event == "open" || event == "close" ||
+	       event == "chain" || event == "tap" || event == "act";
+}
+
+bool usageValue(const std::string& raw) {
+	if (raw.empty()) return true;
+	if (raw == "true" || raw == "false") return true;
+	if (raw[0] == '"') {
+		std::string plain;
+		return usageToken(raw, plain, kUsageValueMax);
+	}
+	return isJsonValue(raw);
+}
+
+} // namespace
+
+void RemoteSession::noteUse(const std::string& eventRaw, const std::string& nameRaw, const std::string& value) {
+	if (usagePath.empty()) return;
+	std::string event, name;
+	if (!usageToken(eventRaw, event, kUsageNameMax) || !usageEvent(event)) return;
+	if (!usageToken(nameRaw, name, kUsageNameMax) || !usageValue(value)) return;
+	if (!usage) usage = std::make_unique<UsageLog>(usagePath);
+	usage->write(event, name, value);
 }
 
 RemoteSession::PadState RemoteSession::pads() const {

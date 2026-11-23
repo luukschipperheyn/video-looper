@@ -1,6 +1,7 @@
 #include "io/SourceController.hpp"
 #include "io/FolderList.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 
@@ -33,6 +34,7 @@ void SourceController::resize(int width, int height) {
 }
 
 void SourceController::shutdown() {
+	pages.shutdown();
 	if (worker.joinable()) {
 		{
 			std::lock_guard<std::mutex> lock(jobMutex);
@@ -59,10 +61,17 @@ void SourceController::shutdown() {
 }
 
 bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus& params) {
+	bool presented = applyRequest(nowSeconds, params);
 	int srcKind = params.getInt("source_kind", (int)SourceKind::Shader);
 	bool justChoseStill = stillSourceCancelsLoad(srcKind, seenKind);
 	if (justChoseStill && load.busy()) load.cancel();
-	bool updatedPreviewTex = !justChoseStill && swapInLoaded(params);
+	swappedLoad = presented || (!justChoseStill && swapInLoaded(params));
+	if (!presented && swappedLoad && !dubOnSwap.empty()) {
+		if (params.getInt("source_kind") == (int)SourceKind::File && params.getString("file_path") == dubOnSwap)
+			beginCommit(nowSeconds, params, dubOnSwap);
+		dubOnSwap.clear();
+	}
+	bool updatedPreviewTex = swappedLoad;
 	ensureSource(params);
 
 	if (srcKind == (int)SourceKind::Webcam) {
@@ -100,8 +109,11 @@ bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus
 	return updatedPreviewTex;
 }
 
-void SourceController::triggerLoadRandomFile() {
-	commitRequested = true;
+void SourceController::triggerLoadRandomFile(ParamBus& params) {
+	maybeRescanFolder(params);
+	if (videoFiles.empty()) return;
+	size_t idx = static_cast<size_t>(std::chrono::steady_clock::now().time_since_epoch().count()) % videoFiles.size();
+	loadVideo(videoFiles[idx], params.getFloat("file_loop_start", 0.0f), params.getFloat("file_loop_length", 1.0f));
 }
 
 void SourceController::restartFileAtLoopStart() {
@@ -113,17 +125,37 @@ void SourceController::restartFileAtLoopStart() {
 void SourceController::loadPrevFile(ParamBus& params) {
 	maybeRescanFolder(params);
 	std::string pick = stepVideo(videoFiles, params.getString("file_path", ""), -1);
-	if (!pick.empty()) loadVideo(pick);
+	if (!pick.empty())
+		loadVideo(pick, params.getFloat("file_loop_start", 0.0f), params.getFloat("file_loop_length", 1.0f));
 }
 
 void SourceController::loadNextFile(ParamBus& params) {
 	maybeRescanFolder(params);
 	std::string pick = stepVideo(videoFiles, params.getString("file_path", ""), +1);
-	if (!pick.empty()) loadVideo(pick);
+	if (!pick.empty())
+		loadVideo(pick, params.getFloat("file_loop_start", 0.0f), params.getFloat("file_loop_length", 1.0f));
 }
 
-void SourceController::loadVideo(const std::string& path) {
-	startLoad(load.requestVideo(path));
+void SourceController::loadVideo(const std::string& path, float loopStart, float loopLength) {
+	queueVideo(path, loopStart, loopLength, false);
+}
+
+void SourceController::queueDub(const std::string& path, float loopStart, float loopLength) {
+	queueVideo(path, loopStart, loopLength, true);
+}
+
+void SourceController::primePage(const std::vector<std::string>& paths, float loopStart, float loopLength) {
+	pages.setPage(paths, loopStart, loopLength);
+}
+
+void SourceController::queueVideo(const std::string& path, float loopStart, float loopLength, bool dub) {
+	pendingVideo = {true, dub, path, loopStart, loopLength};
+}
+
+std::string SourceController::takeLoadFailure() {
+	std::string reason = load.takeFailure();
+	if (!reason.empty()) dubOnSwap.clear();
+	return reason;
 }
 
 void SourceController::loadWebcam(int index) {
@@ -154,14 +186,8 @@ bool SourceController::swapInLoaded(ParamBus& params) {
 		params.setInt("webcam_index", index);
 		seenWebcamIndex = index;
 	}
-	params.setBool("commit_active", false);
-	params.setString("commit_current_file", "");
-	ensureFrameTexture();
-	glBindTexture(GL_TEXTURE_2D, frameTex);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, spareW, spareH, 0, GL_BGRA, GL_UNSIGNED_BYTE, spareFrame.data());
-	glBindTexture(GL_TEXTURE_2D, 0);
-	frameW = spareW;
-	frameH = spareH;
+	cancelCommit(params);
+	presentFrame(spareFrame, spareW, spareH);
 	{
 		std::lock_guard<std::mutex> lock(jobMutex);
 		retire = true;
@@ -199,6 +225,10 @@ std::string SourceController::openSpare(const LoadRequest& request) {
 	if (!request.webcam) {
 		std::string name = std::filesystem::path(request.path).filename().string();
 		if (!spareFile.startFile(request.path)) return "could not open " + name;
+		float loopStart = std::clamp(request.loopStart, 0.0f, 1.0f);
+		float loopLen = std::clamp(request.loopLength, 0.0f, 1.0f);
+		float loopEnd = std::clamp(loopStart + loopLen, loopStart + 0.001f, 1.0f);
+		spareFile.setLoopRange(loopStart, loopEnd);
 		if (!spareFile.copyFrame(spareFrame, spareW, spareH)) return "no frame in " + name;
 		return {};
 	}
@@ -261,7 +291,8 @@ void SourceController::ensureSource(ParamBus& params) {
 		loadWebcam(index);
 	} else if (kindChanged && kind == (int)SourceKind::File && !fileActive) {
 		std::string p = params.getString("file_path", "");
-		if (!p.empty()) loadVideo(p);
+		if (!p.empty())
+			loadVideo(p, params.getFloat("file_loop_start", 0.0f), params.getFloat("file_loop_length", 1.0f));
 	}
 }
 
@@ -270,8 +301,7 @@ void SourceController::maybeRescanFolder(ParamBus& params) {
 	if (folder != lastVideosFolder) showFolder(folder, scanVideos(folder), params);
 }
 
-void SourceController::showFolder(const std::string& path, const std::vector<std::string>& videos,
-                                  ParamBus& params) {
+void SourceController::showFolder(const std::string& path, const std::vector<std::string>& videos, ParamBus& params) {
 	videoFiles = videos;
 	lastVideosFolder = path;
 	params.setString("videos_folder", path);
@@ -314,11 +344,82 @@ void SourceController::updateCommitProgress(bool updatedPreviewTex, ParamBus& pa
 		++commitFramesWritten;
 		return;
 	}
-	if (!params.getBool("file_loop", false)) {
-		params.setBool("commit_active", false);
-		params.setBool("commit_random", false);
-		params.setBool("file_loop", savedLoopSetting);
-		params.setString("commit_current_file", "");
-		committing = false;
+	bool readerEnded = !fileActive || fileSrc.ended();
+	if (commitReachedEnd(false, params.getBool("file_loop", false), readerEnded)) cancelCommit(params);
+}
+
+bool SourceController::applyRequest(double nowSeconds, ParamBus& params) {
+	if (!pendingVideo.on) return false;
+	PendingVideo req = pendingVideo;
+	pendingVideo.on = false;
+	if (req.dub)
+		dubOnSwap = req.path;
+	else
+		dubOnSwap.clear();
+	if (!installReady(req.path, req.loopStart, req.loopLength, params)) {
+		startLoad(load.requestVideo(req.path, req.loopStart, req.loopLength));
+		return false;
 	}
+	if (req.dub) beginCommit(nowSeconds, params, req.path);
+	dubOnSwap.clear();
+	return true;
+}
+
+bool SourceController::installReady(const std::string& path, float loopStart, float loopLength, ParamBus& params) {
+	AVFFileSource ready;
+	std::vector<unsigned char> frame;
+	int width = 0;
+	int height = 0;
+	if (!pages.take(path, loopStart, loopLength, ready, frame, width, height)) return false;
+	load.cancel();
+	cancelCommit(params);
+	if (webcamActive) {
+		webcam.stop();
+		webcamActive = false;
+	}
+	if (fileActive) pages.retire(fileSrc);
+	fileSrc.swap(ready);
+	fileActive = true;
+	seenKind = (int)SourceKind::File;
+	params.setInt("source_kind", (int)SourceKind::File);
+	params.setString("file_path", path);
+	presentFrame(frame, width, height);
+	return true;
+}
+
+void SourceController::beginCommit(double nowSeconds, ParamBus& params, const std::string& path) {
+	if (!committing) savedLoopSetting = params.getBool("file_loop", true);
+	params.setString("commit_current_file", path);
+	params.setBool("commit_active", true);
+	params.setBool("commit_random", false);
+	params.setBool("file_loop", false);
+	params.setBool("file_paused", false);
+	if (fileActive) {
+		fileSrc.setLoop(false);
+		fileSrc.setPaused(false);
+	}
+	commitFramesWritten = 0;
+	committing = true;
+	commitStartTime = nowSeconds;
+	commitNominalFps = fileActive ? fileSrc.nominalFps() : 0.0f;
+	commitRequested = false;
+}
+
+void SourceController::cancelCommit(ParamBus& params) {
+	if (!params.getBool("commit_active", false) && !committing) return;
+	params.setBool("commit_active", false);
+	params.setBool("commit_random", false);
+	params.setString("commit_current_file", "");
+	params.setBool("file_loop", savedLoopSetting);
+	committing = false;
+}
+
+void SourceController::presentFrame(const std::vector<unsigned char>& bgra, int width, int height) {
+	if (width <= 0 || height <= 0 || bgra.empty()) return;
+	ensureFrameTexture();
+	glBindTexture(GL_TEXTURE_2D, frameTex);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, bgra.data());
+	glBindTexture(GL_TEXTURE_2D, 0);
+	frameW = width;
+	frameH = height;
 }
