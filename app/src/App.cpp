@@ -37,6 +37,32 @@ static void glfwErrorCallback(int code, const char* desc) {
 	std::fprintf(stderr, "GLFW error %d: %s\n", code, desc);
 }
 
+// Same placement video_fit.frag uses. center and half are in frame pixels.
+struct SourcePlacement {
+	float centerX;
+	float centerY;
+	float halfX;
+	float halfY;
+	float rot;
+};
+
+static SourcePlacement sourcePlacement(int frameW, int frameH, int srcW, int srcH, const ParamBus& params) {
+	bool aspect = params.getBool("video_aspect", true);
+	float sx = params.getFloat("video_sx", 1.0f);
+	float sy = aspect ? sx : params.getFloat("video_sy", 1.0f);
+	float baseW = static_cast<float>(frameW);
+	float baseH = static_cast<float>(frameH);
+	if (aspect) {
+		ContainRect fitted = containRect(srcW, srcH, frameW, frameH);
+		baseW = static_cast<float>(fitted.w);
+		baseH = static_cast<float>(fitted.h);
+	}
+	float tx = params.getFloat("video_tx", 0.0f);
+	float ty = params.getFloat("video_ty", 0.0f);
+	return {(0.5f + tx) * frameW, (0.5f + ty) * frameH, baseW * 0.5f * sx, baseH * 0.5f * sy,
+	        params.getFloat("video_rot", 0.0f)};
+}
+
 int App::run() {
 	glfwSetErrorCallback(glfwErrorCallback);
 	if (!glfwInit()) {
@@ -432,19 +458,7 @@ int App::run() {
 		} else if ((srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
 		           source.frameTexture() != 0 && source.frameWidth() > 0 && source.frameHeight() > 0) {
 			bool bars = params.getBool("video_bars", true);
-			bool aspect = params.getBool("video_aspect", true);
-			float sx = params.getFloat("video_sx", 1.0f);
-			float sy = aspect ? sx : params.getFloat("video_sy", 1.0f);
-			float tx = params.getFloat("video_tx", 0.0f);
-			float ty = params.getFloat("video_ty", 0.0f);
-			float rot = params.getFloat("video_rot", 0.0f);
-			float baseW = static_cast<float>(fbw);
-			float baseH = static_cast<float>(fbh);
-			if (aspect) {
-				ContainRect fitted = containRect(source.frameWidth(), source.frameHeight(), fbw, fbh);
-				baseW = static_cast<float>(fitted.w);
-				baseH = static_cast<float>(fitted.h);
-			}
+			SourcePlacement placed = sourcePlacement(fbw, fbh, source.frameWidth(), source.frameHeight(), params);
 			glBindFramebuffer(GL_FRAMEBUFFER, source.getPreviewFbo());
 			glViewport(0, 0, fbw, fbh);
 			shaderFit.use();
@@ -452,9 +466,9 @@ int App::run() {
 			glBindTexture(GL_TEXTURE_2D, source.frameTexture());
 			shaderFit.setUniform("uTex", 0);
 			shaderFit.setUniform("uFrame", static_cast<float>(fbw), static_cast<float>(fbh));
-			shaderFit.setUniform("uCenter", (0.5f + tx) * fbw, (0.5f + ty) * fbh);
-			shaderFit.setUniform("uHalf", baseW * 0.5f * sx, baseH * 0.5f * sy);
-			shaderFit.setUniform("uRot", rot);
+			shaderFit.setUniform("uCenter", placed.centerX, placed.centerY);
+			shaderFit.setUniform("uHalf", placed.halfX, placed.halfY);
+			shaderFit.setUniform("uRot", placed.rot);
 			shaderFit.setUniform("uOutside", bars ? 1.0f : 0.0f);
 			quad.draw();
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -677,6 +691,16 @@ int App::run() {
 			float p3 = params.getFloat("source_fx_param3", 0.0f);
 			if (fxStampsCopies(mode)) p3 = static_cast<float>(params.getInt("source_fx_count", 4));
 			int repeatBlend = params.getInt("source_fx_repeat_blend", 6);
+			bool whole = fxStampsCopies(mode) &&
+			             (srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
+			             source.frameTexture() != 0 && source.frameWidth() > 0 && source.frameHeight() > 0;
+			if (whole) {
+				SourcePlacement placed = sourcePlacement(fbw, fbh, source.frameWidth(), source.frameHeight(), params);
+				sourceFx.setWholeStamp(source.frameTexture(), placed.centerX, placed.centerY, placed.halfX,
+				                       placed.halfY, placed.rot);
+			} else {
+				sourceFx.setWholeStamp(0, 0, 0, 0, 0, 0);
+			}
 			liveSource = sourceFx.process(fbw, fbh, liveSource, liveSource, 0.0f, mode, p1, p2, p3, repeatBlend, quad);
 		}
 

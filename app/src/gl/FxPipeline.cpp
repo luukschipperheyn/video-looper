@@ -5,7 +5,8 @@
 
 #include <cmath>
 
-FxPipeline::FxPipeline() : w(0), h(0), postFront(0) {
+FxPipeline::FxPipeline() : w(0), h(0), wholeTex(0), wholeCenterX(0), wholeCenterY(0), wholeHalfX(0), wholeHalfY(0),
+                             wholeRot(0), postFront(0) {
 	postTex[0] = 0;
 	postTex[1] = 0;
 	postFbo[0] = 0;
@@ -89,6 +90,15 @@ void FxPipeline::applyReload(const FxReload& reload) {
 	if (reload.vertex || reload.repeat) shaderRepeat.loadFromFiles(vsPath, repeatFragPath);
 }
 
+void FxPipeline::setWholeStamp(GLuint tex, float centerX, float centerY, float halfX, float halfY, float rot) {
+	wholeTex = tex;
+	wholeCenterX = centerX;
+	wholeCenterY = centerY;
+	wholeHalfX = halfX;
+	wholeHalfY = halfY;
+	wholeRot = rot;
+}
+
 GLuint FxPipeline::process(int viewportW, int viewportH, GLuint ringTex0, GLuint ringTex1, float baseMix, int fxMode,
                            float p1, float p2, float p3, int repeatBlend, FullscreenQuad& quad) {
 	int postWrite = 1 - postFront;
@@ -116,6 +126,15 @@ GLuint FxPipeline::process(int viewportW, int viewportH, GLuint ringTex0, GLuint
 		shaderRepeat.setUniform("uCount", static_cast<float>(copies));
 		shaderRepeat.setUniform("uBlend", repeatBlend);
 		shaderRepeat.setUniform("uGrid", grid ? 1 : 0);
+		bool whole = wholeTex != 0;
+		glActiveTexture(GL_TEXTURE2);
+		glBindTexture(GL_TEXTURE_2D, whole ? wholeTex : ringTex0);
+		shaderRepeat.setUniform("uVideo", 2);
+		shaderRepeat.setUniform("uWhole", whole ? 1 : 0);
+		shaderRepeat.setUniform("uFrame", static_cast<float>(viewportW), static_cast<float>(viewportH));
+		shaderRepeat.setUniform("uCenter", wholeCenterX, wholeCenterY);
+		shaderRepeat.setUniform("uHalf", wholeHalfX, wholeHalfY);
+		shaderRepeat.setUniform("uRot", wholeRot);
 		quad.draw();
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		postFront = postWrite;

@@ -137,7 +137,7 @@ File and webcam frames are drawn into the Source, then that image is what an Ove
 
 ## FX
 
-Two chains, each an `FxPipeline`. **Program FX** (`fx_enabled`) runs on the present path when not cueing or overdubbing. **Source FX** (`source_fx_enabled`) runs on the framed Source; Cue, the Audition, an Overdub, and the inset preview all use that image. Source FX does not change the Loop until an Overdub writes it. Each chain keeps its own previous frame, so feedback on one does not leak into the other. Source FX adds two full-frame targets, not ring frames.
+Two chains, each an `FxPipeline`. **Program FX** (`fx_enabled`) runs on the present path when not cueing or overdubbing. **Source FX** (`source_fx_enabled`) runs on the framed Source; Cue, the Audition, an Overdub, and the inset preview all use that image. Source FX Repeat and Grid are the exception: they stamp the whole Video or webcam picture at its placement, so a picture that runs past the frame is not cropped before it is repeated. The frame still clips whatever falls outside it. Source FX does not change the Loop until an Overdub writes it. Each chain keeps its own previous frame, so feedback on one does not leak into the other. Source FX adds two full-frame targets, not ring frames.
 
 | Mode | Name | Notes |
 |------|------|--------|

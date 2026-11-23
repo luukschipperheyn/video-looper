@@ -37,6 +37,10 @@ public:
 	FxReload hotReload(HotReload& hot);
 	void applyReload(const FxReload& reload);
 
+	// Repeat and Grid on a Video or webcam stamp this whole picture. tex 0 repeats the framed image instead.
+	// center and half are in frame pixels, the same placement video_fit.frag uses.
+	void setWholeStamp(GLuint tex, float centerX, float centerY, float halfX, float halfY, float rot);
+
 	// Render one FX frame. Returns the texture containing the result for this frame.
 	GLuint process(int viewportW, int viewportH, GLuint ringTex0, GLuint ringTex1, float baseMix, int fxMode, float p1,
 	               float p2, float p3, int repeatBlend, FullscreenQuad& quad);
@@ -51,6 +55,8 @@ private:
 
 	int w;
 	int h;
+	GLuint wholeTex;
+	float wholeCenterX, wholeCenterY, wholeHalfX, wholeHalfY, wholeRot;
 	GLuint postTex[2];
 	GLuint postFbo[2];
 	int postFront;

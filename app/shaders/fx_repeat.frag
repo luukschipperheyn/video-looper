@@ -4,18 +4,40 @@ in vec2 vUv;
 
 uniform sampler2D uTex0;
 uniform sampler2D uTex1;
+uniform sampler2D uVideo; // whole Video or webcam, before the frame clips it
 uniform float uBaseMix;
 uniform vec2 uStep;    // UV step from app/src/util/Repeat.hpp
 uniform vec2 uStep2;   // perpendicular step; used when uGrid is 1
 uniform float uCount;  // extra copies; the original is sample 0. Grid: per axis, max 6
 uniform int uBlend;    // same modes as an Overdub
 uniform int uGrid;     // 0 = one axis, 1 = both axes
+uniform int uWhole;    // 1 = stamp the whole picture at its placement; matches video_fit.frag
+uniform vec2 uFrame;
+uniform vec2 uCenter;
+uniform vec2 uHalf;
+uniform float uRot;
 
 vec3 tap(vec2 uv) {
     if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return vec3(0.0);
     vec3 a = texture(uTex0, uv).rgb;
     vec3 b = texture(uTex1, uv).rgb;
     return mix(a, b, clamp(uBaseMix, 0.0, 1.0));
+}
+
+// The frame clips the result, not the picture. shift is the copy offset in UV.
+vec3 whole(vec2 shift) {
+    vec2 p = vUv * uFrame - (uCenter + shift * uFrame);
+    float c = cos(uRot);
+    float s = sin(uRot);
+    p = vec2(c * p.x + s * p.y, -s * p.x + c * p.y);
+    vec2 halfv = max(uHalf, vec2(1e-4));
+    if (abs(p.x) > halfv.x || abs(p.y) > halfv.y) return vec3(0.0);
+    return texture(uVideo, p / halfv * 0.5 + 0.5).rgb;
+}
+
+vec3 stamp(vec2 shift) {
+    if (uWhole == 1) return whole(shift);
+    return tap(vUv - shift);
 }
 
 float coverOf(vec3 c) {
@@ -80,14 +102,14 @@ void main() {
         for (int j = 0; j <= 6; ++j) {
             if (j <= copies) {
                 for (int i = 0; i <= 6; ++i) {
-                    if (i <= copies) acc = lay(acc, tap(vUv - uStep * float(i) - uStep2 * float(j)), uBlend);
+                    if (i <= copies) acc = lay(acc, stamp(uStep * float(i) + uStep2 * float(j)), uBlend);
                 }
             }
         }
     } else {
         int copies = int(clamp(uCount, 0.0, 16.0) + 0.5);
         for (int i = 0; i <= 16; ++i) {
-            if (i <= copies) acc = lay(acc, tap(vUv - uStep * float(i)), uBlend);
+            if (i <= copies) acc = lay(acc, stamp(uStep * float(i)), uBlend);
         }
     }
     oColor = vec4(acc, 1.0);
