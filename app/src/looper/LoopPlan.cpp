@@ -1,63 +1,92 @@
 #include "looper/LoopPlan.hpp"
 
 #include <cmath>
+#include <utility>
+
+namespace {
+
+struct Draft {
+	LoopPlan& plan;
+	BankWrite bank;
+
+	void add(int from, int to, SlotAction action) {
+		for (int slot = from; slot <= to; ++slot) bank.fills.push_back(SlotFill{slot, action});
+	}
+
+	void flush(bool swap) {
+		if (bank.fills.empty() && !swap) return;
+		bank.swap = swap;
+		plan.banks.push_back(std::move(bank));
+		bank = {};
+	}
+};
+
+SlotAction actionFor(const LoopWish& wish) {
+	if (wish.bake) return SlotAction::Bake;
+	if (wish.overdub) return SlotAction::Overdub;
+	return SlotAction::Copy;
+}
+
+}
 
 LoopPlan planLoop(LoopMark& mark, int frames, float dtSeconds, float readFps, const LoopWish& wish) {
 	LoopPlan plan;
 	const int n = frames;
 	if (n <= 0) return plan;
-	if (static_cast<int>(mark.backWritten.size()) != n) mark.backWritten.assign(n, 0);
 
-	float newRead = mark.readFrame + readFps * dtSeconds;
-	int wraps = 0;
-	if (newRead >= static_cast<float>(n)) {
-		wraps = static_cast<int>(std::floor(newRead / static_cast<float>(n)));
-		newRead = std::fmod(newRead, static_cast<float>(n));
-		mark.lastWriteIdx = -1;
-	}
 	float wrapped = mark.readFrame;
 	if (wrapped < 0.f) wrapped += static_cast<float>(n);
 	const int idx0 = static_cast<int>(std::floor(wrapped)) % n;
 	plan.read.idx0 = idx0;
 	plan.read.idx1 = (idx0 + 1) % n;
 	plan.read.mix = wrapped - std::floor(wrapped);
-	mark.readFrame = newRead;
 
-	if (wish.cue) return plan;
-
-	int startIdx;
-	int steps;
-	if (mark.lastWriteIdx < 0) {
-		startIdx = idx0;
-		steps = 1;
-	} else {
-		startIdx = (mark.lastWriteIdx + 1) % n;
-		const int diff = (idx0 - mark.lastWriteIdx + n) % n;
-		if (diff == 0)
-			steps = wraps > 0 ? n : 0;
-		else
-			steps = diff;
+	float end = mark.readFrame + readFps * dtSeconds;
+	int crossings = 0;
+	if (end >= static_cast<float>(n)) {
+		crossings = static_cast<int>(std::floor(end / static_cast<float>(n)));
+		end = std::fmod(end, static_cast<float>(n));
 	}
+	mark.readFrame = end;
 
-	const SlotAction action =
-		wish.bake ? SlotAction::Bake : wish.overdub ? SlotAction::Overdub : SlotAction::Copy;
-	const bool painting = wish.overdub || wish.bake;
-	BankWrite bank;
-	for (int s = 0; s < steps; ++s) {
-		const int slot = (startIdx + s) % n;
-		if (!painting && mark.backWritten[slot]) continue;
-		bank.fills.push_back(SlotFill{slot, action});
-		mark.backWritten[slot] = 1;
-	}
-	mark.lastWriteIdx = idx0;
-
-	if (wraps <= 0) {
-		if (!bank.fills.empty()) plan.banks.push_back(bank);
+	if (wish.cue) {
+		mark.owedSwaps += crossings;
 		return plan;
 	}
-	bank.swap = true;
-	plan.banks.push_back(bank);
-	for (int extra = 1; extra < wraps; ++extra) plan.banks.push_back(BankWrite{.swap = true});
-	mark.backWritten.assign(n, 0);
+
+	Draft draft{plan, {}};
+	const SlotAction action = actionFor(wish);
+
+	if (mark.owedSwaps > 0) {
+		if (mark.nextSlot < n) draft.add(mark.nextSlot, n - 1, SlotAction::Copy);
+		draft.flush(true);
+		for (int extra = 1; extra < mark.owedSwaps; ++extra) {
+			draft.add(0, n - 1, SlotAction::Copy);
+			draft.flush(true);
+		}
+		mark.owedSwaps = 0;
+		mark.nextSlot = 0;
+		if (plan.read.idx0 > 0) {
+			draft.add(0, plan.read.idx0 - 1, SlotAction::Copy);
+			mark.nextSlot = plan.read.idx0;
+		}
+	}
+
+	if (mark.nextSlot <= plan.read.idx0) {
+		draft.add(mark.nextSlot, plan.read.idx0, action);
+		mark.nextSlot = plan.read.idx0 + 1;
+	}
+
+	if (crossings > 0) {
+		if (mark.nextSlot < n) draft.add(mark.nextSlot, n - 1, action);
+		draft.flush(true);
+		for (int extra = 1; extra < crossings; ++extra) {
+			draft.add(0, n - 1, action);
+			draft.flush(true);
+		}
+		mark.nextSlot = 0;
+	} else {
+		draft.flush(false);
+	}
 	return plan;
 }

@@ -3,120 +3,80 @@
 #include <cmath>
 #include "imgui.h"
 
-LooperEngine::LooperEngine(RingBuffer& ringBuffer)
-	: ring(ringBuffer), fbWidth(0), fbHeight(0), readFrame(0.0f), lastWriteIdx(-1) {}
+LooperEngine::LooperEngine(RingBuffer& ringBuffer) : ring(ringBuffer) {}
 
-void LooperEngine::init(int width, int height) {
-	fbWidth = width;
-	fbHeight = height;
-	backWritten.assign(ring.size(), 0);
+void LooperEngine::init() {
+	mark = {};
 }
 
-void LooperEngine::resize(int width, int height) {
-	fbWidth = width;
-	fbHeight = height;
-	backWritten.assign(ring.size(), 0);
-	lastWriteIdx = -1;
+void LooperEngine::resize() {
+	const float read = mark.readFrame;
+	mark = {};
+	mark.readFrame = read;
 }
 
-ReadState LooperEngine::advanceRead(float dtSeconds, float readFps) {
-	int n = ring.size();
-	float advance = readFps * dtSeconds;
-	float newRead = readFrame + advance;
-	int wraps = 0;
-	if (n > 0 && newRead >= static_cast<float>(n)) {
-		wraps = static_cast<int>(std::floor(newRead / static_cast<float>(n)));
-		newRead = std::fmod(newRead, static_cast<float>(n));
-		lastWriteIdx = -1;
-	}
-	float wrappedFrame = readFrame;
-	if (wrappedFrame < 0.0f && n > 0) wrappedFrame += n;
-	int idx0 = 0, idx1 = 0;
-	float mixf = 0.0f;
-	if (n > 0) {
-		idx0 = static_cast<int>(std::floor(wrappedFrame)) % n;
-		idx1 = (idx0 + 1) % n;
-		mixf = wrappedFrame - std::floor(wrappedFrame);
-	}
-	readFrame = newRead;
-	return {idx0, idx1, mixf, wraps};
-}
+void LooperEngine::paint(const SlotFill& fill, ShaderProgram& shaderBlit, ShaderProgram& shaderBlendTwo,
+                         FullscreenQuad& quad, const LoopWrite& write) {
+	const int width = ring.getWidth();
+	const int height = ring.getHeight();
+	if (width <= 0 || height <= 0) return;
 
-void LooperEngine::writeAndSwap(ShaderProgram& shaderBlit, ShaderProgram& shaderBlendTwo, FullscreenQuad& quad,
-                                int idx0, int wraps, const LoopWrite& write) {
-	const int fbw = fbWidth;
-	const int fbh = fbHeight;
-	const bool recordingActive = write.overdub;
-	const bool fxCommit = write.replaceWith != 0;
-	int n = ring.size();
-	if (n <= 0) return;
+	ring.bindWriteFboAt(fill.index);
+	glViewport(0, 0, width, height);
 
-	int steps;
-	int startIdx;
-	if (lastWriteIdx < 0) {
-		startIdx = idx0;
-		steps = 1;
+	if (fill.action == SlotAction::Bake) {
+		shaderBlit.use();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, write.replaceWith);
+		shaderBlit.setUniform("uTex", 0);
+		quad.draw();
+	} else if (fill.action == SlotAction::Overdub) {
+		shaderBlendTwo.use();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, ring.textureAt(fill.index));
+		shaderBlendTwo.setUniform("uTex0", 0);
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, write.image);
+		shaderBlendTwo.setUniform("uTex1", 1);
+		shaderBlendTwo.setUniform("uMix", write.opacity);
+		shaderBlendTwo.setUniform("uMode", write.blendMode);
+		quad.draw();
 	} else {
-		startIdx = (lastWriteIdx + 1) % n;
-		int diff = (idx0 - lastWriteIdx + n) % n;
-		if (diff == 0) {
-			steps = (wraps > 0) ? n : 0;
-		} else {
-			steps = diff;
-		}
+		shaderBlit.use();
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, ring.textureAt(fill.index));
+		shaderBlit.setUniform("uTex", 0);
+		quad.draw();
 	}
+	ring.unbindWriteFbo();
+}
 
-	for (int s = 0; s < steps; ++s) {
-		int wi = (startIdx + s) % n;
+LoopPicture LooperEngine::step(float dtSeconds, float readFps, ShaderProgram& shaderBlit, ShaderProgram& shaderBlendTwo,
+                               FullscreenQuad& quad, const LoopWrite& write) {
+	LoopWish wish;
+	wish.cue = write.cue;
+	wish.overdub = write.overdub;
+	wish.bake = write.bake;
+	const LoopPlan plan = planLoop(mark, ring.size(), dtSeconds, readFps, wish);
 
-		bool doCopy = !recordingActive && !backWritten[wi];
-		bool doWrite = recordingActive || doCopy;
-		if (!doWrite) continue;
+	LoopPicture picture;
+	picture.idx0 = plan.read.idx0;
+	picture.idx1 = plan.read.idx1;
+	picture.mix = plan.read.mix;
+	picture.tex0 = ring.textureAt(picture.idx0);
+	picture.tex1 = ring.textureAt(picture.idx1);
 
-		ring.bindWriteFboAt(wi);
-		glViewport(0, 0, fbw, fbh);
-
-		if (fxCommit) {
-			shaderBlit.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, write.replaceWith);
-			shaderBlit.setUniform("uTex", 0);
-			quad.draw();
-		} else if (recordingActive) {
-			shaderBlendTwo.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, ring.textureAt(wi));
-			shaderBlendTwo.setUniform("uTex0", 0);
-			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, write.image);
-			shaderBlendTwo.setUniform("uTex1", 1);
-			shaderBlendTwo.setUniform("uMix", write.opacity);
-			shaderBlendTwo.setUniform("uMode", write.blendMode);
-			quad.draw();
-		} else {
-			shaderBlit.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, ring.textureAt(wi));
-			shaderBlit.setUniform("uTex", 0);
-			quad.draw();
-		}
-		ring.unbindWriteFbo();
-
-		backWritten[wi] = 1;
+	for (const BankWrite& bank : plan.banks) {
+		for (const SlotFill& fill : bank.fills) paint(fill, shaderBlit, shaderBlendTwo, quad, write);
+		if (bank.swap) ring.swapBanks();
 	}
-
-	lastWriteIdx = idx0;
-
-	for (int i = 0; i < wraps; ++i) {
-		ring.swapBanks();
-		backWritten.assign(n, 0);
-	}
+	return picture;
 }
 
 void LooperEngine::drawHeadsOverlay(int viewportW, int viewportH) const {
 	int nFrames = ring.size();
 	if (nFrames <= 0) return;
-	float rf = std::fmod(readFrame, static_cast<float>(nFrames));
+	float rf = std::fmod(mark.readFrame, static_cast<float>(nFrames));
 	if (rf < 0.0f) rf += nFrames;
 	float readNorm = rf / static_cast<float>(nFrames);
 	float writeNorm = static_cast<float>(ring.getWriteIndex()) / static_cast<float>(nFrames);

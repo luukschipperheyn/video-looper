@@ -28,8 +28,8 @@ struct LoopWish {
 
 struct LoopMark {
 	float readFrame = 0.f;
-	int lastWriteIdx = -1;
-	std::vector<char> backWritten;
+	int nextSlot = 0;
+	int owedSwaps = 0;
 };
 
 struct LoopPlan {

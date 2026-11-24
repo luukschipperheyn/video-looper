@@ -44,7 +44,8 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/ui/ParamBus.*` | The current value of every control; a fresh bus holds the table's defaults |
 | `app/src/looper/OverdubGate.*` | Decides per frame whether the Loop is written, with which image, blend mode and opacity: holds, ADSR, release tail, Erase, Cue, Commit bypass. Pure |
 | `app/src/buffer/RingBuffer.*` | Dual-bank GPU textures/FBOs (`frameCount` frames × 2 banks); front = read, back = write |
-| `app/src/looper/LooperEngine.*` | Read-head advance, multi-slot write/copy to back bank, bank swap on wrap, playhead overlay |
+| `app/src/looper/LoopPlan.*` | Pure frame of the Loop: read head, which back-bank slots are filled (Overdub, copy forward, or Bake FX), and when the banks swap |
+| `app/src/looper/LooperEngine.*` | Runs that plan against the banks, then the playhead overlay |
 | `app/src/gl/Compositor.*` | Draws the framed Source, the Loop as read, and the Audition; owns the Source and Audition targets, the picture texture (`PicturePort`), the Draw texture, and the export readback |
 | `app/src/io/SourceController.*` | The life of the Source: ask for a Video or webcam, open it off the main thread, swap it in with its first frame, **Commit** a Video until it ends. No GL or AVFoundation; decoders come from a `DecoderFactory` and pictures go to a `PicturePort`. Tested with fake decoders in `app/tests/source_controller_test.cpp` |
 | `app/src/io/PageCache.*` | Opens the Videos on the Web interface's current page ahead of a tap |
@@ -78,15 +79,14 @@ Order inside `App::run`’s `while`, each frame:
 6. **Disk record edge** — start/stop `AVFRecorder` from `record_enabled` + `record_path`  
 7. **`source.tick`** — webcam/file upload into the Compositor's picture texture; the `Compositor` then draws Shader, Black, or the placed picture as the framed Source  
 8. **Clock / Link** — tempo → `readFps` (optionally coupled to BPM)  
-9. **`looper.advanceRead`** — fractional read head → `idx0/idx1/mix/wraps`  
-10. **Web interface messages, then the Overdub gate** — each drained message goes through `applyRemote` to the `Instrument`; `OverdubGate::step` takes the holds and returns this frame's write: overdub or not, opacity, image, blend mode, Cue  
-11. **`writeAndSwap`** unless **cue** (cue = monitor only, no ring write)  
-12. **Present** — the Audition (`Compositor::audition`) while cueing or overdubbing, else Program FX or the plain loop  
-13. **Preview audition** — the same `Compositor::audition` call at full opacity when the preview is visible and idle, or Export is on  
-14. **Disk capture** — if recording: `Compositor::readAudition` (BGRA, top row first) → `appendBGRAFrame` at `record_fps`  
-15. **Inset / separate preview** blit of the Audition texture (or back-bank debug)  
-16. **ImGui** ControlsPanel + optional playhead overlay  
-17. **Swap** buffers (+ ImGui viewports)
+9. **Web interface messages, then the Overdub gate** — each drained message goes through `applyRemote` to the `Instrument`; `OverdubGate::step` takes the holds and returns this frame's write: overdub or not, opacity, image, blend mode, Cue  
+10. **`looper.step`** — one call advances the read head, plans every back-bank fill and any swap, then does the texture work. Cue is decided here: the plan writes nothing and does not swap. The picture's textures are the front bank from before a swap  
+11. **Present** — the Audition (`Compositor::audition`) while cueing or overdubbing, else Program FX or the plain loop  
+12. **Preview audition** — the same `Compositor::audition` call at full opacity when the preview is visible and idle, or Export is on  
+13. **Disk capture** — if recording: `Compositor::readAudition` (BGRA, top row first) → `appendBGRAFrame` at `record_fps`  
+14. **Inset / separate preview** blit of the Audition texture (or back-bank debug)  
+15. **ImGui** ControlsPanel + optional playhead overlay  
+16. **Swap** buffers (+ ImGui viewports)
 
 Ring size is fixed at **120** frames at current framebuffer resolution (`ring.setup(fbw, fbh, 120)`).
 
@@ -122,18 +122,21 @@ File and webcam frames are drawn into the Source, then that image is what an Ove
 
 ## Looper / ring
 
-**RingBuffer** — two banks of `N` RGBA8 textures+FBOs. Reads always from **front**; writes bind **back** at index. `swapBanks()` flips front/back (called once per read-head wrap count from `LooperEngine`).
+The Loop is one step per frame (`LooperEngine::step`). `planLoop` is the pure part: it advances the read head, says which slot is on screen, and lists the back-bank fills and the swaps. The engine then blits or blends those slots. App does not hand the read indices back in.
 
-**Read** (`advanceRead`): advances `readFrame` by `readFps * dt`; returns floor/ceil indices + fractional mix; counts wraps when crossing `N`.
+**RingBuffer** — two banks of `N` RGBA8 textures+FBOs. Reads use the **front** bank. Writes bind the **back** bank. `swapBanks()` flips them when the plan says the pass is complete.
 
-**Write** (`writeAndSwap`):
+**Read.** The head moves by `readFps * dt`. The picture is the slot the head was on at the start of the step (`idx0`), mixed toward the next slot (`idx1`). Those textures are taken from the front bank before any swap in the same step.
 
-- Fills back-bank slots from last write index up to current `idx0` (handles wrap-induced full-ring rewrite)  
-- If **recording** (or commit): blend front tex at slot with **preview** (or blit FX prev if `fx_commit`) using `record_blend_mode` + `writeOpacity`  
-- If not recording: **copy** front → back once per slot (`backWritten` gate) so the back bank stays a coherent next loop  
-- After processing, `lastWriteIdx = idx0`; for each wrap, `swapBanks()` and clear `backWritten`
+**Write.** Each back-bank slot is filled once per pass:
 
-**Cue** (`C` held or `cue_active`): presents audition (loop + live overlay) but **skips** `writeAndSwap`.
+- **Bake FX** replaces the slot with the Program FX picture  
+- **Overdub** blends the Source over the front slot (Erase blends black; a Commit is an Overdub at full opacity)  
+- otherwise the slot is **copied forward** from the front bank, so the next pass keeps the Loop  
+
+On the frame the head crosses the loop point, the plan fills every slot of that pass that is not filled yet, including the slots past the one on screen, then swaps. A frame that jumps more than one pass fills each of those passes once and swaps once per pass. The slots the head has already entered in the new pass are filled on later frames.
+
+**Cue** (`C` held, latched Cue, or the Cue pad): the head still advances, and the plan fills nothing and does not swap, so the Loop on screen is unchanged. A loop point crossed during Cue is owed. When Cue ends, the unfilled slots of that pass are copied forward and the owed swap happens. The banks are a complete Loop again.
 
 **Record gate**: Latch (`arm_record`) **or** Space held **or** the Overdub pad **or** Erase. With the envelope on, `shouldRecordOnRelease` latches so release still writes while the envelope is above 0. Cue clears that latch while active.
 
@@ -257,8 +260,8 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 
 ## Invariants & edge cases
 
-1. **Bank coherence** — non-recording path copies unread-back slots so after a wrap the new front is a complete loop; recording overdubs into those slots.  
-2. **Cue never mutates the ring** — audition only.  
+1. **Bank coherence** — every back-bank slot is filled once per pass before the banks swap, including slots the wrap frame passes and slots Cue skipped. Copy keeps the Loop; Overdub and Bake FX replace it.  
+2. **Cue never mutates the Loop** — the plan writes nothing and does not swap while Cue is on.  
 3. **Commit** forces recording-active writes at opacity 1 and bypasses ADSR. The Video plays once for that Commit, and `file_loop` and `file_paused` stay the performer's. It ends when the reader is exhausted. A tick that holds the current frame does not end it.  
 4. **Resize invalidates** ring contents (full `setup` destroy/recreate) and aborts disk recording. Accepted for now by the owner; don't change it as a side effect.  
 5. **Read interpolation** — present mixes `idx0`/`idx1` with `gain_mix`; write path uses integer slot indices.  
@@ -275,8 +278,9 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 | What a control is, its default and range | `app/src/control/ControlTable.hpp` |
 | What setting a control or pressing a button does | `app/src/control/Instrument.cpp` |
 | When the Loop is written and with what | `app/src/looper/OverdubGate.cpp` |
+| Which slots a frame fills, and when the banks swap | `app/src/looper/LoopPlan.cpp` |
 | Source, Audition, export readback | `app/src/gl/Compositor.cpp` |
-| Ring write/swap math | `app/src/looper/LooperEngine.cpp` |
+| Applying that plan to the banks | `app/src/looper/LooperEngine.cpp` |
 | Dual-bank storage | `app/src/buffer/RingBuffer.cpp` |
 | Live UI | `app/src/ui/ControlsPanel.cpp` |
 | Saved setup | `app/src/setup/SetupStore.cpp` |

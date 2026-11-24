@@ -111,7 +111,7 @@ int App::run() {
 	RingBuffer ring;
 	ring.setup(fbw, fbh, 120);
 	LooperEngine looper(ring);
-	looper.init(fbw, fbh);
+	looper.init();
 	const std::string shaderDir = SHADER_DIR;
 	Compositor compositor;
 	compositor.init(fbw, fbh, shaderDir);
@@ -268,7 +268,7 @@ int App::run() {
 			ring.setup(fbw, fbh, 120);
 			fx.resize(fbw, fbh);
 			sourceFx.resize(fbw, fbh);
-			looper.resize(fbw, fbh);
+			looper.resize();
 			compositor.resize(fbw, fbh);
 			if (recorder.isRecording()) {
 				recorder.stop();
@@ -362,9 +362,6 @@ int App::run() {
 		glClearColor(0.05f, 0.06f, 0.08f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
 
-		ReadState rs = looper.advanceRead(dt, readFps);
-		LoopRead loopRead{ring.textureAt(rs.idx0), ring.textureAt(rs.idx1), rs.mix * params.getFloat("gain_mix")};
-
 		remote.setTokenRequired(params.getBool("ipad_token"));
 		remote.setEnabled(params.getBool("ipad_page"));
 		std::vector<std::string> videos = source.videos();
@@ -421,17 +418,17 @@ int App::run() {
 
 		GLuint dubImage = dub.image == DubImage::Black ? compositor.blackTexture() : liveSource;
 
-		// Cue shows the Audition and leaves the Loop alone.
-		if (!dub.cue) {
-			LoopWrite write;
-			write.overdub = dub.overdub;
-			write.opacity = dub.opacity;
-			write.blendMode = dub.blendMode;
-			write.image = dubImage;
-			write.replaceWith = dub.image == DubImage::ProgramFx ? fx.getPrevOutputTexture() : 0;
-			looper.writeAndSwap(compositor.blitShader(), compositor.blendShader(), compositor.quad(), rs.idx0, rs.wraps,
-			                    write);
-		}
+		LoopWrite write;
+		write.cue = dub.cue;
+		write.overdub = dub.overdub;
+		write.opacity = dub.opacity;
+		write.blendMode = dub.blendMode;
+		write.image = dubImage;
+		write.bake = dub.image == DubImage::ProgramFx;
+		write.replaceWith = write.bake ? fx.getPrevOutputTexture() : 0;
+		LoopPicture looped = looper.step(dt, readFps, compositor.blitShader(), compositor.blendShader(),
+		                                 compositor.quad(), write);
+		LoopRead loopRead{looped.tex0, looped.tex1, looped.mix * params.getFloat("gain_mix")};
 
 		// The window shows the Audition while cueing or overdubbing, and the Program otherwise.
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -476,7 +473,7 @@ int App::run() {
 			int ph = static_cast<int>(pw * (static_cast<float>(fbh) / static_cast<float>(fbw)));
 			int margin = 12;
 			GLuint shown =
-				params.getBool("debug_preview_backbuffer") ? ring.textureAtBack(rs.idx0) : compositor.auditionTexture();
+				params.getBool("debug_preview_backbuffer") ? ring.textureAtBack(looped.idx0) : compositor.auditionTexture();
 			compositor.show(shown, w - pw - margin, margin, pw, ph);
 			glViewport(0, 0, w, h);
 		}
@@ -509,7 +506,8 @@ int App::run() {
 
 		if (remote.enabled()) {
 			RemoteLive live{
-				(float(rs.idx0) + rs.mix) / float(ring.size()), dub.envelope, dub.stage, dub.gate, dub.cue, dub.erase};
+				(float(looped.idx0) + looped.mix) / float(ring.size()), dub.envelope, dub.stage, dub.gate, dub.cue,
+				dub.erase};
 			std::vector<std::string> folderPaths = folders.paths();
 			bool catalogChanged = videoNames != sentVideoNames || folderPaths != sentFolderPaths;
 			std::string full = remoteSnapshot(params, live, videoNames, folderPaths, true, sourceFailure);
