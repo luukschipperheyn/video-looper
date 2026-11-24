@@ -27,10 +27,6 @@ public:
 	// Opens these Videos ahead of a tap. paths are full paths. An empty list drops the page.
 	virtual void primePage(const std::vector<std::string>& paths, float loopStart, float loopLength) = 0;
 	virtual void loadWebcam(int index) = 0;
-	// Makes path the current Videos folder with videos as its Videos, without reading the disk.
-	virtual void showFolder(const std::string& path, const std::vector<std::string>& videos) = 0;
-	// Full paths of the Videos in the current Videos folder.
-	virtual std::vector<std::string> videos() const = 0;
 	// Shader, Black, or Draw. Drops a load that has not swapped in.
 	virtual void choose(SourceKind kind) = 0;
 	virtual void setPlayback(bool loop, bool paused, float loopStart, float loopLength) = 0;
@@ -96,6 +92,7 @@ public:
 private:
 	float loopStart() const;
 	float loopLength() const;
+	std::vector<std::string> currentVideos() const;
 	void applyPlayback();
 	void step(int delta);
 

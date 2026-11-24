@@ -392,12 +392,6 @@ int main() {
 		check(tickUntil(source, [&] { return !(failure = source.takeLoadFailure()).empty(); }) &&
 		          failure == "could not open webcam" && source.status().webcamIndex == 1,
 		      "15. a webcam that cannot open reports why and the live one stays");
-
-		source.showFolder("/w", {"/w/x.mov", "/w/y.mov"});
-		source.tick(1.0 / 60.0);
-		check(source.videos() == std::vector<std::string>{"/w/x.mov", "/w/y.mov"} &&
-		          params.getString("videos_folder").empty() && params.getInt("videos_count") == 0,
-		      "16. showing a folder lists its Videos and writes no controls");
 	}
 
 	{

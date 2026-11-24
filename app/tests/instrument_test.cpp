@@ -6,6 +6,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 #include <vector>
@@ -24,7 +26,6 @@ struct Loaded {
 };
 
 struct FakeSource : SourcePort {
-	std::vector<std::string> list;
 	std::vector<Loaded> loads;
 	std::vector<Loaded> dubs;
 	std::vector<std::string> page;
@@ -37,12 +38,10 @@ struct FakeSource : SourcePort {
 	}
 	void primePage(const std::vector<std::string>& paths, float, float) override { page = paths; }
 	void loadWebcam(int index) override { webcams.push_back(index); }
-	void showFolder(const std::string&, const std::vector<std::string>& videos) override { list = videos; }
 	void choose(SourceKind) override {}
 	void setPlayback(bool, bool, float, float) override {}
 	void restartFileAtLoopStart() override {}
 	SourceStatus status() const override { return {}; }
-	std::vector<std::string> videos() const override { return list; }
 };
 
 int main() {
@@ -130,7 +129,7 @@ int main() {
 	check(!params.getBool("arm_record") && !params.getBool("cue_active"),
 	      "7. Panic releases the Latch and the latched Cue");
 
-	source.list = {"/v/a.mov", "/v/b.mov", "/v/c.mov"};
+	instrument.addFolder("/v", {"/v/a.mov", "/v/b.mov", "/v/c.mov"});
 	instrument.setNumber("file_loop_start", 0.25);
 	instrument.setNumber("file_loop_length", 0.5);
 	params.setString("file_path", "/v/a.mov");
@@ -158,14 +157,16 @@ int main() {
 	      "9. a page opens the Videos it can find, in order");
 
 	FakeSource empty;
-	Instrument bare(params, empty, folders, {});
+	FolderList none;
+	Instrument bare(params, empty, none, {});
 	bare.nextVideo();
 	bare.randomVideo();
 	check(empty.loads.empty(), "10. with no Videos, Next and random do nothing");
 
 	instrument.addFolder("/w", {"/w/x.mov"});
-	check(source.list == std::vector<std::string>{"/w/x.mov"} && params.getString("videos_folder") == "/w" &&
-	          params.getInt("videos_count") == 1 && folders.current() && folders.current()->path == "/w",
+	check(folders.current() && folders.current()->videos == std::vector<std::string>{"/w/x.mov"} &&
+	          params.getString("videos_folder") == "/w" && params.getInt("videos_count") == 1 &&
+	          folders.current()->path == "/w",
 	      "11. adding a folder makes it the Videos folder");
 	instrument.addFolder("/v", {"/v/a.mov", "/v/b.mov"});
 	check(instrument.chooseFolder("/w").ok && params.getString("videos_folder") == "/w" &&
@@ -220,6 +221,28 @@ int main() {
 	Outcome toggled = instrument.toggle("bpm");
 	check(!toggled.ok && toggled.reason == "bad value" && params.getFloat("bpm") == bpm,
 	      "14. toggle of a number is refused");
+
+	{
+		ParamBus fresh;
+		FakeSource sink;
+		FolderList listed;
+		Instrument mac(fresh, sink, listed, {});
+		auto dir = std::filesystem::temp_directory_path() / "video-looper-mac-folder";
+		std::filesystem::remove_all(dir);
+		std::filesystem::create_directories(dir);
+		std::ofstream{(dir / "a.mov").string()};
+		mac.setText("videos_folder", dir.string());
+		const PreparedFolder* current = listed.current();
+		const std::vector<std::string> videos{(dir / "a.mov").string()};
+		check(current && current->path == dir.string() && listed.paths() == std::vector<std::string>{dir.string()} &&
+		          fresh.getString("videos_folder") == dir.string() && fresh.getInt("videos_count") == 1 &&
+		          current->videos == videos,
+		      "15. setting the Videos folder the way the Mac button does lists it and makes it current");
+		std::ofstream{(dir / "late.mov").string()};
+		check(listed.current() && listed.current()->videos == videos,
+		      "15. a Video added on disk after that choice stays out of the Folder list");
+		std::filesystem::remove_all(dir);
+	}
 
 	std::printf("%s (%d failures)\n", failures ? "FAILED" : "ALL PASSED", failures);
 	return failures ? 1 : 0;

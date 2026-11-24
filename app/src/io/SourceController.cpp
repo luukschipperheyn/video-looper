@@ -99,10 +99,6 @@ void SourceController::loadWebcam(int index) {
 	startLoad(requestWebcamLoad(index));
 }
 
-void SourceController::showFolder(const std::string&, const std::vector<std::string>& videos) {
-	videoFiles = videos;
-}
-
 void SourceController::choose(SourceKind kind) {
 	cancelLoad();
 	pendingVideo = {};

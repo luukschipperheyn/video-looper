@@ -181,7 +181,6 @@ static void publish(RemoteSession& session, const ParamBus& params, const Remote
 
 // Stands in for SourceController: remembers what the instrument asked of the Source.
 struct FakeSource : SourcePort {
-	std::vector<std::string> list;
 	std::string loaded;
 	std::string dubbed;
 	std::vector<std::string> page;
@@ -190,12 +189,10 @@ struct FakeSource : SourcePort {
 	void queueDub(const std::string& path, float, float) override { dubbed = path; }
 	void primePage(const std::vector<std::string>& paths, float, float) override { page = paths; }
 	void loadWebcam(int index) override { webcam = index; }
-	void showFolder(const std::string&, const std::vector<std::string>& videos) override { list = videos; }
 	void choose(SourceKind) override {}
 	void setPlayback(bool, bool, float, float) override {}
 	void restartFileAtLoopStart() override {}
 	SourceStatus status() const override { return {}; }
-	std::vector<std::string> videos() const override { return list; }
 };
 
 // One App frame: carry out what the page sent the way App does, send rejects and the snapshot. Returns the
@@ -555,12 +552,12 @@ int main() {
 		sendFrame(client.fd, 0x1, setFrame("source_kind", "3"));
 		sets = waitDrain(session);
 		FakeSource fake;
-		fake.list = videos;
-		FolderList noFolders;
-		Instrument instrument(params, fake, noFolders, {});
+		FolderList listed;
+		Instrument instrument(params, fake, listed, {});
 		std::string webcamReject = sets.size() == 1 ? applyRemote(instrument, sets[0]) : "none drained";
 		check(webcamReject.empty() && fake.webcam == params.getInt("webcam_index") && params.getInt("source_kind") == 1,
 		      "26. a set of source_kind 3 asks for a webcam load and leaves the param alone");
+		instrument.addFolder("/v", videos);
 
 		sendFrame(client.fd, 0x1, R"({"t":"load","name":"b.mov"})");
 		sets = waitDrain(session);
@@ -675,13 +672,12 @@ int main() {
 		params.setInt("source_kind", 1);
 		params.setString("videos_folder", a.string());
 		FakeSource fake;
-		fake.list = aVideos;
 		Instrument instrument(params, fake, folders, {});
 		std::vector<std::string> shown = aVideos;
 		auto onFolder = [&](const RemoteSet& set) {
 			std::string reject = applyRemote(instrument, set);
 			if (!reject.empty()) session.send(reject);
-			shown = fake.list;
+			shown = folders.current() ? folders.current()->videos : std::vector<std::string>{};
 		};
 		sendFrame(client.fd, 0x1, R"({"t":"folder","name":")" + b.string() + "\"}");
 		std::vector<RemoteSet> sets = waitDrain(session);

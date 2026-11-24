@@ -74,13 +74,12 @@ Outcome Instrument::setNumber(const std::string& name, double value) {
 
 Outcome Instrument::setText(const std::string& name, const std::string& text) {
 	if (!controlOf(name, ControlType::String)) return refused(name, "bad value");
-	params.setString(name, text);
-	if (name == "file_path") {
-		if (!text.empty()) source.loadVideo(text, loopStart(), loopLength());
-	} else if (name == "videos_folder") {
-		source.showFolder(text, scanVideos(text));
-		params.setInt("videos_count", int(source.videos().size()));
+	if (name == "videos_folder") {
+		if (!text.empty()) addFolder(text, scanVideos(text));
+		return {};
 	}
+	params.setString(name, text);
+	if (name == "file_path" && !text.empty()) source.loadVideo(text, loopStart(), loopLength());
 	return {};
 }
 
@@ -116,7 +115,7 @@ void Instrument::panic() {
 }
 
 void Instrument::step(int delta) {
-	std::string pick = stepVideo(source.videos(), params.getString("file_path"), delta);
+	std::string pick = stepVideo(currentVideos(), params.getString("file_path"), delta);
 	if (!pick.empty()) loadVideo(pick);
 }
 
@@ -129,7 +128,7 @@ void Instrument::nextVideo() {
 }
 
 void Instrument::randomVideo() {
-	std::vector<std::string> videos = source.videos();
+	std::vector<std::string> videos = currentVideos();
 	if (videos.empty()) return;
 	size_t pick = size_t(std::chrono::steady_clock::now().time_since_epoch().count()) % videos.size();
 	loadVideo(videos[pick]);
@@ -140,28 +139,27 @@ void Instrument::loadVideo(const std::string& path) {
 }
 
 Outcome Instrument::loadVideoNamed(const std::string& name) {
-	std::string path = videoByName(source.videos(), name);
+	std::string path = videoByName(currentVideos(), name);
 	if (path.empty()) return refused("source", "no such video");
 	loadVideo(path);
 	return {};
 }
 
 Outcome Instrument::dubVideoNamed(const std::string& name) {
-	std::string path = videoByName(source.videos(), name);
+	std::string path = videoByName(currentVideos(), name);
 	if (path.empty()) return refused("source", "no such video");
 	source.queueDub(path, loopStart(), loopLength());
 	return {};
 }
 
 void Instrument::primePage(const std::vector<std::string>& names) {
-	source.primePage(videosByName(source.videos(), names), loopStart(), loopLength());
+	source.primePage(videosByName(currentVideos(), names), loopStart(), loopLength());
 }
 
 Outcome Instrument::chooseFolder(const std::string& path) {
 	if (!folders.select(path)) return refused("folder", "no such folder");
-	source.showFolder(path, folders.current()->videos);
 	params.setString("videos_folder", path);
-	params.setInt("videos_count", int(source.videos().size()));
+	params.setInt("videos_count", int(folders.current()->videos.size()));
 	return {};
 }
 
@@ -209,4 +207,9 @@ float Instrument::loopStart() const {
 
 float Instrument::loopLength() const {
 	return params.getFloat("file_loop_length");
+}
+
+std::vector<std::string> Instrument::currentVideos() const {
+	const PreparedFolder* folder = folders.current();
+	return folder ? folder->videos : std::vector<std::string>{};
 }

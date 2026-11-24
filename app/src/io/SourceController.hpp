@@ -42,8 +42,6 @@ public:
 	void queueDub(const std::string& path, float loopStart, float loopLength) override;
 	void primePage(const std::vector<std::string>& paths, float loopStart, float loopLength) override;
 	void loadWebcam(int index) override;
-	void showFolder(const std::string& path, const std::vector<std::string>& videos) override;
-	std::vector<std::string> videos() const override { return videoFiles; }
 	void choose(SourceKind kind) override;
 	void setPlayback(bool loop, bool paused, float loopStart, float loopLength) override;
 	SourceStatus status() const override;
@@ -133,7 +131,6 @@ private:
 	std::string committedPath;
 	int committedWebcamIndex = 0;
 
-	std::vector<std::string> videoFiles;
 	PageCache pages;
 	struct PendingVideo {
 		bool on = false;
