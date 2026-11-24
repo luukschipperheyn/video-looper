@@ -104,6 +104,20 @@ add_executable(draw_image_test
 target_include_directories(draw_image_test PRIVATE app/src)
 target_compile_definitions(draw_image_test PRIVATE DRAW_PNG="${CMAKE_SOURCE_DIR}/app/tests/draw.png")
 
+add_executable(shader_reload_test
+  app/tests/shader_reload_test.cpp
+  app/src/gl/Compositor.cpp
+  app/src/gl/FxPipeline.cpp
+  app/src/gl/FullscreenQuad.cpp
+  app/src/gl/Shader.cpp
+  app/src/util/HotReload.cpp
+)
+target_include_directories(shader_reload_test PRIVATE app/src)
+target_compile_definitions(shader_reload_test PRIVATE
+  GL_SILENCE_DEPRECATION
+  SHADER_SRC="${CMAKE_SOURCE_DIR}/app/shaders"
+)
+
 add_executable(contain_rect_test app/tests/contain_rect_test.cpp)
 target_include_directories(contain_rect_test PRIVATE app/src)
 
@@ -212,6 +226,7 @@ if(APPLE)
     ${COREGRAPHICS_FRAMEWORK}
     ${COREFOUNDATION_FRAMEWORK}
   )
+  target_link_libraries(shader_reload_test PRIVATE ${OPENGL_FRAMEWORK})
 endif()
 
 # Optional Ableton Link
@@ -234,6 +249,7 @@ set(cpp_tests
   remote_session_test
   usage_log_test
   draw_image_test
+  shader_reload_test
   contain_rect_test
   repeat_test
   setup_test
