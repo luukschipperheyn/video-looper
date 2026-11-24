@@ -95,6 +95,7 @@ void SourceController::primePage(const std::vector<std::string>& paths, float lo
 }
 
 void SourceController::loadWebcam(int index) {
+	pendingVideo = {};
 	startLoad(requestWebcamLoad(index));
 }
 
@@ -104,6 +105,7 @@ void SourceController::showFolder(const std::string&, const std::vector<std::str
 
 void SourceController::choose(SourceKind kind) {
 	cancelLoad();
+	pendingVideo = {};
 	dubOnSwap.clear();
 	if (webcamActive) {
 		webcam->stop();
