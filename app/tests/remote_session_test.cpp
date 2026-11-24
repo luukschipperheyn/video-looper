@@ -549,6 +549,13 @@ int main() {
 		sendFrame(client.fd, 0x1, R"({"t":"webcam"})");
 		sets = waitDrain(session);
 		check(sets.size() == 1 && sets[0].kind == RemoteKind::Webcam, "26. webcam drains as one Webcam item");
+		sendFrame(client.fd, 0x1, R"({"t":"webcam"})");
+		sets = waitDrain(session);
+		FakeSource webcamPage;
+		FolderList webcamFolders;
+		Instrument webcamInstrument(params, webcamPage, webcamFolders, {});
+		if (sets.size() == 1) applyRemote(webcamInstrument, sets[0]);
+		check(webcamPage.webcam < 0, "the webcam message the page never sends is not accepted");
 
 		params.setInt("source_kind", 1);
 		sendFrame(client.fd, 0x1, setFrame("source_kind", "3"));
