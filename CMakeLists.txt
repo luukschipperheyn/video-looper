@@ -36,6 +36,7 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/gl/FxPipeline.cpp
   app/src/gl/Compositor.cpp
   app/src/gl/Frame.cpp
+  app/src/gl/PictureChoice.cpp
   app/src/control/Instrument.cpp
   app/src/control/Hotkeys.cpp
   app/src/buffer/RingBuffer.cpp
@@ -141,6 +142,12 @@ target_include_directories(overdub_gate_test PRIVATE app/src)
 
 add_executable(loop_plan_test app/tests/loop_plan_test.cpp app/src/looper/LoopPlan.cpp)
 target_include_directories(loop_plan_test PRIVATE app/src)
+
+add_executable(picture_choice_test
+  app/tests/picture_choice_test.cpp
+  app/src/gl/PictureChoice.cpp
+)
+target_include_directories(picture_choice_test PRIVATE app/src)
 
 add_executable(instrument_test
   app/tests/instrument_test.cpp
@@ -256,6 +263,7 @@ set(cpp_tests
   setup_test
   overdub_gate_test
   loop_plan_test
+  picture_choice_test
   instrument_test
   hotkey_test
   source_controller_test
