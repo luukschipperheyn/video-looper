@@ -186,9 +186,9 @@ Separate from looper “record into ring”:
 
 - UI: Enable Recording + path (or Save As…) + Record FPS  
 - Rising edge starts `AVFRecorder` at framebuffer size; empty path refuses start  
-- Each period: read `auditionFboB` as BGRA, flip Y, append  
+- Each period, `Compositor::read` of the Program (BGRA, top row first) goes to `appendBGRAFrame`  
 - Resize while recording stops recorder and clears `record_enabled`  
-- Captured image is the **audition composite** (loop + live overlay at record opacity/mode), not necessarily the on-screen FX view
+- Export records the Program, with Program FX, not the Audition
 
 ---
 
