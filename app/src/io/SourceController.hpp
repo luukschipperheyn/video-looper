@@ -23,8 +23,8 @@
 // Source kind drops a load that has not swapped in.
 //
 // A Commit (queueDub) starts on the tick its Video becomes the Source: at once when the Video was opened ahead
-// by primePage, otherwise when its load swaps in. While it runs, file_loop and file_paused are off. It ends when
-// the Video has no further frame, or when another Source is loaded; file_loop then goes back to what it was.
+// by primePage, otherwise when its load swaps in. While it runs, that Video plays once. file_loop and file_paused
+// stay as the performer set them. It ends when the Video has no further frame, or when another Source is loaded.
 class SourceController : public SourcePort {
 public:
 	// picture receives each decoded frame. decoders makes the Video and webcam decoders.
@@ -68,8 +68,8 @@ private:
 	// Applies a queued load or Dub. True when a Video opened ahead was swapped in and its first frame shown.
 	bool applyRequest(ParamBus& params);
 	bool installReady(const std::string& path, float loopStart, float loopLength, ParamBus& params);
-	void beginCommit(ParamBus& params, const std::string& path);
-	void cancelCommit(ParamBus& params);
+	void beginCommit(const std::string& path);
+	void cancelCommit();
 	void presentFrame(const std::vector<unsigned char>& bgra, int width, int height);
 	void startLoad(const LoadRequest& request);
 	void runLoads();
@@ -118,5 +118,4 @@ private:
 	std::string dubOnSwap;
 	bool commitOn = false;
 	std::string commitPath;
-	bool savedLoopSetting = true;
 };
