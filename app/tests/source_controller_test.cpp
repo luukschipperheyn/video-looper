@@ -1,11 +1,13 @@
 #include "io/SourceController.hpp"
 #include "io/VideoSource.hpp"
+#include "setup/SetupStore.hpp"
 #include "ui/ParamBus.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -32,6 +34,7 @@ struct World {
 	std::vector<std::string> opened;
 	std::vector<std::string> stopped;
 	std::vector<std::string> restarted;
+	std::vector<std::string> grabbed;
 
 	void hold(const std::string& path) {
 		std::lock_guard<std::mutex> lock(mu);
@@ -87,6 +90,10 @@ struct FakeVideo : VideoDecoder {
 			return false;
 		}
 		--left;
+		{
+			std::lock_guard<std::mutex> lock(world.mu);
+			world.grabbed.push_back(path);
+		}
 		w = 16;
 		h = 9;
 		return true;
@@ -245,13 +252,14 @@ int main() {
 		check(!source.committing() && params.getBool("file_loop"),
 		      "6. a Dub does not Commit before its Video is the Source");
 		world.release("/v/short.mov");
-		check(tickUntil(source, params, swapped) && source.committing() && source.commitVideo() == "/v/short.mov",
-		      "6. the Commit starts on the tick the Video swaps in");
-		check(!params.getBool("file_loop") && !params.getBool("file_paused"),
-		      "6. a Commit plays the Video once, unpaused");
-		check(tickUntil(source, params, [&] { return !source.committing(); }) && params.getBool("file_loop") &&
-		          params.getString("file_path") == "/v/short.mov" && source.commitVideo().empty(),
-		      "6. the Commit ends when the Video runs out, and looping comes back");
+		check(tickUntil(source, params, swapped) && source.committing() && source.commitVideo() == "/v/short.mov" &&
+		          params.getBool("file_loop") && params.getBool("file_paused"),
+		      "6. the Commit starts on the tick the Video swaps in, and file_loop and file_paused stay");
+		check(tickUntil(source, params, [&] { return !source.committing(); }) &&
+		          world.count(&World::grabbed, "/v/short.mov") == 3 && params.getBool("file_loop") &&
+		          params.getBool("file_paused") && params.getString("file_path") == "/v/short.mov" &&
+		          source.commitVideo().empty(),
+		      "6. the Commit plays the Video to its end once, and those controls stay");
 
 		world.broken.insert("/v/bad.mov");
 		source.queueDub("/v/bad.mov", 0, 1);
@@ -263,14 +271,16 @@ int main() {
 		      "7. the failed Dub does not Commit the next Video that loads");
 
 		source.queueDub("/v/long.mov", 0, 1);
-		check(tickUntil(source, params, swapped) && source.committing() && !params.getBool("file_loop"),
-		      "8. a Dub of a long Video is committing");
+		check(tickUntil(source, params, swapped) && source.committing() && params.getBool("file_loop") &&
+		          params.getBool("file_paused"),
+		      "8. a Dub of a long Video is committing, and file_loop and file_paused stay");
 		source.loadVideo("/v/a.mov", 0, 1);
 		source.tick(1.0 / 60.0, params);
 		bool stillCommitting = source.committing();
 		check(tickUntil(source, params, swapped) && stillCommitting && !source.committing() &&
-		          params.getBool("file_loop") && params.getString("file_path") == "/v/a.mov",
-		      "8. loading another Video ends the Commit when it swaps in, and looping comes back");
+		          params.getBool("file_loop") && params.getBool("file_paused") &&
+		          params.getString("file_path") == "/v/a.mov",
+		      "8. loading another Video ends the Commit when it swaps in, and those controls stay");
 
 		source.queueDub("/v/long.mov", 0, 1);
 		tickUntil(source, params, swapped);
@@ -381,6 +391,43 @@ int main() {
 		check(source.videos() == std::vector<std::string>{"/w/x.mov", "/w/y.mov"} &&
 		          params.getString("videos_folder") == "/w" && params.getInt("videos_count") == 2,
 		      "16. showing a folder lists its Videos without reading the disk");
+	}
+
+	{
+		World world;
+		FakePicture picture;
+		ParamBus params;
+		SourceController source(picture, fakes(world));
+		params.setBool("file_loop", true);
+		params.setBool("file_paused", true);
+		FolderList folders;
+		auto dir = std::filesystem::temp_directory_path() / "video-looper-commit-once";
+		std::filesystem::remove_all(dir);
+		SetupSaver saver(dir / "setup.json", 0.2);
+		saver.settle(captureSetup(params, folders));
+
+		source.queueDub("/v/mid.mov", 0, 1);
+		check(tickUntil(source, params, [&] { return source.committing(); }) && params.getBool("file_loop") &&
+		          params.getBool("file_paused"),
+		      "17. a Commit leaves file_loop and file_paused alone");
+		saver.observe(captureSetup(params, folders), 1.0);
+		saver.flush();
+		PerformanceSetup mid;
+		check(readSetup(dir / "setup.json", mid) && mid.values.getBool("file_loop") && mid.values.getBool("file_paused") &&
+		          mid.values.getString("file_path") == "/v/mid.mov",
+		      "17. quitting mid-Commit keeps file_loop and file_paused in the saved setup");
+
+		params.setInt("source_kind", 2);
+		source.tick(1.0 / 60.0, params);
+		source.tick(1.0 / 60.0, params);
+		check(!source.committing() && params.getBool("file_loop") && params.getBool("file_paused"),
+		      "17. ending the Commit leaves file_loop and file_paused alone");
+		saver.observe(captureSetup(params, folders), 2.0);
+		saver.flush();
+		PerformanceSetup done;
+		check(readSetup(dir / "setup.json", done) && done.values.getBool("file_loop") && done.values.getBool("file_paused"),
+		      "17. quitting after the Commit keeps file_loop and file_paused in the saved setup");
+		std::filesystem::remove_all(dir);
 	}
 
 	std::printf("%s (%d failures)\n", failures ? "FAILED" : "ALL PASSED", failures);

@@ -139,6 +139,7 @@ add_executable(source_controller_test
   app/src/io/SourceLoad.cpp
   app/src/io/FolderList.cpp
   app/src/ui/ParamBus.cpp
+  app/src/setup/SetupStore.cpp
 )
 target_include_directories(source_controller_test PRIVATE app/src)
 

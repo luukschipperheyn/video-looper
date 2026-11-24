@@ -46,12 +46,14 @@ bool SourceController::tick(double dtSeconds, ParamBus& params) {
 	swappedLoad = presented || (!justChoseStill && swapInLoaded(params));
 	if (!presented && swappedLoad && !dubOnSwap.empty()) {
 		if (params.getInt("source_kind") == (int)SourceKind::File && params.getString("file_path") == dubOnSwap)
-			beginCommit(params, dubOnSwap);
+			beginCommit(dubOnSwap);
 		dubOnSwap.clear();
 	}
 	bool newPicture = swappedLoad;
 	ensureSource(params);
 
+	bool looping = !commitOn && params.getBool("file_loop");
+	bool paused = !commitOn && params.getBool("file_paused");
 	if (srcKind == (int)SourceKind::Webcam) {
 		int sw = 0, sh = 0;
 		if (webcam->grab(picture.pictureTexture(), sw, sh)) {
@@ -60,8 +62,8 @@ bool SourceController::tick(double dtSeconds, ParamBus& params) {
 			newPicture = true;
 		}
 	} else if (srcKind == (int)SourceKind::File) {
-		fileSrc->setLoop(params.getBool("file_loop"));
-		fileSrc->setPaused(params.getBool("file_paused"));
+		fileSrc->setLoop(looping);
+		fileSrc->setPaused(paused);
 		LoopRange range = loopRange(params.getFloat("file_loop_start"), params.getFloat("file_loop_length"));
 		fileSrc->setLoopRange(range.start, range.end);
 		fileSrc->tick(dtSeconds);
@@ -75,10 +77,9 @@ bool SourceController::tick(double dtSeconds, ParamBus& params) {
 
 	maybeRescanFolder(params);
 
-	// A Commit ends on a tick with no new picture once the Video is not looping and its reader has run out.
 	if (commitOn && !newPicture) {
 		bool readerEnded = !fileActive || fileSrc->ended();
-		if (commitReachedEnd(false, params.getBool("file_loop"), readerEnded)) cancelCommit(params);
+		if (commitReachedEnd(false, looping, readerEnded)) cancelCommit();
 	}
 	return newPicture;
 }
@@ -133,7 +134,7 @@ bool SourceController::swapInLoaded(ParamBus& params) {
 		params.setInt("webcam_index", index);
 		seenWebcamIndex = index;
 	}
-	cancelCommit(params);
+	cancelCommit();
 	presentFrame(spareFrame, spareW, spareH);
 	{
 		std::lock_guard<std::mutex> lock(jobMutex);
@@ -236,7 +237,7 @@ bool SourceController::applyRequest(ParamBus& params) {
 		startLoad(load.requestVideo(req.path, req.loopStart, req.loopLength));
 		return false;
 	}
-	if (req.dub) beginCommit(params, req.path);
+	if (req.dub) beginCommit(req.path);
 	dubOnSwap.clear();
 	return true;
 }
@@ -249,7 +250,7 @@ bool SourceController::installReady(const std::string& path, float loopStart, fl
 	std::unique_ptr<VideoDecoder> ready = pages.take(path, loopStart, loopLength, frame, width, height);
 	if (!ready) return false;
 	load.cancel();
-	cancelCommit(params);
+	cancelCommit();
 	if (webcamActive) {
 		webcam->stop();
 		webcamActive = false;
@@ -264,23 +265,15 @@ bool SourceController::installReady(const std::string& path, float loopStart, fl
 	return true;
 }
 
-void SourceController::beginCommit(ParamBus& params, const std::string& path) {
-	if (!commitOn) savedLoopSetting = params.getBool("file_loop");
+void SourceController::beginCommit(const std::string& path) {
 	commitOn = true;
 	commitPath = path;
-	params.setBool("file_loop", false);
-	params.setBool("file_paused", false);
-	if (fileActive) {
-		fileSrc->setLoop(false);
-		fileSrc->setPaused(false);
-	}
 }
 
-void SourceController::cancelCommit(ParamBus& params) {
+void SourceController::cancelCommit() {
 	if (!commitOn) return;
 	commitOn = false;
 	commitPath.clear();
-	params.setBool("file_loop", savedLoopSetting);
 }
 
 void SourceController::presentFrame(const std::vector<unsigned char>& bgra, int width, int height) {
