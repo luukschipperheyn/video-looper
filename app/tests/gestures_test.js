@@ -214,6 +214,110 @@ const wrapped = g.pinch(
 );
 check("pinch rotation wraps past half a turn", wrapped.rot === -Math.PI / 2 && wrapped.sx === 1 && wrapped.sy === 1);
 
+check("touch drag stays a move", g.pointerDragMode({ pointerType: "touch", button: 2, altKey: true, shiftKey: true }) === "move");
+check("mouse drag moves", g.pointerDragMode({ pointerType: "mouse", button: 0, altKey: false, shiftKey: false }) === "move");
+check("alt drag scales", g.pointerDragMode({ pointerType: "mouse", button: 0, altKey: true, shiftKey: false }) === "scale");
+check("shift drag rotates", g.pointerDragMode({ pointerType: "mouse", button: 0, altKey: true, shiftKey: true }) === "rotate");
+check("right button rotates", g.pointerDragMode({ pointerType: "mouse", button: 2, altKey: false, shiftKey: false }) === "rotate");
+check("middle button is not a drag", g.pointerDragMode({ pointerType: "pen", button: 1, altKey: false, shiftKey: false }) === "");
+check("pen drag moves", g.pointerDragMode({ pointerType: "pen", button: 0, altKey: false, shiftKey: false }) === "move");
+
+const doubled = g.dragScale({
+	sx: 1.5,
+	sy: 9,
+	dx: 0,
+	dy: -50,
+	frameWidth: 80,
+	frameHeight: 50,
+	preserveAspect: true,
+	minS: 0.05,
+	maxS: 8,
+});
+check("alt drag up one frame doubles both axes", doubled.sx === 3 && doubled.sy === 3);
+const halved = g.dragScale({
+	sx: 2,
+	sy: 2,
+	dx: 10,
+	dy: 40,
+	frameWidth: 80,
+	frameHeight: 40,
+	preserveAspect: true,
+	minS: 0.05,
+	maxS: 8,
+});
+check("alt drag down one frame halves both axes", halved.sx === 1 && halved.sy === 1);
+const stretched = g.dragScale({
+	sx: 1,
+	sy: 4,
+	dx: 40,
+	dy: -20,
+	frameWidth: 40,
+	frameHeight: 20,
+	preserveAspect: false,
+	minS: 0.05,
+	maxS: 8,
+});
+check("free alt drag widens on x and grows on y", stretched.sx === 2 && stretched.sy === 8);
+const capped = g.dragScale({
+	sx: 5,
+	sy: 1,
+	dx: 10,
+	dy: -100,
+	frameWidth: 10,
+	frameHeight: 100,
+	preserveAspect: false,
+	minS: 0.05,
+	maxS: 8,
+});
+check("alt drag clamps scale", capped.sx === 8 && capped.sy === 2);
+const noScaleFrame = g.dragScale({
+	sx: 1.25,
+	sy: 1.5,
+	dx: 10,
+	dy: -10,
+	frameWidth: 40,
+	frameHeight: 0,
+	preserveAspect: false,
+	minS: 0.05,
+	maxS: 8,
+});
+check("alt drag with no frame keeps the scale", noScaleFrame.sx === 1.25 && noScaleFrame.sy === 1.5);
+
+check(
+	"shift drag across the frame is a half turn clockwise",
+	g.dragRotate({ rot: 0, dx: 200, frameWidth: 200, minR: -100, maxR: 100 }) === -Math.PI,
+);
+check(
+	"shift drag left turns counter-clockwise",
+	g.dragRotate({ rot: 0, dx: -100, frameWidth: 200, minR: -100, maxR: 100 }) === Math.PI / 2,
+);
+check("shift drag with no frame keeps the rotation", g.dragRotate({ rot: 0.4, dx: 30, frameWidth: 0, minR: -100, maxR: 100 }) === 0.4);
+check("shift drag clamps rotation", g.dragRotate({ rot: 0, dx: -1000, frameWidth: 100, minR: -1, maxR: 1 }) === 1);
+
+const grownScale = g.scaleByFactor({ sx: 2, sy: 3, factor: 2, preserveAspect: false, minS: 0.05, maxS: 8 });
+check("pinch factor scales each axis", grownScale.sx === 4 && grownScale.sy === 6);
+const lockedScale = g.scaleByFactor({ sx: 2, sy: 9, factor: 2, preserveAspect: true, minS: 0.05, maxS: 8 });
+check("pinch factor with preserve aspect follows sx", lockedScale.sx === 4 && lockedScale.sy === 4);
+const idleScale = g.scaleByFactor({ sx: 2, sy: 9, factor: 1, preserveAspect: true, minS: 0.05, maxS: 8 });
+check("pinch factor of 1 keeps both axes", idleScale.sx === 2 && idleScale.sy === 9);
+const badScale = g.scaleByFactor({ sx: 2, sy: 3, factor: 0, preserveAspect: false, minS: 0.05, maxS: 8 });
+check("a pinch factor of 0 keeps both axes", badScale.sx === 2 && badScale.sy === 3);
+
+const pinchOut = g.pinchScale({ sx: 1, sy: 2, deltaY: -100, deltaMode: 0, preserveAspect: false, minS: 0.05, maxS: 8 });
+check("trackpad pinch out grows both axes", pinchOut.sx === Math.E && pinchOut.sy === 2 * Math.E);
+const pinchLocked = g.pinchScale({ sx: 1, sy: 9, deltaY: -100, deltaMode: 0, preserveAspect: true, minS: 0.05, maxS: 8 });
+check("trackpad pinch with preserve aspect follows sx", pinchLocked.sx === Math.E && pinchLocked.sy === Math.E);
+const pinchStill = g.pinchScale({ sx: 1.5, sy: 1.25, deltaY: 0, deltaMode: 0, preserveAspect: true, minS: 0.05, maxS: 8 });
+check("empty pinch keeps both axes", pinchStill.sx === 1.5 && pinchStill.sy === 1.25);
+const pinchLine = g.pinchScale({ sx: 1, sy: 1, deltaY: 100 / 32, deltaMode: 1, preserveAspect: false, minS: 0.05, maxS: 8 });
+const pinchPixel = g.pinchScale({ sx: 1, sy: 1, deltaY: 100, deltaMode: 0, preserveAspect: false, minS: 0.05, maxS: 8 });
+check("a pinch line matches 32 pixels", pinchLine.sx === pinchPixel.sx && pinchLine.sy === pinchPixel.sy);
+
+check("trackpad twist of a quarter turn is clockwise", g.gestureRotate({ rot: 0, degrees: 90, minR: -100, maxR: 100 }) === -Math.PI / 2);
+check("trackpad twist the other way", g.gestureRotate({ rot: 0, degrees: -90, minR: -100, maxR: 100 }) === Math.PI / 2);
+check("trackpad twist of zero keeps rotation", g.gestureRotate({ rot: 0.2, degrees: 0, minR: -100, maxR: 100 }) === 0.2);
+check("trackpad twist clamps", g.gestureRotate({ rot: 0, degrees: -100000, minR: -1, maxR: 1 }) === 1);
+
 const attack = g.adsrDrag({
 	handle: "attack",
 	attack: 0,

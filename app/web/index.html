@@ -9,11 +9,11 @@
 :root{--bg:#0d0f10;--panel:#15181a;--panel2:#1c2023;--line:#252a2e;--line2:#333a3f;--text:#e7e9eb;--dim:#8b9297;--faint:#5c646a;
 	--rec:#ff5b4f;--cue:#45d3c8;--amber:#f3a93c;--amberd:#33250f;--ok:#93d46d;
 	--fl:#f2c46b;--fd:#6b8cf2;--fc:#c77df2;--fx:#6bf2a8;--fn:#9aa3a9}
-*{box-sizing:border-box}
+*{box-sizing:border-box;touch-action:none}
 html,body{margin:0;height:100%;background:#050606;color:var(--text);overflow:hidden;touch-action:none;
 	font:14px/1.2 -apple-system,BlinkMacSystemFont,"SF Pro Text",Helvetica,sans-serif;
 	-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
-button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;touch-action:manipulation}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer}
 button:disabled{opacity:.35}
 [hidden]{display:none!important}
 .num{font-variant-numeric:tabular-nums}
@@ -173,9 +173,11 @@ button:disabled{opacity:.35}
 .dstage canvas{width:100%;height:auto;max-height:100%;touch-action:none;display:block}
 .plabel{font-size:12px;color:var(--dim);min-width:84px;text-align:center}
 .xf{flex:1}
-.tpad{position:relative;flex:1;min-height:0;border-radius:8px;background-color:#0b0d0e;border:1px solid var(--line2);overflow:hidden;touch-action:none;
+.tpad{position:relative;flex:1;min-height:0;border-radius:8px;background-color:#0b0d0e;border:1px solid var(--line2);overflow:hidden;touch-action:none;cursor:grab;
 	background-image:linear-gradient(#ffffff09 1px,transparent 1px),linear-gradient(90deg,#ffffff09 1px,transparent 1px);background-size:32px 32px;background-position:center}
-.tpad.touch{border-color:#2d6f6a}
+.tpad.touch{border-color:#2d6f6a;cursor:grabbing}
+.tpad.scale{cursor:ns-resize}
+.tpad.rot{cursor:ew-resize}
 .lframe{position:absolute;overflow:hidden;box-shadow:0 0 0 1px #ffffff70}
 .lframe.bars{background:#000}
 .lframe .simg{position:absolute;transform-origin:50% 50%}
@@ -965,13 +967,49 @@ resetBtn.addEventListener("click", () => {
 	noteUse("act", "reset");
 	paint();
 });
+
+let pinchOrigin = null;
+let pinchTimer = 0;
+
+function markPad() {
+	let mode = "";
+	for (const p of points.values()) {
+		if (p.mode === "rotate" || p.mode === "scale") mode = p.mode;
+	}
+	pad.classList.toggle("touch", points.size > 0);
+	pad.classList.toggle("rot", mode === "rotate");
+	pad.classList.toggle("scale", mode === "scale");
+}
+
+function commitTransform(next) {
+	const cur = currentTransform();
+	const applied = gestures.applyTransform(Number(state.local.source_kind), cur, next);
+	if (applied === cur) return;
+	writeTransform(applied);
+}
+
+function endPinchSoon() {
+	clearTimeout(pinchTimer);
+	pinchTimer = setTimeout(() => {
+		if (points.size === 0 && !pinchOrigin) endGrab(transformNames);
+	}, 200);
+}
+
 pad.addEventListener("pointerdown", (event) => {
 	if (!openSocket()) return;
 	if (gestures.sourceIgnoresTransform(Number(state.local.source_kind))) return;
+	const mode = gestures.pointerDragMode({
+		pointerType: event.pointerType,
+		button: event.button,
+		altKey: event.altKey,
+		shiftKey: event.shiftKey,
+	});
+	if (!mode) return;
+	if (event.button === 2) event.preventDefault();
 	capture(pad, event);
-	points.set(event.pointerId, { x: event.clientX, y: event.clientY });
+	points.set(event.pointerId, { x: event.clientX, y: event.clientY, mode: mode });
 	grab(transformNames);
-	pad.classList.add("touch");
+	markPad();
 });
 pad.addEventListener("pointermove", (event) => {
 	if (!points.has(event.pointerId)) return;
@@ -985,7 +1023,26 @@ pad.addEventListener("pointermove", (event) => {
 	if (!Number.isFinite(Number(state.local.source_kind))) return;
 	const cur = currentTransform();
 	let next = null;
-	if (after.length === 1 && before.length === 1) {
+	if (after.length === 1 && before.length === 1 && point.mode === "rotate") {
+		next = {
+			tx: cur.tx, ty: cur.ty, sx: cur.sx, sy: cur.sy,
+			rot: gestures.dragRotate({
+				rot: cur.rot,
+				dx: after[0].x - before[0].x,
+				frameWidth: fr.width,
+				minR: schema.video_rot.min, maxR: schema.video_rot.max,
+			}),
+		};
+	} else if (after.length === 1 && before.length === 1 && point.mode === "scale") {
+		const scaled = gestures.dragScale({
+			sx: cur.sx, sy: cur.sy,
+			dx: after[0].x - before[0].x, dy: after[0].y - before[0].y,
+			frameWidth: fr.width, frameHeight: fr.height,
+			preserveAspect: !!state.local.video_aspect,
+			minS: schema.video_sx.min, maxS: schema.video_sx.max,
+		});
+		next = { tx: cur.tx, ty: cur.ty, sx: scaled.sx, sy: scaled.sy, rot: cur.rot };
+	} else if (after.length === 1 && before.length === 1) {
 		const moved = gestures.oneFingerMove({
 			tx: cur.tx, ty: cur.ty,
 			dx: after[0].x - before[0].x, dy: after[0].y - before[0].y,
@@ -1008,20 +1065,75 @@ pad.addEventListener("pointermove", (event) => {
 		});
 	}
 	if (!next) return;
-	const applied = gestures.applyTransform(Number(state.local.source_kind), cur, next);
-	if (applied === cur) return;
-	writeTransform(applied);
+	commitTransform(next);
 });
 const liftPoint = (event) => {
 	if (!points.has(event.pointerId)) return;
 	points.delete(event.pointerId);
+	markPad();
+	if (points.size === 0 && !pinchOrigin) endGrab(transformNames);
+};
+pad.addEventListener("pointerup", liftPoint);
+pad.addEventListener("pointercancel", liftPoint);
+pad.addEventListener("contextmenu", (event) => event.preventDefault());
+// A trackpad pinch arrives as a ctrl-wheel in Chromium and Firefox. A scroll wheel is not a pinch.
+pad.addEventListener("wheel", (event) => {
+	if (!event.ctrlKey) return;
+	event.preventDefault();
+	if (pinchOrigin || !openSocket()) return;
+	if (gestures.sourceIgnoresTransform(Number(state.local.source_kind))) return;
+	const cur = currentTransform();
+	const scaled = gestures.pinchScale({
+		sx: cur.sx, sy: cur.sy,
+		deltaY: event.deltaY, deltaMode: event.deltaMode,
+		preserveAspect: !!state.local.video_aspect,
+		minS: schema.video_sx.min, maxS: schema.video_sx.max,
+	});
+	if (points.size === 0) grab(transformNames);
+	commitTransform({ tx: cur.tx, ty: cur.ty, sx: scaled.sx, sy: scaled.sy, rot: cur.rot });
+	endPinchSoon();
+}, { passive: false });
+
+function gestureOnPad(event) {
+	return !!(event.target && event.target.closest && event.target.closest(".tpad") === pad);
+}
+document.addEventListener("gesturestart", (event) => {
+	event.preventDefault();
+	if (!gestureOnPad(event) || !openSocket()) return;
+	if (gestures.sourceIgnoresTransform(Number(state.local.source_kind))) return;
+	pinchOrigin = currentTransform();
+	grab(transformNames);
+	pad.classList.add("touch", "scale");
+});
+document.addEventListener("gesturechange", (event) => {
+	event.preventDefault();
+	if (!pinchOrigin) return;
+	const scaled = gestures.scaleByFactor({
+		sx: pinchOrigin.sx, sy: pinchOrigin.sy,
+		factor: event.scale,
+		preserveAspect: !!state.local.video_aspect,
+		minS: schema.video_sx.min, maxS: schema.video_sx.max,
+	});
+	commitTransform({
+		tx: pinchOrigin.tx, ty: pinchOrigin.ty,
+		sx: scaled.sx, sy: scaled.sy,
+		rot: gestures.gestureRotate({
+			rot: pinchOrigin.rot,
+			degrees: event.rotation,
+			minR: schema.video_rot.min, maxR: schema.video_rot.max,
+		}),
+	});
+});
+document.addEventListener("gestureend", (event) => {
+	if (!pinchOrigin) return;
+	event.preventDefault();
+	pinchOrigin = null;
+	pad.classList.remove("scale");
 	if (points.size === 0) {
 		pad.classList.remove("touch");
 		endGrab(transformNames);
 	}
-};
-pad.addEventListener("pointerup", liftPoint);
-pad.addEventListener("pointercancel", liftPoint);
+});
 
 function layoutFrame() {
 	const W = pad.clientWidth, H = pad.clientHeight;
@@ -1041,7 +1153,10 @@ function layoutFrame() {
 	frame.classList.toggle("fillsrc", !framed);
 	outline.hidden = !framed;
 	const fillName = kind === 4 ? "Draw" : kind === 0 ? "Shader" : "Zwart";
-	note.textContent = framed ? "" : fillName + " vult de Loop en negeert de transform";
+	const fine = window.matchMedia("(pointer: fine)").matches;
+	note.textContent = framed ? (fine ? "alt schaalt · shift of rechts draait" : "") : fillName + " vult de Loop en negeert de transform";
+	if (framed && fine) note.title = "Alt-sleep schaalt: omhoog groter, en zonder Preserve aspect schaalt opzij de breedte. Shift-sleep of de rechterknop draait: een framebreedte is een halve slag, naar rechts met de klok mee. Knijpen op het trackpad schaalt en draait.";
+	else note.removeAttribute("title");
 	const t = currentTransform();
 	const ar = state.imageAspect || 16 / 9;
 	let bw = fw, bh = fh;
@@ -1904,7 +2019,7 @@ const main = h("main", null,
 		midError),
 	h("div.col.rcol", null,
 		h("div.panel.xf", null,
-			h("div.ph", null, h("span.pt", null, "Transform"), h("span.hint.clip", null, "1 vinger schuift · 2 vingers schalen en draaien"), h("div.sp"), aspectTog.el, barsTog.el),
+			h("div.ph", null, h("span.pt", null, "Transform"), h("span.hint.clip", { title: "Sleep of één vinger schuift. Knijpen schaalt en draait, ook op een trackpad. Alt-sleep schaalt. Shift-sleep of de rechterknop draait." }, "sleep schuift · knijp schaalt en draait"), h("div.sp"), aspectTog.el, barsTog.el),
 			pad,
 			h("div.xfread", null, h("span", null, "X", readX), h("span", null, "Y", readY), h("span", null, "Schaal", readS), h("span", null, "Draai", readR), h("div.sp"), resetBtn)),
 		fxPanel),
@@ -1984,7 +2099,9 @@ socket.onclose = () => {
 	state.fingers.erase = false;
 	state.fingers.cue = false;
 	points.clear();
-	pad.classList.remove("touch");
+	pinchOrigin = null;
+	clearTimeout(pinchTimer);
+	pad.classList.remove("touch", "rot", "scale");
 	releaseGrab([...state.grabbed]);
 };
 socket.onmessage = (event) => {
@@ -1995,10 +2112,19 @@ socket.onmessage = (event) => {
 	else if (msg.t === "reject") applyReject(msg);
 };
 
-document.addEventListener("gesturestart", (event) => event.preventDefault());
 document.addEventListener("contextmenu", (event) => {
 	if (event.target.closest("img")) event.preventDefault();
 });
+window.addEventListener("wheel", (event) => {
+	if (event.ctrlKey) event.preventDefault();
+}, { capture: true, passive: false });
+document.addEventListener("dblclick", (event) => event.preventDefault());
+let lastTapEnd = 0;
+document.addEventListener("touchend", (event) => {
+	const now = performance.now();
+	if (now - lastTapEnd < 300) event.preventDefault();
+	lastTapEnd = now;
+}, { passive: false });
 window.addEventListener("resize", fit);
 const ro = new ResizeObserver(() => { measureGrid(); layoutFrame(); drawAdsr(); });
 ro.observe(grid);

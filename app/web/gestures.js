@@ -91,6 +91,65 @@
 		};
 	}
 
+	// A mouse has one pointer. Touch keeps move so a second finger can still pinch.
+	function pointerDragMode(o) {
+		if (o.pointerType === "touch") return "move";
+		if (o.button === 2 || o.shiftKey) return "rotate";
+		if (o.altKey) return "scale";
+		if (o.button === 0) return "move";
+		return "";
+	}
+
+	// Drag up by one frame height doubles the scale. Drag right widens when the axes are free.
+	function dragScale(o) {
+		if (o.frameHeight <= 0) return { sx: o.sx, sy: o.sy };
+		var fy = Math.exp((-o.dy / o.frameHeight) * Math.LN2);
+		if (o.preserveAspect) {
+			var locked = o.sx * fy;
+			return { sx: clamp(locked, o.minS, o.maxS), sy: clamp(locked, o.minS, o.maxS) };
+		}
+		var fx = o.frameWidth > 0 ? Math.exp((o.dx / o.frameWidth) * Math.LN2) : 1;
+		return {
+			sx: clamp(o.sx * fx, o.minS, o.maxS),
+			sy: clamp(o.sy * fy, o.minS, o.maxS),
+		};
+	}
+
+	// A drag across the frame width is half a turn. Right turns the image clockwise.
+	function dragRotate(o) {
+		if (o.frameWidth <= 0) return o.rot;
+		return clamp(o.rot - (o.dx / o.frameWidth) * Math.PI, o.minR, o.maxR);
+	}
+
+	function scaleByFactor(o) {
+		var factor = Number(o.factor);
+		if (!(factor > 0) || factor === 1) return { sx: o.sx, sy: o.sy };
+		var sx = o.sx * factor;
+		var sy = o.preserveAspect ? sx : o.sy * factor;
+		return { sx: clamp(sx, o.minS, o.maxS), sy: clamp(sy, o.minS, o.maxS) };
+	}
+
+	// Chromium and Firefox report a trackpad pinch as a ctrl-wheel. The page ignores a wheel without ctrl.
+	function pinchScale(o) {
+		var px = o.deltaY || 0;
+		if (o.deltaMode === 1) px *= 32;
+		else if (o.deltaMode === 2) px *= 800;
+		if (!px) return { sx: o.sx, sy: o.sy };
+		return scaleByFactor({
+			sx: o.sx,
+			sy: o.sy,
+			factor: Math.exp(-px / 100),
+			preserveAspect: o.preserveAspect,
+			minS: o.minS,
+			maxS: o.maxS,
+		});
+	}
+
+	// degrees are clockwise, matching a WebKit trackpad pinch.
+	function gestureRotate(o) {
+		return clamp(o.rot - (Number(o.degrees) || 0) * (Math.PI / 180), o.minR, o.maxR);
+	}
+
 	function timeFromPx(px, seg, maxTime) {
 		var u = clamp(px / seg, 0, 1);
 		return maxTime * u * u;
@@ -178,6 +237,12 @@
 		applyTransform: applyTransform,
 		oneFingerMove: oneFingerMove,
 		pinch: pinch,
+		pointerDragMode: pointerDragMode,
+		dragScale: dragScale,
+		dragRotate: dragRotate,
+		scaleByFactor: scaleByFactor,
+		pinchScale: pinchScale,
+		gestureRotate: gestureRotate,
 		adsrDrag: adsrDrag,
 		blendCells: blendCells,
 		blendAtPoint: blendAtPoint,
