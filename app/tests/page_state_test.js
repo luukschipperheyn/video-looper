@@ -180,9 +180,8 @@ function pageHtml() {
 	let html = fs.readFileSync(path.join(web, "index.html"), "utf8");
 	const gestures = fs.readFileSync(path.join(web, "gestures.js"), "utf8");
 	html = html.replace("/*GESTURES*/", function () { return gestures; });
-	const statePath = path.join(web, "page_state.js");
-	if (html.includes("/*PAGE_STATE*/") && fs.existsSync(statePath)) {
-		const source = fs.readFileSync(statePath, "utf8");
+	if (html.includes("/*PAGE_STATE*/")) {
+		const source = fs.readFileSync(path.join(web, "page_state.js"), "utf8");
 		html = html.replace("/*PAGE_STATE*/", function () { return source; });
 	}
 	html = html.replace("/*CONTROL_SCHEMA*/null", function () { return JSON.stringify(schema); });
@@ -307,5 +306,179 @@ socket.onmessage({
 check("frame while the Overdub blend grid is held keeps the finger value", painted(overdub) === 2);
 check("frame while the FX blend picker is held keeps the finger value", painted(picks[0]) === 4);
 check("frame while the Source FX blend picker is held keeps the finger value", painted(picks[1]) === 8);
+
+const pageState = require("../web/page_state.js");
+
+const controlSchema = {
+	record_blend_opacity: { type: "float", min: 0, max: 1, def: 1 },
+	fx_repeat_blend: { type: "int", min: 0, max: 11, def: 6 },
+	source_fx_repeat_blend: { type: "int", min: 0, max: 11, def: 6 },
+	bpm: { type: "float", min: 40, max: 240, def: 120 },
+	record_enabled: { type: "bool", min: 0, max: 1, def: false },
+};
+
+function fakeTimers() {
+	let now = 0;
+	let next = 1;
+	const intervals = [];
+	return {
+		now() { return now; },
+		setInterval(fn, ms) {
+			const id = next++;
+			intervals.push({ id: id, fn: fn, ms: ms, left: ms });
+			return id;
+		},
+		clearInterval(id) {
+			const at = intervals.findIndex((item) => item.id === id);
+			if (at >= 0) intervals.splice(at, 1);
+		},
+		advance(ms) {
+			let left = ms;
+			while (left > 0) {
+				if (!intervals.length) {
+					now += left;
+					return;
+				}
+				let step = left;
+				for (const item of intervals) step = Math.min(step, item.left);
+				now += step;
+				left -= step;
+				for (const item of intervals.slice()) {
+					item.left -= step;
+					if (item.left <= 0) {
+						item.left = item.ms;
+						item.fn();
+					}
+				}
+			}
+		},
+	};
+}
+
+function harness() {
+	const sent = [];
+	const socket = {
+		readyState: 1,
+		send(text) { sent.push(JSON.parse(text)); },
+	};
+	const timers = fakeTimers();
+	const model = pageState.create(controlSchema, socket, timers);
+	model.linkUp();
+	return { model: model, sent: sent, timers: timers, socket: socket };
+}
+
+function named(sent, type, name) {
+	return sent.filter((msg) => msg.t === type && msg.name === name);
+}
+
+{
+	const { model, sent } = harness();
+	model.fingerDown(["fx_repeat_blend", "source_fx_repeat_blend"]);
+	model.value("fx_repeat_blend", 4);
+	model.value("source_fx_repeat_blend", 8);
+	model.value("bpm", 90);
+	const view = model.frame({
+		t: "snapshot",
+		fx_repeat_blend: 9,
+		source_fx_repeat_blend: 9,
+		bpm: 120,
+		record_blend_opacity: 0.3,
+	});
+	check(
+		"a frame keeps every locked control and writes the rest",
+		view.local.fx_repeat_blend === 4 &&
+			view.local.source_fx_repeat_blend === 8 &&
+			view.local.bpm === 120 &&
+			view.local.record_blend_opacity === 0.3,
+	);
+	const lifted = model.fingerUp(["fx_repeat_blend", "source_fx_repeat_blend"]);
+	check(
+		"finger up restores the frame value",
+		lifted.local.fx_repeat_blend === 9 && lifted.local.source_fx_repeat_blend === 9,
+	);
+	check(
+		"finger up records the value under the finger",
+		sent.some((msg) => msg.t === "use" && msg.e === "set" && msg.name === "fx_repeat_blend" && msg.v === 4) &&
+			sent.some((msg) => msg.t === "use" && msg.e === "set" && msg.name === "source_fx_repeat_blend" && msg.v === 8),
+	);
+}
+
+{
+	const { model } = harness();
+	model.frame({ t: "snapshot", record_blend_opacity: 0.2 });
+	model.value("record_blend_opacity", 0.8);
+	const rolled = model.reject({ t: "reject", name: "record_blend_opacity" });
+	check("reject restores the last frame value", rolled.local.record_blend_opacity === 0.2);
+	model.fingerDown(["record_blend_opacity"]);
+	model.value("record_blend_opacity", 0.8);
+	const held = model.reject({ t: "reject", name: "record_blend_opacity" });
+	check("reject keeps the value under the finger", held.local.record_blend_opacity === 0.8);
+}
+
+{
+	const { model, sent, timers } = harness();
+	model.frame({ t: "snapshot", bpm: 100 });
+	model.fingerDown(["bpm"]);
+	model.value("bpm", 140);
+	model.holdDown("gate");
+	const before = sent.length;
+	const lost = model.linkLost();
+	timers.advance(500);
+	check(
+		"link loss drops the lock, restores the frame, and stops holds",
+		lost.link === "down" &&
+			lost.local.bpm === 100 &&
+			lost.fingers.gate === false &&
+			!model.locked("bpm") &&
+			sent.length === before &&
+			named(sent, "release", "gate").length === 0,
+	);
+}
+
+{
+	const { model, sent, timers } = harness();
+	model.holdDown("gate");
+	const started = named(sent, "hold", "gate").length;
+	timers.advance(99);
+	check("a hold waits 100 ms before the next keep-alive", named(sent, "hold", "gate").length === started);
+	timers.advance(1);
+	check("a hold repeats when 100 ms elapse", named(sent, "hold", "gate").length === started + 1);
+	timers.advance(200);
+	check("a hold repeats on each 100 ms", named(sent, "hold", "gate").length === started + 3);
+	model.holdUp("gate");
+	const afterUp = named(sent, "hold", "gate").length;
+	timers.advance(500);
+	check(
+		"finger up sends release and stops the keep-alive",
+		afterUp === started + 3 &&
+			named(sent, "hold", "gate").length === afterUp &&
+			named(sent, "release", "gate").length === 1,
+	);
+}
+
+{
+	const { model, sent, timers } = harness();
+	model.holdDown("gate");
+	model.holdDown("erase");
+	model.holdDown("cue");
+	const before = sent.length;
+	model.panic();
+	timers.advance(500);
+	const added = sent.slice(before);
+	check(
+		"Panic stops the holds without a release message",
+		added.length === 5 &&
+			added[0].t === "panic" &&
+			added[1].t === "use" && added[1].e === "release" && added[1].name === "gate" &&
+			added[2].t === "use" && added[2].e === "release" && added[2].name === "erase" &&
+			added[3].t === "use" && added[3].e === "release" && added[3].name === "cue" &&
+			added[4].t === "use" && added[4].e === "act" && added[4].name === "panic" &&
+			named(sent, "release", "gate").length === 0 &&
+			named(sent, "hold", "gate").length === 1 &&
+			model.state.fingers.gate === false &&
+			model.state.fingers.erase === false &&
+			model.state.fingers.cue === false,
+	);
+}
 
 process.exit(failed === 0 ? 0 : 1);

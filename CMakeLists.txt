@@ -211,6 +211,11 @@ add_custom_target(gestures_test
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   VERBATIM
 )
+add_custom_target(page_state_test
+  COMMAND node ${CMAKE_SOURCE_DIR}/app/tests/page_state_test.js
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  VERBATIM
+)
 
 if(APPLE)
   # Provide Info.plist for bundle (required for camera privacy and Continuity Camera)
@@ -289,6 +294,11 @@ endforeach()
 add_test(
   NAME gestures_test
   COMMAND node ${CMAKE_SOURCE_DIR}/app/tests/gestures_test.js
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+add_test(
+  NAME page_state_test
+  COMMAND node ${CMAKE_SOURCE_DIR}/app/tests/page_state_test.js
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
 

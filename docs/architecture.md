@@ -60,6 +60,7 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/gl/Shader.*`, `FullscreenQuad.*`, `util/GlUtils.hpp` | GL helpers |
 | `app/src/remote/RemoteSession.*` | HTTP + WebSocket server for the Web interface, holds, thumbnails |
 | `app/src/remote/RemoteApply.*` | The Web interface adapter: turns one message into an Instrument call and a reject frame; builds the snapshot |
+| `app/web/page_state.js` | Control state for the Web interface. Finger, value, frame, reject, and link loss. Tested in `app/tests/page_state_test.js` |
 | `app/src/setup/SetupStore.*` | Performance setup (the controls the table marks Saved, plus the Folder list) saved when a control settles and restored at launch |
 | `app/src/ui/ControlsPanel.*` | ImGui **Live** + **Settings** tabs; every change goes through the Instrument |
 | `app/src/clock/Clock.hpp` | Local beat accumulator from BPM × dt |
@@ -113,6 +114,10 @@ File and webcam frames are drawn into the Source, then that image is what an Ove
 - The Folder list holds every Videos folder and the Videos captured when that folder was added. Mac Choose Folder, the Videos Folder field, and Add Folder each scan the folder once for `.mp4`, `.mov`, `.m4v`, `.mkv`, and `.avi`, add it, and make it current. Choosing a folder already on the list uses those stored Videos. The frame loop publishes their filenames. A load, a Dub, and a primed page take paths from that list.
 - `V` / “Load Random File” picks a Video from the current Videos folder and loads it as the Source, the same way Prev and Next do. It does not Commit.
 - Prev and Next step through the Videos on the current Videos folder and load immediately.
+
+**Web interface** (`app/web/index.html`): The app serves this one page. `RemoteSession` inlines `app/web/gestures.js` at `/*GESTURES*/` and `app/web/page_state.js` at `/*PAGE_STATE*/`, and replaces `/*CONTROL_SCHEMA*/` with the control schema. ADR-0001 keeps the page as one file the server sends, with those scripts inlined.
+
+`page_state.js` holds the control values. The page reports finger down, the value, finger up, a frame, a reject, and link loss, then paints the module's state. `create` takes the socket and the timers. A finger locks the controls it is on, so a snapshot keeps the value under the finger until the finger lifts. The Overdub blend grid, the FX blend picker, and the Source FX blend picker use that lock. A hold on the Overdub gate, Erase, or Cue sends `hold` at once and again every 100 ms until the finger lifts, the link drops, or Panic runs. Panic sends `panic` and stops those holds. The use log records one `release` per hold that was down, and one `act` for Panic.
 
 **Web interface grid** (`app/web/index.html`): The folder chips are the Folder list. The chip whose path equals `videos_folder` is the current one. The grid is the filenames of that folder's Videos. Select loads the tapped Video as the Source. Dub does that and Commits it, so the Video is written into the Loop at full opacity from its start to its end and stays the Source. The page sends the filenames on screen; `PageCache` opens those Videos on a background thread so a tap swaps a ready one in. A Video that is not ready yet still loads, and a Dub Commits when that load swaps in.
 
