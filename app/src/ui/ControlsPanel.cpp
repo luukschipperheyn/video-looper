@@ -92,10 +92,17 @@ void ControlsPanel::draw(const ParamBus& params, Instrument& instrument, const L
 						if (!p.empty()) inst->loadVideo(p);
 					});
 				}
-				textField("Videos Folder", "videos_folder");
+				char folderPath[512];
+				std::string folderShown = params.getString("videos_folder");
+				if (folderShown.size() >= sizeof folderPath) folderShown.clear();
+				std::strncpy(folderPath, folderShown.c_str(), sizeof folderPath);
+				folderPath[sizeof folderPath - 1] = '\0';
+				ImGui::InputText("Videos Folder", folderPath, sizeof folderPath);
+				if (ImGui::IsItemDeactivatedAfterEdit() && folderPath[0] != '\0')
+					instrument.setText("videos_folder", folderPath);
 				if (ImGui::Button("Choose Folder")) {
 					macOpenDirectoryDialogAsync("Select Videos Folder", [inst](std::string fp) {
-						if (!fp.empty()) inst->setText("videos_folder", fp);
+						if (!fp.empty()) inst->addFolder(fp, scanVideos(fp));
 					});
 				}
 				ImGui::Text("Folder Clips: %d", params.getInt("videos_count"));

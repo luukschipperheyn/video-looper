@@ -15,19 +15,16 @@ static void check(bool ok, const char* what) {
 }
 
 struct FakeSource : SourcePort {
-	std::vector<std::string> list;
 	std::vector<std::string> loads;
 	std::vector<int> webcams;
 	void loadVideo(const std::string& path, float, float) override { loads.push_back(path); }
 	void queueDub(const std::string&, float, float) override {}
 	void primePage(const std::vector<std::string>&, float, float) override {}
 	void loadWebcam(int index) override { webcams.push_back(index); }
-	void showFolder(const std::string&, const std::vector<std::string>& videos) override { list = videos; }
 	void choose(SourceKind) override {}
 	void setPlayback(bool, bool, float, float) override {}
 	void restartFileAtLoopStart() override {}
 	SourceStatus status() const override { return {}; }
-	std::vector<std::string> videos() const override { return list; }
 };
 
 int main() {
@@ -35,7 +32,7 @@ int main() {
 	FakeSource source;
 	FolderList folders;
 	Instrument instrument(params, source, folders, {});
-	source.list = {"/v/a.mov", "/v/b.mov"};
+	instrument.addFolder("/v", {"/v/a.mov", "/v/b.mov"});
 
 	{
 		params.setInt("source_kind", 0);

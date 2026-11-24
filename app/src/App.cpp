@@ -335,7 +335,8 @@ int App::run() {
 
 		remote.setTokenRequired(params.getBool("ipad_token"));
 		remote.setEnabled(params.getBool("ipad_page"));
-		std::vector<std::string> videos = source.videos();
+		const PreparedFolder* folder = folders.current();
+		std::vector<std::string> videos = folder ? folder->videos : std::vector<std::string>{};
 		if (videos != videoPaths) {
 			videoPaths = std::move(videos);
 			videoNames.clear();
