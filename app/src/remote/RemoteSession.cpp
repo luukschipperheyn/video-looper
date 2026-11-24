@@ -1,7 +1,5 @@
 #include "remote/RemoteSession.hpp"
 
-#include "remote/UsageLog.hpp"
-
 #include "control/ControlTable.hpp"
 
 #include <CommonCrypto/CommonDigest.h>
@@ -142,108 +140,6 @@ std::string serverFrame(unsigned char opcode, const std::string& payload) {
 	return frame + payload;
 }
 
-bool isJsonValue(const std::string& raw) {
-	if (raw == "true" || raw == "false" || raw[0] == '"') return true;
-	if (raw[0] != '-' && !std::isdigit(static_cast<unsigned char>(raw[0]))) return false;
-	char* end = nullptr;
-	std::strtod(raw.c_str(), &end);
-	return end == raw.c_str() + raw.size();
-}
-
-// The fields of one client message, each as its raw JSON token, or empty when absent.
-// names is the plain strings of a "names" array.
-struct Message {
-	std::string type;
-	std::string event;
-	std::string name;
-	std::string value;
-	std::vector<std::string> names;
-};
-
-// A non-empty JSON string token with no escapes, without its quotes. An empty token "" is rejected.
-bool plainString(const std::string& raw, std::string& out) {
-	if (raw.size() < 3 || raw[0] != '"' || raw.find('\\') != std::string::npos) return false;
-	out = raw.substr(1, raw.size() - 2);
-	return true;
-}
-
-// Parses one flat JSON object such as {"t":"set","name":"...","value":<bool|number|string>} with keys in any order.
-// "names" may be an array of strings.
-bool parseMessage(const std::string& json, Message& out) {
-	size_t i = 0;
-	auto skipSpace = [&] {
-		while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i])))
-			++i;
-	};
-	auto expect = [&](char c) {
-		skipSpace();
-		if (i >= json.size() || json[i] != c) return false;
-		++i;
-		return true;
-	};
-	auto token = [&](std::string& raw) {
-		skipSpace();
-		size_t start = i;
-		if (i < json.size() && json[i] == '"') {
-			for (++i; i < json.size() && json[i] != '"'; ++i) {
-				if (static_cast<unsigned char>(json[i]) < 0x20) return false;
-				if (json[i] == '\\') ++i;
-			}
-			if (i >= json.size()) return false;
-			++i;
-		} else {
-			while (i < json.size() && (std::isalnum(static_cast<unsigned char>(json[i])) || json[i] == '-' ||
-			                           json[i] == '+' || json[i] == '.'))
-				++i;
-		}
-		raw = json.substr(start, i - start);
-		return !raw.empty();
-	};
-
-	auto stringArray = [&](std::vector<std::string>& dest) {
-		if (!expect('[')) return false;
-		skipSpace();
-		if (i < json.size() && json[i] == ']') {
-			++i;
-			return true;
-		}
-		do {
-			std::string item;
-			std::string plain;
-			if (!token(item) || !plainString(item, plain)) return false;
-			dest.push_back(std::move(plain));
-		} while (expect(','));
-		return expect(']');
-	};
-
-	std::string key, raw;
-	if (!expect('{')) return false;
-	do {
-		if (!token(key) || key[0] != '"' || !expect(':')) return false;
-		skipSpace();
-		if (i < json.size() && json[i] == '[') {
-			std::vector<std::string> items;
-			if (!stringArray(items)) return false;
-			if (key == "\"names\"") out.names = std::move(items);
-		} else {
-			if (!token(raw)) return false;
-			if (key == "\"t\"") out.type = raw;
-			if (key == "\"e\"") out.event = raw;
-			if (key == "\"name\"") out.name = raw;
-			if (key == "\"value\"" || key == "\"v\"") out.value = raw;
-		}
-	} while (expect(','));
-	if (!expect('}')) return false;
-	skipSpace();
-	return i == json.size();
-}
-
-bool toSet(const Message& msg, RemoteSet& out) {
-	if (!plainString(msg.name, out.name) || msg.value.empty() || !isJsonValue(msg.value)) return false;
-	out.raw = msg.value;
-	return true;
-}
-
 std::string emptyResponse(const std::string& status) {
 	return "HTTP/1.1 " + status + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 }
@@ -348,9 +244,19 @@ void RemoteSession::setThumbs(std::vector<std::pair<std::string, std::string>> n
 	thumbs.swap(next);
 }
 
-std::vector<RemoteSet> RemoteSession::drain() {
+std::vector<Inbound> RemoteSession::takeMessages() {
 	std::lock_guard<std::mutex> lock(queueMutex);
 	return std::exchange(inbox, {});
+}
+
+bool RemoteSession::hasMessages() {
+	std::lock_guard<std::mutex> lock(queueMutex);
+	return !inbox.empty();
+}
+
+void RemoteSession::releaseHolds() {
+	std::lock_guard<std::mutex> lock(holdMutex);
+	holds.clear();
 }
 
 bool RemoteSession::takeDraw(std::string& png) {
@@ -555,88 +461,24 @@ bool RemoteSession::readFrames(Client& client) {
 			storeDraw(std::move(payload));
 			continue;
 		}
-		Message msg;
-		if (opcode != 0x1 || !fin || !parseMessage(payload, msg)) continue;
-		RemoteSet set;
-		if (msg.type == "\"set\"" && toSet(msg, set)) {
-			std::lock_guard<std::mutex> lock(queueMutex);
-			inbox.push_back(std::move(set));
-		} else if (msg.type == "\"hold\"" || msg.type == "\"release\"") {
-			TimePoint at = msg.type == "\"hold\"" ? clock.load()() : TimePoint::min();
+		if (opcode != 0x1 || !fin) continue;
+		ParsedInbound got = parseInbound(payload);
+		if (got.kind == InboundKind::Bad) continue;
+		if (got.kind == InboundKind::Hold || got.kind == InboundKind::Release) {
+			TimePoint at = got.kind == InboundKind::Hold ? clock.load()() : TimePoint::min();
 			std::lock_guard<std::mutex> lock(holdMutex);
-			if (msg.name == "\"gate\"") holds[client.fd].gate = at;
-			if (msg.name == "\"cue\"") holds[client.fd].cue = at;
-			if (msg.name == "\"erase\"") holds[client.fd].erase = at;
-		} else if (msg.type == "\"panic\"") {
-			{
-				std::lock_guard<std::mutex> lock(holdMutex);
-				holds.clear();
-			}
-			std::lock_guard<std::mutex> lock(queueMutex);
-			inbox.push_back({{}, {}, RemoteKind::Panic});
-		} else if (msg.type == "\"prev\"" || msg.type == "\"next\"" || msg.type == "\"webcam\"") {
-			RemoteKind kind = msg.type == "\"prev\""   ? RemoteKind::Prev
-			                  : msg.type == "\"next\"" ? RemoteKind::Next
-			                                           : RemoteKind::Webcam;
-			std::lock_guard<std::mutex> lock(queueMutex);
-			inbox.push_back({{}, {}, kind});
-		} else if ((msg.type == "\"load\"" || msg.type == "\"folder\"") && plainString(msg.name, set.name)) {
-			set.kind = msg.type == "\"load\"" ? RemoteKind::Load : RemoteKind::Folder;
-			std::lock_guard<std::mutex> lock(queueMutex);
-			inbox.push_back(std::move(set));
-		} else if (msg.type == "\"dub\"" && plainString(msg.name, set.name)) {
-			set.kind = RemoteKind::Dub;
-			std::lock_guard<std::mutex> lock(queueMutex);
-			inbox.push_back(std::move(set));
-		} else if (msg.type == "\"use\"") {
-			noteUse(msg.event, msg.name, msg.value);
-		} else if (msg.type == "\"page\"") {
-			set.kind = RemoteKind::Page;
-			set.names = std::move(msg.names);
-			std::lock_guard<std::mutex> lock(queueMutex);
-			inbox.push_back(std::move(set));
+			if (got.pad == "gate") holds[client.fd].gate = at;
+			if (got.pad == "cue") holds[client.fd].cue = at;
+			if (got.pad == "erase") holds[client.fd].erase = at;
+			continue;
 		}
+		std::lock_guard<std::mutex> lock(queueMutex);
+		inbox.push_back(std::move(got.message));
 	}
 	return !closed;
 }
 
-namespace {
-
-constexpr int kUsageNameMax = 64;
-constexpr int kUsageValueMax = 512;
-
-bool usageToken(const std::string& raw, std::string& plain, int maxLen) {
-	if (!plainString(raw, plain) || int(plain.size()) > maxLen) return false;
-	return plain.find_first_of("\r\n") == std::string::npos;
-}
-
-bool usageEvent(const std::string& event) {
-	return event == "set" || event == "hold" || event == "release" || event == "open" || event == "close" ||
-	       event == "chain" || event == "tap" || event == "act";
-}
-
-bool usageValue(const std::string& raw) {
-	if (raw.empty()) return true;
-	if (raw == "true" || raw == "false") return true;
-	if (raw[0] == '"') {
-		std::string plain;
-		return usageToken(raw, plain, kUsageValueMax);
-	}
-	return isJsonValue(raw);
-}
-
-} // namespace
-
-void RemoteSession::noteUse(const std::string& eventRaw, const std::string& nameRaw, const std::string& value) {
-	if (usagePath.empty()) return;
-	std::string event, name;
-	if (!usageToken(eventRaw, event, kUsageNameMax) || !usageEvent(event)) return;
-	if (!usageToken(nameRaw, name, kUsageNameMax) || !usageValue(value)) return;
-	if (!usage) usage = std::make_unique<UsageLog>(usagePath);
-	usage->write(event, name, value);
-}
-
-RemoteSession::PadState RemoteSession::pads() const {
+PadHolds RemoteSession::pads() const {
 	TimePoint since = clock.load()() - std::chrono::milliseconds(silenceMs.load());
 	PadState out{false, false, false};
 	std::lock_guard<std::mutex> lock(holdMutex);

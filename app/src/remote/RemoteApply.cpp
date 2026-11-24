@@ -1,15 +1,10 @@
 #include "remote/RemoteApply.hpp"
 
 #include "control/ControlTable.hpp"
-#include "control/Instrument.hpp"
 #include "ui/ParamBus.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <charconv>
-#include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 
 namespace {
@@ -38,59 +33,7 @@ std::string jsonNumber(float v) {
 	return std::string(buf, res.ptr);
 }
 
-bool parseNumber(const std::string& raw, double& out) {
-	if (raw.empty() || !(raw[0] == '-' || std::isdigit(static_cast<unsigned char>(raw[0])))) return false;
-	char* end = nullptr;
-	out = std::strtod(raw.c_str(), &end);
-	return end == raw.c_str() + raw.size() && std::isfinite(out);
-}
-
-std::string rejectOf(const Outcome& outcome) {
-	return outcome.ok ? std::string() : rejectFrame(outcome.topic, outcome.reason);
-}
-
-std::string applySet(Instrument& instrument, const RemoteSet& set) {
-	const Control* control = findControl(set.name);
-	if (!control || control->web != Web::Write) return rejectFrame(set.name, "read-only");
-	if (control->type == ControlType::Bool) {
-		if (set.raw != "true" && set.raw != "false") return rejectFrame(set.name, "bad value");
-		return rejectOf(instrument.setSwitch(set.name, set.raw == "true"));
-	}
-	double n;
-	if (!parseNumber(set.raw, n)) return rejectFrame(set.name, "bad value");
-	return rejectOf(instrument.setNumber(set.name, n));
-}
-
 } // namespace
-
-std::string applyRemote(Instrument& instrument, const RemoteSet& set) {
-	switch (set.kind) {
-	case RemoteKind::Set:
-		return applySet(instrument, set);
-	case RemoteKind::Panic:
-		instrument.panic();
-		break;
-	case RemoteKind::Prev:
-		instrument.prevVideo();
-		break;
-	case RemoteKind::Next:
-		instrument.nextVideo();
-		break;
-	case RemoteKind::Webcam:
-		instrument.chooseWebcam();
-		break;
-	case RemoteKind::Load:
-		return rejectOf(instrument.loadVideoNamed(set.name));
-	case RemoteKind::Dub:
-		return rejectOf(instrument.dubVideoNamed(set.name));
-	case RemoteKind::Page:
-		instrument.primePage(set.names);
-		break;
-	case RemoteKind::Folder:
-		return rejectOf(instrument.chooseFolder(set.name));
-	}
-	return {};
-}
 
 std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const std::vector<std::string>& videos,
                            const std::vector<std::string>& folders, bool catalog, const std::string& sourceError,
