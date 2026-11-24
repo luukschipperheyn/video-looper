@@ -14,4 +14,8 @@ class ControlsPanel {
 public:
 	void draw(const ParamBus& params, Instrument& instrument, const LinkBridge& link, const RingBuffer& ring, float dt,
 	          const SourceController& source, const RemoteSession& remote, const FolderList& folders);
+
+private:
+	std::string filePathBuf;
+	bool filePathActive = false;
 };

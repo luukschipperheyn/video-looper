@@ -190,11 +190,11 @@ struct FakeSource : SourcePort {
 	void queueDub(const std::string& path, float, float) override { dubbed = path; }
 	void primePage(const std::vector<std::string>& paths, float, float) override { page = paths; }
 	void loadWebcam(int index) override { webcam = index; }
-	void showFolder(const std::string& path, const std::vector<std::string>& videos, ParamBus& params) override {
-		list = videos;
-		params.setString("videos_folder", path);
-		params.setInt("videos_count", int(videos.size()));
-	}
+	void showFolder(const std::string&, const std::vector<std::string>& videos) override { list = videos; }
+	void choose(SourceKind) override {}
+	void setPlayback(bool, bool, float, float) override {}
+	void restartFileAtLoopStart() override {}
+	SourceStatus status() const override { return {}; }
 	std::vector<std::string> videos() const override { return list; }
 };
 
@@ -524,57 +524,24 @@ int main() {
 		publish(session, params);
 		check(field(readText(client), "video") == "\"\"", "23. video is empty when the Source is not a Video");
 
-		// SourceLoad stands in for the loader: the test plays App's part, choosing paths and resolving loads.
 		const std::vector<std::string> videos = {"/v/a.mov", "/v/b.mov", "/v/c.mov"};
-		SourceLoad load;
-		bool isWebcam = true;
-		std::string path;
-		int index = -1;
-		auto swapIn = [&] {
-			if (!load.pollSwap(isWebcam, path, index)) return false;
-			params.setInt("source_kind", isWebcam ? 3 : 1);
-			params.setString("file_path", path);
-			if (isWebcam) params.setInt("webcam_index", index);
-			return true;
-		};
-		LoadRequest first = load.requestVideo(videos[0]);
-		load.resolve(first.id, true, {});
-		check(swapIn() && !isWebcam && path == videos[0] && load.committedPath() == videos[0] && !load.busy(),
-		      "24. a resolved load swaps in on the next poll");
-		check(!load.pollSwap(isWebcam, path, index), "24. a swap happens once");
+		params.setInt("source_kind", 1);
+		params.setString("file_path", "/v/a.mov");
 
 		sendFrame(client.fd, 0x1, R"({"t":"next"})");
 		sets = waitDrain(session);
 		check(sets.size() == 1 && sets[0].kind == RemoteKind::Next, "24. next drains as one Next item");
-		LoadRequest toNext = load.requestVideo(stepVideo(videos, params.getString("file_path"), +1));
-		check(toNext.path == videos[1] && load.busy() && load.inflight() == toNext.id &&
-		          load.committedPath() == videos[0],
-		      "24. Next starts a load of b.mov and the committed Video stays a.mov");
 		publish(session, params);
 		check(field(readText(client), "video") == "\"a.mov\"", "24. the client still reads a.mov while loading");
 
 		sendFrame(client.fd, 0x1, R"({"t":"prev"})");
 		sets = waitDrain(session);
 		check(sets.size() == 1 && sets[0].kind == RemoteKind::Prev, "24. prev drains as one Prev item");
-		LoadRequest toPrev = load.requestVideo(stepVideo(videos, params.getString("file_path"), -1));
-		check(toPrev.path == videos[2] && toPrev.id != toNext.id && load.inflight() == toPrev.id,
-		      "24. Prev starts a load of c.mov that replaces the Next load");
-		load.resolve(toNext.id, true, {});
-		check(!swapIn() && load.busy() && load.committedPath() == videos[0],
-		      "24. resolving the cancelled load swaps nothing");
-		load.resolve(toPrev.id, true, {});
-		check(swapIn() && path == videos[2] && load.committedPath() == videos[2] && !load.busy(),
-		      "24. resolving the latest load swaps c.mov in one step");
+		params.setString("file_path", "/v/c.mov");
 		publish(session, params);
 		check(field(readText(client), "video") == "\"c.mov\"", "24. the client reads c.mov after the swap");
 
-		LoadRequest bad = load.requestVideo(videos[1]);
-		load.resolve(bad.id, false, "could not open");
-		check(!swapIn() && load.committedPath() == videos[2], "25. a failed open keeps the committed Video");
-		std::string failure = load.takeFailure();
-		check(failure == "could not open" && load.takeFailure().empty() && !load.busy(),
-		      "25. the failure reason comes out once");
-		session.send(rejectFrame("source", failure));
+		session.send(rejectFrame("source", "could not open"));
 		payload = readText(client);
 		check(field(payload, "name") == "\"source\"" && field(payload, "reason") == "\"could not open\"",
 		      "25. the client reads \"reason\":\"could not open\"");
@@ -583,16 +550,6 @@ int main() {
 		sendFrame(client.fd, 0x1, R"({"t":"webcam"})");
 		sets = waitDrain(session);
 		check(sets.size() == 1 && sets[0].kind == RemoteKind::Webcam, "26. webcam drains as one Webcam item");
-		LoadRequest cam = load.requestWebcam(params.getInt("webcam_index"));
-		check(cam.webcam && cam.webcamIndex == 2 && load.busy() && !load.committedWebcam(),
-		      "26. a webcam load leaves the committed Source on the Video");
-		LoadRequest cam4 = load.requestWebcam(4);
-		load.resolve(cam.id, true, {});
-		check(!swapIn() && !load.committedWebcam(), "26. a second webcam request cancels the first");
-		load.resolve(cam4.id, true, {});
-		check(swapIn() && isWebcam && index == 4 && load.committedWebcam() && load.committedWebcamIndex() == 4 &&
-		          load.committedPath() == videos[2],
-		      "26. resolving the latest webcam load swaps in webcam 4");
 
 		params.setInt("source_kind", 1);
 		sendFrame(client.fd, 0x1, setFrame("source_kind", "3"));
@@ -605,43 +562,26 @@ int main() {
 		check(webcamReject.empty() && fake.webcam == params.getInt("webcam_index") && params.getInt("source_kind") == 1,
 		      "26. a set of source_kind 3 asks for a webcam load and leaves the param alone");
 
-		// A Load goes through the instrument; the loader then starts what the instrument asked the Source for.
-		auto onLoad = [&](const RemoteSet& set) {
-			fake.loaded.clear();
-			std::string reject = applyRemote(instrument, set);
-			if (!reject.empty()) {
-				session.send(reject);
-				return LoadRequest{0, false, {}, 0};
-			}
-			return load.requestVideo(fake.loaded);
-		};
-		const std::string committed = load.committedPath();
 		sendFrame(client.fd, 0x1, R"({"t":"load","name":"b.mov"})");
 		sets = waitDrain(session);
 		check(sets.size() == 1 && sets[0].kind == RemoteKind::Load && sets[0].name == "b.mov",
 		      "29. load drains as one Load item naming b.mov");
-		LoadRequest toB = sets.size() == 1 ? onLoad(sets[0]) : LoadRequest{0, false, {}, 0};
-		check(toB.path == videos[1] && load.inflight() == toB.id && load.committedPath() == committed &&
-		          load.committedWebcam() && fake.dubbed.empty(),
-		      "29. a tap starts a load of b.mov, keeps the committed Source, and does not start a Commit");
+		std::string loadReject = sets.size() == 1 ? applyRemote(instrument, sets[0]) : "none drained";
+		check(loadReject.empty() && fake.loaded == videos[1] && fake.dubbed.empty(),
+		      "29. a tap asks the Source to load b.mov and does not start a Commit");
 		sendFrame(client.fd, 0x1, R"({"t":"load","name":"a.mov"})");
 		sets = waitDrain(session);
-		LoadRequest toA = sets.size() == 1 ? onLoad(sets[0]) : LoadRequest{0, false, {}, 0};
-		check(toA.path == videos[0] && load.inflight() == toA.id, "29. a second tap starts a load of a.mov");
-		load.resolve(toB.id, true, {});
-		check(!swapIn() && load.busy() && load.committedPath() == committed,
-		      "29. resolving the first tap swaps nothing");
-		load.resolve(toA.id, true, {});
-		check(swapIn() && !isWebcam && path == videos[0] && load.committedPath() == videos[0] && fake.dubbed.empty(),
-		      "29. resolving the second tap swaps a.mov in");
+		loadReject = sets.size() == 1 ? applyRemote(instrument, sets[0]) : "none drained";
+		check(loadReject.empty() && fake.loaded == videos[0], "29. a second tap asks the Source to load a.mov");
 
 		sendFrame(client.fd, 0x1, R"({"t":"load","name":"zzz.mov"})");
 		sets = waitDrain(session);
-		LoadRequest none = sets.size() == 1 ? onLoad(sets[0]) : LoadRequest{1, false, {}, 0};
+		loadReject = sets.size() == 1 ? applyRemote(instrument, sets[0]) : "none drained";
+		if (!loadReject.empty()) session.send(loadReject);
 		payload = readText(client);
-		check(none.id == 0 && field(payload, "name") == "\"source\"" &&
-		          field(payload, "reason") == "\"no such video\"" && !load.busy() && load.committedPath() == videos[0],
-		      "30. a load of an unknown name is rejected as no such video and keeps the committed Video");
+		check(loadReject != "none drained" && field(payload, "name") == "\"source\"" &&
+		          field(payload, "reason") == "\"no such video\"" && fake.loaded == videos[0],
+		      "30. a load of an unknown name is rejected as no such video and keeps the Video");
 
 		const std::string jpeg("\xff\xd8\0\r\n\r\nthumb\xff\xd9", 14);
 		session.setThumbs({{"a.mov", jpeg}, {"my clip.mov", "x"}});
@@ -700,27 +640,8 @@ int main() {
 
 	check(stepVideo({}, "/v/a.mov", 1).empty() && stepVideo({}, "", -1).empty(), "27. an empty list steps to nothing");
 	const std::vector<std::string> abc = {"a", "b", "c"};
-	check(!stillSourceCancelsLoad(0, 0) && !stillSourceCancelsLoad(2, 2),
-	      "34. staying on Shader or Black does not cancel a load");
-	check(stillSourceCancelsLoad(0, 1) && stillSourceCancelsLoad(2, 3) && stillSourceCancelsLoad(4, 1),
-	      "34. choosing Shader, Black, or Draw cancels a load");
-	check(!stillSourceCancelsLoad(1, 0) && !stillSourceCancelsLoad(3, 0),
-	      "34. choosing a Video or the webcam does not cancel a load");
 	check(stepVideo(abc, "a", 1) == "b" && stepVideo(abc, "b", -1) == "a", "27. next and prev step one Video");
 	check(stepVideo(abc, "c", 1) == "a" && stepVideo(abc, "a", -1) == "c", "27. stepping wraps at both ends");
-	{
-		SourceLoad dropped;
-		LoadRequest stale = dropped.requestVideo("a.mov");
-		dropped.resolve(stale.id, true, {});
-		dropped.cancel();
-		bool webcam = false;
-		std::string path;
-		int index = 0;
-		check(!dropped.pollSwap(webcam, path, index) && dropped.committedPath().empty(),
-		      "28. cancel drops a ready load before it swaps");
-		dropped.resolve(stale.id, true, {});
-		check(!dropped.pollSwap(webcam, path, index), "28. a resolve after cancel does not swap");
-	}
 	check(stepVideo(abc, "x", -1) == "c" && stepVideo(abc, "x", 1) == "a",
 	      "27. from an unknown Video prev picks the last and next the first");
 	{

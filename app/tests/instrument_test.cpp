@@ -37,11 +37,11 @@ struct FakeSource : SourcePort {
 	}
 	void primePage(const std::vector<std::string>& paths, float, float) override { page = paths; }
 	void loadWebcam(int index) override { webcams.push_back(index); }
-	void showFolder(const std::string& path, const std::vector<std::string>& videos, ParamBus& params) override {
-		list = videos;
-		params.setString("videos_folder", path);
-		params.setInt("videos_count", int(videos.size()));
-	}
+	void showFolder(const std::string&, const std::vector<std::string>& videos) override { list = videos; }
+	void choose(SourceKind) override {}
+	void setPlayback(bool, bool, float, float) override {}
+	void restartFileAtLoopStart() override {}
+	SourceStatus status() const override { return {}; }
 	std::vector<std::string> videos() const override { return list; }
 };
 

@@ -32,6 +32,7 @@ Outcome Instrument::setSwitch(const std::string& name, bool on) {
 		return refused(name, "no export path");
 	params.setBool(name, on);
 	if (name == "video_aspect" && on) params.setFloat("video_sy", params.getFloat("video_sx"));
+	if (name == "file_loop" || name == "file_paused") applyPlayback();
 	return {};
 }
 
@@ -42,23 +43,44 @@ Outcome Instrument::setNumber(const std::string& name, double value) {
 	if (control->min < control->max) value = std::clamp(value, double(control->min), double(control->max));
 	if (control->type == ControlType::Int) {
 		int v = int(std::lround(value));
-		if (name == "source_kind" && v == int(SourceKind::Webcam)) {
-			chooseWebcam();
+		if (name == "source_kind") {
+			if (v == int(SourceKind::Webcam)) {
+				source.loadWebcam(params.getInt("webcam_index"));
+				return {};
+			}
+			params.setInt(name, v);
+			if (v == int(SourceKind::File)) {
+				std::string path = params.getString("file_path");
+				if (source.status().kind != SourceKind::File && !path.empty())
+					source.loadVideo(path, loopStart(), loopLength());
+			} else {
+				source.choose(static_cast<SourceKind>(v));
+			}
 			return {};
 		}
 		params.setInt(name, v);
+		if (name == "webcam_index" && (params.getInt("source_kind") == int(SourceKind::Webcam) ||
+		                               source.status().kind == SourceKind::Webcam))
+			source.loadWebcam(v);
 		return {};
 	}
 	float v = float(value);
 	bool tempoChanged = name == "bpm" && v != params.getFloat("bpm");
 	params.setFloat(name, v);
 	if (tempoChanged && params.getBool("link_enabled") && tempo) tempo(v);
+	if (name == "file_loop_start" || name == "file_loop_length") applyPlayback();
 	return {};
 }
 
 Outcome Instrument::setText(const std::string& name, const std::string& text) {
 	if (!controlOf(name, ControlType::String)) return refused(name, "bad value");
 	params.setString(name, text);
+	if (name == "file_path") {
+		if (!text.empty()) source.loadVideo(text, loopStart(), loopLength());
+	} else if (name == "videos_folder") {
+		source.showFolder(text, scanVideos(text));
+		params.setInt("videos_count", int(source.videos().size()));
+	}
 	return {};
 }
 
@@ -137,7 +159,9 @@ void Instrument::primePage(const std::vector<std::string>& names) {
 
 Outcome Instrument::chooseFolder(const std::string& path) {
 	if (!folders.select(path)) return refused("folder", "no such folder");
-	source.showFolder(path, folders.current()->videos, params);
+	source.showFolder(path, folders.current()->videos);
+	params.setString("videos_folder", path);
+	params.setInt("videos_count", int(source.videos().size()));
 	return {};
 }
 
@@ -148,6 +172,35 @@ void Instrument::addFolder(const std::string& path, const std::vector<std::strin
 
 void Instrument::chooseWebcam() {
 	source.loadWebcam(params.getInt("webcam_index"));
+}
+
+void Instrument::record(const SourceStatus& status) {
+	if (!status.swapped) return;
+	params.setInt("source_kind", int(status.kind));
+	params.setString("file_path", status.path);
+	if (status.kind == SourceKind::Webcam) params.setInt("webcam_index", status.webcamIndex);
+}
+
+void Instrument::restartVideo() {
+	if (params.getInt("file_run_mode") == 1 && params.getInt("source_kind") == int(SourceKind::File))
+		source.restartFileAtLoopStart();
+}
+
+void Instrument::restoreSource() {
+	applyPlayback();
+	int kind = params.getInt("source_kind");
+	if (kind == int(SourceKind::File)) {
+		std::string path = params.getString("file_path");
+		if (!path.empty()) source.loadVideo(path, loopStart(), loopLength());
+	} else if (kind == int(SourceKind::Webcam)) {
+		source.loadWebcam(params.getInt("webcam_index"));
+	} else {
+		source.choose(static_cast<SourceKind>(kind));
+	}
+}
+
+void Instrument::applyPlayback() {
+	source.setPlayback(params.getBool("file_loop"), params.getBool("file_paused"), loopStart(), loopLength());
 }
 
 float Instrument::loopStart() const {

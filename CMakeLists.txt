@@ -159,6 +159,18 @@ add_executable(source_controller_test
 )
 target_include_directories(source_controller_test PRIVATE app/src)
 
+add_executable(source_request_test
+  app/tests/source_request_test.cpp
+  app/src/io/SourceController.cpp
+  app/src/io/PageCache.cpp
+  app/src/io/SourceLoad.cpp
+  app/src/io/FolderList.cpp
+  app/src/ui/ParamBus.cpp
+  app/src/setup/SetupStore.cpp
+  app/src/control/Instrument.cpp
+)
+target_include_directories(source_request_test PRIVATE app/src)
+
 add_custom_target(gestures_test
   COMMAND node ${CMAKE_SOURCE_DIR}/app/tests/gestures_test.js
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -230,6 +242,7 @@ set(cpp_tests
   instrument_test
   hotkey_test
   source_controller_test
+  source_request_test
 )
 foreach(test_name IN LISTS cpp_tests)
   add_test(NAME ${test_name} COMMAND ${test_name})
