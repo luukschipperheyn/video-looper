@@ -232,6 +232,69 @@ int main() {
 		SourceController source(picture, fakes(world));
 		FolderList folders;
 		Instrument instrument(params, source, folders, {});
+		instrument.setText("file_path", "/v/draw.mov");
+		instrument.setNumber("source_kind", int(SourceKind::Draw));
+		bool swapped = false;
+		bool held = true;
+		for (int i = 0; i < 40; ++i) {
+			frame(source, instrument);
+			swapped = swapped || source.status().swapped;
+			held = held && source.status().kind == SourceKind::Draw;
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));
+		}
+		check(!swapped && held && world.count(&World::opened, "/v/draw.mov") == 0 &&
+		          source.status().kind == SourceKind::Draw,
+		      "7. choosing Draw before a Video starts leaves Draw and that Video stays closed");
+	}
+
+	{
+		World world;
+		FakePicture picture;
+		ParamBus params;
+		SourceController source(picture, fakes(world));
+		FolderList folders;
+		Instrument instrument(params, source, folders, {});
+		instrument.setText("file_path", "/v/black.mov");
+		instrument.setNumber("source_kind", int(SourceKind::Black));
+		bool swapped = false;
+		bool held = true;
+		for (int i = 0; i < 40; ++i) {
+			frame(source, instrument);
+			swapped = swapped || source.status().swapped;
+			held = held && source.status().kind == SourceKind::Black;
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));
+		}
+		check(!swapped && held && world.count(&World::opened, "/v/black.mov") == 0 &&
+		          source.status().kind == SourceKind::Black,
+		      "8. choosing Black before a Video starts leaves Black and that Video stays closed");
+	}
+
+	{
+		World world;
+		FakePicture picture;
+		ParamBus params;
+		SourceController source(picture, fakes(world));
+		FolderList folders;
+		Instrument instrument(params, source, folders, {});
+		instrument.setNumber("webcam_index", 4);
+		instrument.setText("file_path", "/v/cam.mov");
+		instrument.setNumber("source_kind", int(SourceKind::Webcam));
+		check(framesUntil(source, instrument,
+		                  [&] {
+			                  return source.status().swapped && source.status().kind == SourceKind::Webcam &&
+			                         source.status().webcamIndex == 4;
+		                  }) &&
+		          world.count(&World::opened, "/v/cam.mov") == 0 && world.lastCamera() == 4,
+		      "9. choosing a webcam before a Video starts loads that camera and the Video stays closed");
+	}
+
+	{
+		World world;
+		FakePicture picture;
+		ParamBus params;
+		SourceController source(picture, fakes(world));
+		FolderList folders;
+		Instrument instrument(params, source, folders, {});
 		params.setInt("source_kind", int(SourceKind::File));
 		params.setString("file_path", "/v/saved.mov");
 		params.setFloat("file_loop_start", 0.2f);
