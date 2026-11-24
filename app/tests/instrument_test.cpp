@@ -6,6 +6,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 #include <vector>
@@ -220,6 +222,24 @@ int main() {
 	Outcome toggled = instrument.toggle("bpm");
 	check(!toggled.ok && toggled.reason == "bad value" && params.getFloat("bpm") == bpm,
 	      "14. toggle of a number is refused");
+
+	{
+		ParamBus fresh;
+		FakeSource sink;
+		FolderList listed;
+		Instrument mac(fresh, sink, listed, {});
+		auto dir = std::filesystem::temp_directory_path() / "video-looper-mac-folder";
+		std::filesystem::remove_all(dir);
+		std::filesystem::create_directories(dir);
+		std::ofstream{(dir / "a.mov").string()};
+		mac.setText("videos_folder", dir.string());
+		const PreparedFolder* current = listed.current();
+		const std::vector<std::string> videos{(dir / "a.mov").string()};
+		check(current && current->path == dir.string() && listed.paths() == std::vector<std::string>{dir.string()} &&
+		          fresh.getString("videos_folder") == dir.string() && current->videos == videos,
+		      "15. setting the Videos folder the way the Mac button does lists it and makes it current");
+		std::filesystem::remove_all(dir);
+	}
 
 	std::printf("%s (%d failures)\n", failures ? "FAILED" : "ALL PASSED", failures);
 	return failures ? 1 : 0;
