@@ -18,6 +18,17 @@ struct FxReload {
 	bool repeat = false;
 };
 
+// p1..p3 mean what the mode says: mix, decay, zoom for Feedback; distance and angle for Repeat and Grid, which
+// take their number of copies from count instead of p3.
+struct FxSettings {
+	int mode = 0;
+	float p1 = 0;
+	float p2 = 0;
+	float p3 = 0;
+	int count = 0;
+	int repeatBlend = 0;
+};
+
 class FxPipeline {
 public:
 	FxPipeline();
@@ -25,10 +36,8 @@ public:
 	FxPipeline(const FxPipeline&) = delete;
 	FxPipeline& operator=(const FxPipeline&) = delete;
 
-	void init(int width, int height, const std::string& vertexPath, const std::string& feedbackFragPath,
-	          const std::string& feedbackDiffFragPath, const std::string& feedbackChromaFragPath,
-	          const std::string& feedbackKaleidoFragPath, const std::string& blurXFragPath,
-	          const std::string& blurYFragPath, const std::string& repeatFragPath);
+	// Loads its shaders from shaderDir.
+	void init(int width, int height, const std::string& shaderDir);
 
 	void resize(int width, int height);
 	void registerWatches(HotReload& hot);
@@ -41,9 +50,9 @@ public:
 	// center and half are in frame pixels, the same placement video_fit.frag uses.
 	void setWholeStamp(GLuint tex, float centerX, float centerY, float halfX, float halfY, float rot);
 
-	// Render one FX frame. Returns the texture containing the result for this frame.
-	GLuint process(int viewportW, int viewportH, GLuint ringTex0, GLuint ringTex1, float baseMix, int fxMode, float p1,
-	               float p2, float p3, int repeatBlend, FullscreenQuad& quad);
+	// Renders one FX frame at the pipeline's size from two neighbouring frames mixed by baseMix. Returns the
+	// texture holding the result.
+	GLuint process(GLuint tex0, GLuint tex1, float baseMix, const FxSettings& fx, FullscreenQuad& quad);
 
 	// Texture containing the most recently presented FX output
 	GLuint getPrevOutputTexture() const;

@@ -1,11 +1,13 @@
 #pragma once
 
+#include <OpenGL/gl3.h>
+
 #include "io/VideoSource.hpp"
 #include <string>
 #include <utility>
 #include <vector>
 
-class AVFFileSource : public IVideoSource {
+class AVFFileSource : public VideoDecoder {
 public:
 	AVFFileSource();
 	~AVFFileSource() override;
@@ -14,21 +16,20 @@ public:
 	void setLoop(bool l) override;
 	void tick(double dt) override;
 	void stop() override;
-	bool isOpen() const override;
+	bool isOpen() const;
 	bool grab(GLuint destTex, int& outW, int& outH) override;
 	// Decodes the next frame into bgra (BGRA, bottom row first) without touching GL.
-	bool copyFrame(std::vector<unsigned char>& bgra, int& outW, int& outH);
-	void swap(AVFFileSource& other) { std::swap(impl, other.impl); }
-	float nominalFps() const;
+	bool copyFrame(std::vector<unsigned char>& bgra, int& outW, int& outH) override;
+	float nominalFps() const override;
 
 	// Normalized loop range [0..1], start < end. Applies immediately.
-	void setLoopRange(float startPct, float endPct);
+	void setLoopRange(float startPct, float endPct) override;
 
 	// Restart playback at current loop start immediately
-	void restartAtLoopStart();
+	void restartAtLoopStart() override;
 
 	// True after a non-looping read passes the end of the range, until the reader is recreated.
-	bool ended() const;
+	bool ended() const override;
 
 private:
 	struct Impl;

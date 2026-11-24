@@ -1,5 +1,7 @@
 #include "setup/SetupStore.hpp"
 
+#include "control/ControlTable.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -11,85 +13,8 @@
 
 namespace {
 
-struct BoolKey {
-	const char* key;
-	bool PerformanceSetup::* member;
-};
-struct IntKey {
-	const char* key;
-	int PerformanceSetup::* member;
-};
-struct FloatKey {
-	const char* key;
-	float PerformanceSetup::* member;
-};
-struct StringKey {
-	const char* key;
-	std::string PerformanceSetup::* member;
-};
-
-const BoolKey kBools[] = {
-	{"env_enabled", &PerformanceSetup::env_enabled},     {"fx_enabled", &PerformanceSetup::fx_enabled},
-	{"fx_commit", &PerformanceSetup::fx_commit},         {"source_fx_enabled", &PerformanceSetup::source_fx_enabled},
-	{"video_bars", &PerformanceSetup::video_bars},       {"video_aspect", &PerformanceSetup::video_aspect},
-	{"file_loop", &PerformanceSetup::file_loop},         {"file_paused", &PerformanceSetup::file_paused},
-	{"tempo_coupled", &PerformanceSetup::tempo_coupled}, {"ipad_page", &PerformanceSetup::ipad_page},
-};
-const IntKey kInts[] = {
-	{"record_blend_mode", &PerformanceSetup::record_blend_mode},
-	{"fx_mode", &PerformanceSetup::fx_mode},
-	{"fx_count", &PerformanceSetup::fx_count},
-	{"fx_repeat_blend", &PerformanceSetup::fx_repeat_blend},
-	{"source_fx_mode", &PerformanceSetup::source_fx_mode},
-	{"source_fx_count", &PerformanceSetup::source_fx_count},
-	{"source_fx_repeat_blend", &PerformanceSetup::source_fx_repeat_blend},
-	{"source_kind", &PerformanceSetup::source_kind},
-	{"webcam_index", &PerformanceSetup::webcam_index},
-	{"file_run_mode", &PerformanceSetup::file_run_mode},
-};
-const FloatKey kFloats[] = {
-	{"record_blend_opacity", &PerformanceSetup::record_blend_opacity},
-	{"gain_mix", &PerformanceSetup::gain_mix},
-	{"env_attack", &PerformanceSetup::env_attack},
-	{"env_decay", &PerformanceSetup::env_decay},
-	{"env_sustain", &PerformanceSetup::env_sustain},
-	{"env_release", &PerformanceSetup::env_release},
-	{"fx_param1", &PerformanceSetup::fx_param1},
-	{"fx_param2", &PerformanceSetup::fx_param2},
-	{"fx_param3", &PerformanceSetup::fx_param3},
-	{"source_fx_param1", &PerformanceSetup::source_fx_param1},
-	{"source_fx_param2", &PerformanceSetup::source_fx_param2},
-	{"source_fx_param3", &PerformanceSetup::source_fx_param3},
-	{"video_tx", &PerformanceSetup::video_tx},
-	{"video_ty", &PerformanceSetup::video_ty},
-	{"video_sx", &PerformanceSetup::video_sx},
-	{"video_sy", &PerformanceSetup::video_sy},
-	{"video_rot", &PerformanceSetup::video_rot},
-	{"file_loop_start", &PerformanceSetup::file_loop_start},
-	{"file_loop_length", &PerformanceSetup::file_loop_length},
-	{"bpm", &PerformanceSetup::bpm},
-	{"read_speed_mult", &PerformanceSetup::read_speed_mult},
-	{"record_fps", &PerformanceSetup::record_fps},
-};
-const StringKey kStrings[] = {
-	{"file_path", &PerformanceSetup::file_path},
-	{"videos_folder", &PerformanceSetup::videos_folder},
-	{"record_path", &PerformanceSetup::record_path},
-};
-
-enum class Field { Unknown, Bool, Int, Float, String, Folders };
-
-Field fieldOf(const std::string& key) {
-	for (const BoolKey& f : kBools)
-		if (key == f.key) return Field::Bool;
-	for (const IntKey& f : kInts)
-		if (key == f.key) return Field::Int;
-	for (const FloatKey& f : kFloats)
-		if (key == f.key) return Field::Float;
-	for (const StringKey& f : kStrings)
-		if (key == f.key) return Field::String;
-	if (key == "folders") return Field::Folders;
-	return Field::Unknown;
+bool saved(const Control& c) {
+	return c.keep == Keep::Saved;
 }
 
 std::string jsonString(const std::string& s) {
@@ -119,35 +44,26 @@ std::string jsonFloat(float v) {
 
 std::string canonicalSetup(const PerformanceSetup& setup) {
 	std::string out = "{";
-	bool first = true;
-	auto comma = [&] {
-		if (!first) out += ',';
-		first = false;
-	};
-	for (const BoolKey& f : kBools) {
-		comma();
-		out += jsonString(f.key);
-		out += setup.*(f.member) ? ":true" : ":false";
-	}
-	for (const IntKey& f : kInts) {
-		comma();
-		out += jsonString(f.key);
+	for (const Control& c : kControls) {
+		if (!saved(c)) continue;
+		out += jsonString(c.name);
 		out += ':';
-		out += std::to_string(setup.*(f.member));
+		switch (c.type) {
+		case ControlType::Bool:
+			out += setup.values.getBool(c.name) ? "true" : "false";
+			break;
+		case ControlType::Int:
+			out += std::to_string(setup.values.getInt(c.name));
+			break;
+		case ControlType::Float:
+			out += jsonFloat(setup.values.getFloat(c.name));
+			break;
+		case ControlType::String:
+			out += jsonString(setup.values.getString(c.name));
+			break;
+		}
+		out += ',';
 	}
-	for (const FloatKey& f : kFloats) {
-		comma();
-		out += jsonString(f.key);
-		out += ':';
-		out += jsonFloat(setup.*(f.member));
-	}
-	for (const StringKey& f : kStrings) {
-		comma();
-		out += jsonString(f.key);
-		out += ':';
-		out += jsonString(setup.*(f.member));
-	}
-	comma();
 	out += "\"folders\":[";
 	for (size_t i = 0; i < setup.folders.size(); ++i)
 		out += (i ? "," : "") + jsonString(setup.folders[i]);
@@ -190,34 +106,26 @@ public:
 		for (;;) {
 			std::string key;
 			if (!parseString(key) || !eat(':')) return false;
-			switch (fieldOf(key)) {
-			case Field::Bool: {
+			const Control* control = findControl(key);
+			if (key == "folders") {
+				if (!parseStringArray(setup.folders)) return false;
+			} else if (!control || !saved(*control)) {
+				if (!skipValue()) return false;
+			} else if (control->type == ControlType::Bool) {
 				bool value;
 				if (!parseBool(value)) return false;
-				for (const BoolKey& f : kBools)
-					if (key == f.key) setup.*(f.member) = value;
-				break;
-			}
-			case Field::Int:
-			case Field::Float: {
-				double value;
-				if (!parseNumber(value)) return false;
-				if (!assignNumber(setup, key, value)) return false;
-				break;
-			}
-			case Field::String: {
+				setup.values.setBool(key, value);
+			} else if (control->type == ControlType::String) {
 				std::string value;
 				if (!parseString(value)) return false;
-				for (const StringKey& f : kStrings)
-					if (key == f.key) setup.*(f.member) = value;
-				break;
-			}
-			case Field::Folders:
-				if (!parseStringArray(setup.folders)) return false;
-				break;
-			case Field::Unknown:
-				if (!skipValue()) return false;
-				break;
+				setup.values.setString(key, value);
+			} else {
+				double value;
+				if (!parseNumber(value)) return false;
+				if (control->type == ControlType::Int)
+					setup.values.setInt(key, static_cast<int>(std::lround(value)));
+				else
+					setup.values.setFloat(key, static_cast<float>(value));
 			}
 			skip();
 			if (peek(',')) {
@@ -391,19 +299,6 @@ private:
 		}
 		return depth == 0;
 	}
-	static bool assignNumber(PerformanceSetup& setup, const std::string& key, double value) {
-		for (const IntKey& f : kInts)
-			if (key == f.key) {
-				setup.*(f.member) = static_cast<int>(std::lround(value));
-				return true;
-			}
-		for (const FloatKey& f : kFloats)
-			if (key == f.key) {
-				setup.*(f.member) = static_cast<float>(value);
-				return true;
-			}
-		return false;
-	}
 };
 
 bool directory(const std::string& path) {
@@ -413,32 +308,38 @@ bool directory(const std::string& path) {
 
 } // namespace
 
+// Copies the Saved controls from one bus to another.
+static void copySaved(const ParamBus& from, ParamBus& to) {
+	for (const Control& c : kControls) {
+		if (!saved(c)) continue;
+		switch (c.type) {
+		case ControlType::Bool:
+			to.setBool(c.name, from.getBool(c.name));
+			break;
+		case ControlType::Int:
+			to.setInt(c.name, from.getInt(c.name));
+			break;
+		case ControlType::Float:
+			to.setFloat(c.name, from.getFloat(c.name));
+			break;
+		case ControlType::String:
+			to.setString(c.name, from.getString(c.name));
+			break;
+		}
+	}
+}
+
 PerformanceSetup captureSetup(const ParamBus& params, const FolderList& folders) {
 	PerformanceSetup setup;
-	for (const BoolKey& f : kBools)
-		setup.*(f.member) = params.getBool(f.key, setup.*(f.member));
-	for (const IntKey& f : kInts)
-		setup.*(f.member) = params.getInt(f.key, setup.*(f.member));
-	for (const FloatKey& f : kFloats)
-		setup.*(f.member) = params.getFloat(f.key, setup.*(f.member));
-	for (const StringKey& f : kStrings)
-		setup.*(f.member) = params.getString(f.key, setup.*(f.member));
+	copySaved(params, setup.values);
 	setup.folders = folders.paths();
 	return setup;
 }
 
 void applySetup(ParamBus& params, const PerformanceSetup& setup) {
-	for (const BoolKey& f : kBools)
-		params.setBool(f.key, setup.*(f.member));
-	for (const IntKey& f : kInts)
-		params.setInt(f.key, setup.*(f.member));
-	for (const FloatKey& f : kFloats)
-		params.setFloat(f.key, setup.*(f.member));
-	for (const StringKey& f : kStrings)
-		params.setString(f.key, setup.*(f.member));
-	params.setBool("arm_record", false);
-	params.setBool("cue_active", false);
-	params.setBool("record_enabled", false);
+	copySaved(setup.values, params);
+	for (const Control& c : kControls)
+		if (c.keep == Keep::StartsOff) params.setBool(c.name, c.def != 0.0f);
 }
 
 bool writeSetup(const std::filesystem::path& path, const PerformanceSetup& setup) {
@@ -459,10 +360,10 @@ RestoredFolders restoreFolders(const PerformanceSetup& setup) {
 	RestoredFolders out;
 	for (const std::string& path : setup.folders)
 		if (directory(path)) out.paths.push_back(path);
-	if (!setup.videos_folder.empty() && directory(setup.videos_folder)) {
-		if (std::find(out.paths.begin(), out.paths.end(), setup.videos_folder) == out.paths.end())
-			out.paths.push_back(setup.videos_folder);
-		out.current = setup.videos_folder;
+	std::string current = setup.values.getString("videos_folder");
+	if (!current.empty() && directory(current)) {
+		if (std::find(out.paths.begin(), out.paths.end(), current) == out.paths.end()) out.paths.push_back(current);
+		out.current = current;
 	}
 	return out;
 }

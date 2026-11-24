@@ -531,7 +531,7 @@ function makeFader(o) {
 	const track = h("div.ft", null, fill, o.ticks ? h("div.ticks") : null);
 	const el = h("div.fader" + (o.vertical ? ".v" : "") + (o.bipolar ? ".bip" : "") + (o.big ? ".big" : "") + (o.dense ? ".dense" : ""), null,
 		h("div.fh", null, label, value), track);
-	const fader = { el: el, fill: fill, value: value, label: label, name: o.name, def: o.def, vertical: !!o.vertical, bipolar: !!o.bipolar, off: o.off, text: o.text, span: o.span };
+	const fader = { el: el, fill: fill, value: value, label: label, name: o.name, def: schema[o.name].def, vertical: !!o.vertical, bipolar: !!o.bipolar, off: o.off, text: o.text, span: o.span };
 	bindFader(track, fader);
 	return fader;
 }
@@ -639,7 +639,7 @@ panicBtn.addEventListener("click", () => {
 	paint();
 });
 
-const opacity = makeFader({ name: "record_blend_opacity", label: "Opacity", def: 1, big: true, ticks: true, text: pct });
+const opacity = makeFader({ name: "record_blend_opacity", label: "Opacity", big: true, ticks: true, text: pct });
 
 const kindSeg = makeSeg(
 	[{ value: 1, label: "Video" }, { value: 3, label: "Webcam" }, { value: 0, label: "Shader" }, { value: 2, label: "Zwart" }],
@@ -1295,10 +1295,10 @@ function fxParamText(mode, which, v) {
 	if (which === 3 && mode !== 1) return (v >= 0 ? "+" : "") + v.toFixed(3);
 	return which === 2 ? v.toFixed(3) : v.toFixed(2);
 }
-const fx1 = makeFader({ name: "fx_param1", label: "Mix", def: 0.8, dense: true, off: () => Number(state.local.fx_mode) === 1, text: (v) => fxParamText(Number(state.local.fx_mode), 1, v) });
-const fx2 = makeFader({ name: "fx_param2", label: "Decay", def: 0.985, dense: true, text: (v) => fxParamText(Number(state.local.fx_mode), 2, v) });
-const fx3 = makeFader({ name: "fx_param3", label: "Zoom", def: 0, bipolar: true, dense: true, text: (v) => fxParamText(Number(state.local.fx_mode), 3, v) });
-const fxCount = makeFader({ name: "fx_count", label: "Aantal", def: 4, dense: true, text: (v) => String(Math.min(Math.round(v), Number(state.local.fx_mode) === GRID_MODE ? GRID_MAX : 16)), span: () => Number(state.local.fx_mode) === GRID_MODE ? { min: 0, max: GRID_MAX } : null });
+const fx1 = makeFader({ name: "fx_param1", label: "Mix", dense: true, off: () => Number(state.local.fx_mode) === 1, text: (v) => fxParamText(Number(state.local.fx_mode), 1, v) });
+const fx2 = makeFader({ name: "fx_param2", label: "Decay", dense: true, text: (v) => fxParamText(Number(state.local.fx_mode), 2, v) });
+const fx3 = makeFader({ name: "fx_param3", label: "Zoom", bipolar: true, dense: true, text: (v) => fxParamText(Number(state.local.fx_mode), 3, v) });
+const fxCount = makeFader({ name: "fx_count", label: "Aantal", dense: true, text: (v) => String(Math.min(Math.round(v), Number(state.local.fx_mode) === GRID_MODE ? GRID_MAX : 16)), span: () => Number(state.local.fx_mode) === GRID_MODE ? { min: 0, max: GRID_MAX } : null });
 const fxBlend = makeBlendPick("fx_repeat_blend");
 const fxTog = makeTog("FX");
 const bakeTog = makeTog("Bake FX", "amber");
@@ -1306,10 +1306,10 @@ fxTog.el.addEventListener("click", () => pickBool("fx_enabled"));
 bakeTog.el.addEventListener("click", () => pickBool("fx_commit"));
 const fxSeg = makeSeg(FX_MODES.map((name, i) => ({ value: i, label: name })), (value) => pickInt("fx_mode", value));
 fxSeg.el.classList.add("modes");
-const sfx1 = makeFader({ name: "source_fx_param1", label: "Afstand", def: 0.12, dense: true, off: () => Number(state.local.source_fx_mode) === 1, text: (v) => fxParamText(Number(state.local.source_fx_mode), 1, v) });
-const sfx2 = makeFader({ name: "source_fx_param2", label: "Hoek", def: 0, dense: true, text: (v) => fxParamText(Number(state.local.source_fx_mode), 2, v) });
-const sfx3 = makeFader({ name: "source_fx_param3", label: "Zoom", def: 0, bipolar: true, dense: true, text: (v) => fxParamText(Number(state.local.source_fx_mode), 3, v) });
-const sfxCount = makeFader({ name: "source_fx_count", label: "Aantal", def: 4, dense: true, text: (v) => String(Math.min(Math.round(v), Number(state.local.source_fx_mode) === GRID_MODE ? GRID_MAX : 16)), span: () => Number(state.local.source_fx_mode) === GRID_MODE ? { min: 0, max: GRID_MAX } : null });
+const sfx1 = makeFader({ name: "source_fx_param1", label: "Afstand", dense: true, off: () => Number(state.local.source_fx_mode) === 1, text: (v) => fxParamText(Number(state.local.source_fx_mode), 1, v) });
+const sfx2 = makeFader({ name: "source_fx_param2", label: "Hoek", dense: true, text: (v) => fxParamText(Number(state.local.source_fx_mode), 2, v) });
+const sfx3 = makeFader({ name: "source_fx_param3", label: "Zoom", bipolar: true, dense: true, text: (v) => fxParamText(Number(state.local.source_fx_mode), 3, v) });
+const sfxCount = makeFader({ name: "source_fx_count", label: "Aantal", dense: true, text: (v) => String(Math.min(Math.round(v), Number(state.local.source_fx_mode) === GRID_MODE ? GRID_MAX : 16)), span: () => Number(state.local.source_fx_mode) === GRID_MODE ? { min: 0, max: GRID_MAX } : null });
 const sfxBlend = makeBlendPick("source_fx_repeat_blend");
 const sfxTog = makeTog("Source FX");
 sfxTog.el.addEventListener("click", () => pickBool("source_fx_enabled"));
@@ -1368,7 +1368,7 @@ function bumpBpm(dir) {
 }
 bpmDown.addEventListener("click", () => bumpBpm(-1));
 bpmUp.addEventListener("click", () => bumpBpm(1));
-const speed = makeFader({ name: "read_speed_mult", label: "Leessnelheid", def: 1, text: (v) => v.toFixed(2) });
+const speed = makeFader({ name: "read_speed_mult", label: "Leessnelheid", text: (v) => v.toFixed(2) });
 const tempoPanel = h("div.panel.tempo", null,
 	h("div.ph", null, h("span.pt", null, "Tempo"), h("span.hint", null, "sleep BPM omhoog/omlaag"), h("div.sp"), coupleTog.el),
 	h("div.row", null, bpmDown, bpmBox, bpmUp, h("div.sp")),
@@ -1400,7 +1400,7 @@ function stepCam(dir) {
 }
 camDown.addEventListener("click", () => stepCam(-1));
 camUp.addEventListener("click", () => stepCam(1));
-const gain = makeFader({ name: "gain_mix", label: "Blend gain", def: 1, text: (v) => v.toFixed(2) });
+const gain = makeFader({ name: "gain_mix", label: "Blend gain", text: (v) => v.toFixed(2) });
 const setupFolderNames = h("p");
 const linkValue = h("p");
 const closeSetup = h("button.btn", { type: "button" }, "Sluit");

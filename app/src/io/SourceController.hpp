@@ -1,118 +1,107 @@
 #pragma once
 
-#include <OpenGL/gl3.h>
 #include <atomic>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
-#include <string>
 
-#include "ui/ParamBus.hpp"
-#include "io/VideoSource.hpp"
-#include "io/AVFWebcamSource.hpp"
-#include "io/AVFFileSource.hpp"
+#include "control/Instrument.hpp"
 #include "io/PageCache.hpp"
 #include "io/SourceLoad.hpp"
+#include "io/VideoSource.hpp"
+#include "ui/ParamBus.hpp"
 
-class SourceController {
+// The life of the Source: a Video or webcam is asked for, opens off the main thread, becomes live in one step
+// once it has a first frame, and a Video may then be Committed into the Loop until it ends.
+//
+// Every method runs on the main thread. tick is called once per frame; a request made between ticks takes
+// effect on the next one. The live Source keeps playing until its replacement is ready. A failed load leaves
+// the live Source alone and is reported once by takeLoadFailure. Choosing the shader or black as the Source
+// kind drops a load that has not swapped in.
+//
+// A Commit (queueDub) starts on the tick its Video becomes the Source: at once when the Video was opened ahead
+// by primePage, otherwise when its load swaps in. While it runs, file_loop and file_paused are off. It ends when
+// the Video has no further frame, or when another Source is loaded; file_loop then goes back to what it was.
+class SourceController : public SourcePort {
 public:
-	SourceController();
-	~SourceController();
+	// picture receives each decoded frame. decoders makes the Video and webcam decoders.
+	SourceController(PicturePort& picture, DecoderFactory decoders);
+	~SourceController() override;
 	SourceController(const SourceController&) = delete;
 	SourceController& operator=(const SourceController&) = delete;
 
-	void init(int width, int height);
-	void resize(int width, int height);
+	// Stops the loaders and the live Source. Safe to call twice.
 	void shutdown();
 
-	// Advance sources and populate preview texture. Returns true if a new frame was uploaded.
-	bool tickAndGrab(double nowSeconds, double dtSeconds, ParamBus& params);
+	// Advances the live Source by dtSeconds and uploads its newest frame. True when a new picture was uploaded.
+	bool tick(double dtSeconds, ParamBus& params);
 
-	// Load a random Video from the current Videos folder as the Source. Does not Commit.
-	void triggerLoadRandomFile(ParamBus& params);
+	void loadVideo(const std::string& path, float loopStart, float loopLength) override;
+	void queueDub(const std::string& path, float loopStart, float loopLength) override;
+	void primePage(const std::vector<std::string>& paths, float loopStart, float loopLength) override;
+	void loadWebcam(int index) override;
+	void showFolder(const std::string& path, const std::vector<std::string>& videos, ParamBus& params) override;
+	std::vector<std::string> videos() const override { return videoFiles; }
 
-	// Restart file playback at current loop start if file source is active
+	// Restarts the live Video at the start of its loop range.
 	void restartFileAtLoopStart();
 
-	// Load previous/next video from the current videos folder. Loads run off the render thread; the live Source
-	// keeps playing until the new one has a first frame.
-	void loadPrevFile(ParamBus& params);
-	void loadNextFile(ParamBus& params);
-	void loadVideo(const std::string& path, float loopStart = 0, float loopLength = 1);
-	// Selects path and Commits it into the Loop once it is the Source.
-	void queueDub(const std::string& path, float loopStart, float loopLength);
-	// Opens these Videos ahead of a tap. paths are full paths. An empty list drops the page.
-	void primePage(const std::vector<std::string>& paths, float loopStart, float loopLength);
-	void loadWebcam(int index);
-	// Why the latest load failed, once. Empty if none.
+	// Why the latest load failed, once. Empty if none. A failure also drops a Commit waiting on that load.
 	std::string takeLoadFailure();
-	// True on the frame a load replaced the live Source.
+	// True on the tick a load replaced the live Source.
 	bool loadSwapped() const { return swappedLoad; }
-	// Full paths of the Videos in the current Videos folder, as of the last scan.
-	std::vector<std::string> videos() const { return videoFiles; }
-	// Makes path the current Videos folder with videos as its Videos, without reading the disk. The live Source
-	// keeps playing.
-	void showFolder(const std::string& path, const std::vector<std::string>& videos, ParamBus& params);
+	// True while a Commit is writing a Video into the Loop. commitVideo is that Video's path.
+	bool committing() const { return commitOn; }
+	const std::string& commitVideo() const { return commitPath; }
 
-	// Query information for UI/debugging
-	GLuint getPreviewTexture() const { return previewTex; }
-	GLuint getPreviewFbo() const { return previewFbo; }
-	// Latest file or webcam frame at its own pixel size, before it is fitted into the loop frame.
-	GLuint frameTexture() const { return frameTex; }
+	// Pixel size of the latest Video or webcam picture. 0 before the first one.
 	int frameWidth() const { return frameW; }
 	int frameHeight() const { return frameH; }
-	float getFileNominalFps() const { return fileSrc.nominalFps(); }
+	float getFileNominalFps() const { return fileSrc->nominalFps(); }
 
 private:
-	void allocatePreview(int width, int height);
-	void destroyPreview();
-	void ensureFrameTexture();
 	bool swapInLoaded(ParamBus& params);
 	void ensureSource(ParamBus& params);
-	// Applies a queued Select or Dub. True when a ready Video was swapped in and its first frame presented.
-	bool applyRequest(double nowSeconds, ParamBus& params);
+	// Applies a queued load or Dub. True when a Video opened ahead was swapped in and its first frame shown.
+	bool applyRequest(ParamBus& params);
 	bool installReady(const std::string& path, float loopStart, float loopLength, ParamBus& params);
-	void beginCommit(double nowSeconds, ParamBus& params, const std::string& path);
+	void beginCommit(ParamBus& params, const std::string& path);
 	void cancelCommit(ParamBus& params);
 	void presentFrame(const std::vector<unsigned char>& bgra, int width, int height);
-	void queueVideo(const std::string& path, float loopStart, float loopLength, bool dub);
 	void startLoad(const LoadRequest& request);
 	void runLoads();
 	std::string openSpare(const LoadRequest& request);
 	void maybeRescanFolder(ParamBus& params);
-	void maybeStartRandomCommit(double nowSeconds, ParamBus& params);
-	void updateCommitProgress(bool updatedPreviewTex, ParamBus& params);
 
-	int w;
-	int h;
-	GLuint previewTex;
-	GLuint previewFbo;
-	GLuint frameTex;
-	int frameW;
-	int frameH;
+	PicturePort& picture;
+	DecoderFactory decoders;
+	int frameW = 0;
+	int frameH = 0;
 
-	AVFWebcamSource webcam;
-	bool webcamActive;
-	AVFFileSource fileSrc;
-	bool fileActive;
-	int seenKind;
-	int seenWebcamIndex;
+	std::unique_ptr<CameraDecoder> webcam;
+	bool webcamActive = false;
+	std::unique_ptr<VideoDecoder> fileSrc;
+	bool fileActive = false;
+	int seenKind = -1;
+	int seenWebcamIndex = -1;
 	bool swappedLoad = false;
 
 	// The worker owns the spares and spareFrame from a request until it resolves; after a swap they hold the
 	// previous live sources until the worker stops them.
 	SourceLoad load;
-	AVFWebcamSource spareWebcam;
-	AVFFileSource spareFile;
+	std::unique_ptr<CameraDecoder> spareWebcam;
+	std::unique_ptr<VideoDecoder> spareFile;
 	std::vector<unsigned char> spareFrame;
-	int spareW;
-	int spareH;
+	int spareW = 0;
+	int spareH = 0;
 	std::mutex jobMutex;
 	std::condition_variable jobReady;
-	LoadRequest job;
-	bool retire;
-	std::atomic<bool> quit;
+	LoadRequest job{0, false, {}, 0};
+	bool retire = false;
+	std::atomic<bool> quit{false};
 	std::thread worker;
 
 	std::vector<std::string> videoFiles;
@@ -127,10 +116,7 @@ private:
 	};
 	PendingVideo pendingVideo;
 	std::string dubOnSwap;
-	bool commitRequested;
-	bool committing;
-	double commitStartTime;
-	float commitNominalFps;
-	int commitFramesWritten;
-	bool savedLoopSetting;
+	bool commitOn = false;
+	std::string commitPath;
+	bool savedLoopSetting = true;
 };

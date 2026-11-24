@@ -34,8 +34,11 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/gl/Shader.cpp
   app/src/gl/FullscreenQuad.cpp
   app/src/gl/FxPipeline.cpp
+  app/src/gl/Compositor.cpp
+  app/src/control/Instrument.cpp
   app/src/buffer/RingBuffer.cpp
   app/src/looper/LooperEngine.cpp
+  app/src/looper/OverdubGate.cpp
   app/src/util/HotReload.cpp
   app/src/link/LinkBridge.cpp
   app/src/clock/Clock.hpp
@@ -77,6 +80,7 @@ add_executable(remote_session_test
   app/src/remote/RemoteSession.cpp
   app/src/remote/RemoteApply.cpp
   app/src/remote/UsageLog.cpp
+  app/src/control/Instrument.cpp
   app/src/ui/ParamBus.cpp
   app/src/io/SourceLoad.cpp
   app/src/io/FolderList.cpp
@@ -101,9 +105,34 @@ add_executable(setup_test
   app/src/setup/SetupStore.cpp
   app/src/ui/ParamBus.cpp
   app/src/io/FolderList.cpp
+  app/src/io/SourceLoad.cpp
+  app/src/control/Instrument.cpp
   app/src/remote/RemoteApply.cpp
 )
 target_include_directories(setup_test PRIVATE app/src)
+
+add_executable(overdub_gate_test app/tests/overdub_gate_test.cpp app/src/looper/OverdubGate.cpp)
+target_include_directories(overdub_gate_test PRIVATE app/src)
+
+add_executable(instrument_test
+  app/tests/instrument_test.cpp
+  app/src/control/Instrument.cpp
+  app/src/ui/ParamBus.cpp
+  app/src/io/FolderList.cpp
+  app/src/io/SourceLoad.cpp
+  app/src/setup/SetupStore.cpp
+)
+target_include_directories(instrument_test PRIVATE app/src)
+
+add_executable(source_controller_test
+  app/tests/source_controller_test.cpp
+  app/src/io/SourceController.cpp
+  app/src/io/PageCache.cpp
+  app/src/io/SourceLoad.cpp
+  app/src/io/FolderList.cpp
+  app/src/ui/ParamBus.cpp
+)
+target_include_directories(source_controller_test PRIVATE app/src)
 
 add_custom_target(gestures_test
   COMMAND node ${CMAKE_SOURCE_DIR}/app/tests/gestures_test.js
