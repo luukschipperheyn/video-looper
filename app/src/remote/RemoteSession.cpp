@@ -738,6 +738,13 @@ bool RemoteSession::handle(int fd) {
 				std::string gestures((std::istreambuf_iterator<char>(gesturesIn)), std::istreambuf_iterator<char>());
 				body.replace(gestureAt, gesturesMark.size(), gestures);
 			}
+			const std::string pageStateMark = "/*PAGE_STATE*/";
+			size_t pageStateAt = body.find(pageStateMark);
+			if (pageStateAt != std::string::npos) {
+				std::ifstream pageStateIn(webDir() / "page_state.js", std::ios::binary);
+				std::string pageState((std::istreambuf_iterator<char>(pageStateIn)), std::istreambuf_iterator<char>());
+				body.replace(pageStateAt, pageStateMark.size(), pageState);
+			}
 			const std::string placeholder = "/*CONTROL_SCHEMA*/null";
 			size_t at = body.find(placeholder);
 			if (at != std::string::npos) body.replace(at, placeholder.size(), controlSchemaJson());

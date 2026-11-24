@@ -273,6 +273,8 @@ int main() {
 		check(res.find("/*CONTROL_SCHEMA*/") == std::string::npos && res.find(bpmSchema) != std::string::npos,
 		      "3. page carries the control schema");
 		check(res.find("relativeDrag") != std::string::npos, "3. page carries the gesture module");
+		check(res.find("/*PAGE_STATE*/") == std::string::npos && res.find("fingerDown") != std::string::npos,
+		      "3. page carries the control state module");
 
 		fd = connectTo(port);
 		std::string req = upgradeRequest("/ws");

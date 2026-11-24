@@ -237,6 +237,9 @@ button:disabled{opacity:.35}
 /*GESTURES*/
 </script>
 <script>
+/*PAGE_STATE*/
+</script>
+<script>
 const schema = /*CONTROL_SCHEMA*/null;
 const dragValue = gestures.relativeDrag;
 const token = new URLSearchParams(location.search).get("token") || "";
@@ -268,34 +271,16 @@ function storedChain() {
 	catch (err) { return "program"; }
 }
 
-const state = {
-	overlay: null,
-	link: "connecting",
-	remote: {},
-	local: {},
-	grabbed: new Set(),
-	fingers: { gate: false, cue: false, erase: false },
-	holds: { gate: 0, cue: 0, erase: 0 },
-	videos: [],
-	folders: [],
-	page: 0,
-	pageSize: 5,
-	paged: false,
+const socket = new WebSocket("ws://" + location.host + "/ws?token=" + encodeURIComponent(token));
+const model = pageState.create(schema, socket, {
+	setInterval: setInterval,
+	clearInterval: clearInterval,
+	now: function () { return performance.now(); },
+}, {
 	tap: storedTap(),
 	fxChain: storedChain(),
-	followed: undefined,
-	exportBase: 0,
-	exportOn: false,
-	exportReason: "",
-	midError: "",
-	midKind: "",
-	relFrom: 1,
-	relStage: 0,
-	taps: {},
-	imageAspect: 16 / 9,
-};
-
-const socket = new WebSocket("ws://" + location.host + "/ws?token=" + encodeURIComponent(token));
+});
+const state = model.state;
 
 function h(tag, props, ...kids) {
 	const parts = tag.split(".");
@@ -338,37 +323,14 @@ function valueOf(name, fallback) {
 	return Number.isFinite(v) ? v : fallback;
 }
 
-function sendSet(name, value) {
-	const control = schema[name];
-	if (!control) return;
-	let v = value;
-	if (control.type === "bool") v = !!value;
-	else {
-		const n = Number(value);
-		if (!Number.isFinite(n)) return;
-		v = Math.min(control.max, Math.max(control.min, n));
-		if (control.type === "int") v = Math.round(Math.min(control.max, Math.max(control.min, v)));
-	}
-	state.local[name] = v;
-	if (openSocket()) socket.send(JSON.stringify({ t: "set", name: name, value: v }));
-}
-
 function sendRaw(msg) {
 	if (openSocket()) socket.send(JSON.stringify(msg));
 }
 
-// One gesture, not each move. The Mac appends these to web-use.jsonl.
 function noteUse(event, name, value) {
 	const msg = { t: "use", e: event, name: name };
 	if (value !== undefined) msg.v = value;
 	sendRaw(msg);
-}
-
-function endGrab(names) {
-	for (const name of names) {
-		if (state.grabbed.has(name)) noteUse("set", name, state.local[name]);
-	}
-	releaseGrab(names);
 }
 
 function showOverlay(name) {
@@ -385,25 +347,6 @@ function closeOverlay() {
 	noteUse("close", state.overlay);
 	state.overlay = null;
 	paint();
-}
-
-function grab(names) {
-	for (const name of names) state.grabbed.add(name);
-}
-
-function releaseGrab(names) {
-	for (const name of names) {
-		state.grabbed.delete(name);
-		if (Object.prototype.hasOwnProperty.call(state.remote, name)) state.local[name] = state.remote[name];
-	}
-	paint();
-}
-
-function noteExport(on) {
-	if (on && !state.exportOn) state.exportBase = performance.now();
-	if (!on) state.exportBase = 0;
-	state.exportOn = !!on;
-	if (on) state.exportReason = "";
 }
 
 function clock(ms) {
@@ -460,34 +403,14 @@ function sourceName() {
 	return state.remote.video ? gestures.shortName(state.remote.video) : "";
 }
 
-function stopHold(name, notify) {
-	if (!state.holds[name]) return false;
-	clearInterval(state.holds[name]);
-	state.holds[name] = 0;
-	state.fingers[name] = false;
-	if (notify) {
-		sendRaw({ t: "release", name: name });
-		noteUse("release", name);
-	}
-	return true;
-}
-
-function startHold(name, el, event) {
-	if (!linkUp() || !openSocket() || state.holds[name]) return;
-	capture(el, event);
-	state.fingers[name] = true;
-	const send = () => sendRaw({ t: "hold", name: name });
-	send();
-	noteUse("hold", name);
-	state.holds[name] = setInterval(send, 100);
-	paint();
-}
-
 function bindHold(name, el) {
-	el.addEventListener("pointerdown", (event) => startHold(name, el, event));
+	el.addEventListener("pointerdown", (event) => {
+		if (!model.holdDown(name)) return;
+		capture(el, event);
+		paint();
+	});
 	const up = () => {
-		state.fingers[name] = false;
-		stopHold(name, true);
+		model.holdUp(name);
 		paint();
 	};
 	el.addEventListener("pointerup", up);
@@ -504,10 +427,10 @@ function bindFader(track, fader) {
 		state.taps[fader.name] = tap.stamp;
 		capture(track, event);
 		pid = event.pointerId;
-		grab([fader.name]);
+		model.fingerDown([fader.name]);
 		if (tap.fired) {
 			restored = true;
-			sendSet(fader.name, fader.def);
+			model.value(fader.name, fader.def);
 			paint();
 			return;
 		}
@@ -528,14 +451,15 @@ function bindFader(track, fader) {
 			min: span ? span.min : control.min,
 			max: span ? span.max : control.max,
 		});
-		sendSet(fader.name, value);
+		model.value(fader.name, value);
 		paint();
 	});
 	const up = (event) => {
 		if (event.pointerId !== pid) return;
 		pid = null;
 		restored = false;
-		endGrab([fader.name]);
+		model.fingerUp([fader.name]);
+		paint();
 	};
 	track.addEventListener("pointerup", up);
 	track.addEventListener("pointercancel", up);
@@ -573,7 +497,7 @@ function makeSeg(options, onPick) {
 
 function pickInt(name, value) {
 	if (!openSocket()) return;
-	sendSet(name, value);
+	model.value(name, value);
 	noteUse("set", name, state.local[name]);
 	paint();
 }
@@ -581,8 +505,8 @@ function pickInt(name, value) {
 function pickBool(name) {
 	if (!openSocket()) return;
 	const next = !state.local[name];
-	sendSet(name, next);
-	if (name === "video_aspect" && next) sendSet("video_sy", state.local.video_sx);
+	model.value(name, next);
+	if (name === "video_aspect" && next) model.value("video_sy", state.local.video_sx);
 	noteUse("set", name, state.local[name]);
 	paint();
 }
@@ -633,26 +557,18 @@ bindHold("erase", erase);
 bindHold("cue", cuePad);
 latchBtn.addEventListener("click", () => {
 	if (!linkUp() || !openSocket()) return;
-	sendSet("arm_record", !state.local.arm_record);
+	model.value("arm_record", !state.local.arm_record);
 	noteUse("set", "arm_record", state.local.arm_record);
 	paint();
 });
 cueVastBtn.addEventListener("click", () => {
 	if (!linkUp() || !openSocket()) return;
-	sendSet("cue_active", !state.local.cue_active);
+	model.value("cue_active", !state.local.cue_active);
 	noteUse("set", "cue_active", state.local.cue_active);
 	paint();
 });
 panicBtn.addEventListener("click", () => {
-	if (!openSocket()) return;
-	sendRaw({ t: "panic" });
-	if (stopHold("gate", false)) noteUse("release", "gate");
-	if (stopHold("erase", false)) noteUse("release", "erase");
-	if (stopHold("cue", false)) noteUse("release", "cue");
-	noteUse("act", "panic");
-	state.fingers.gate = false;
-	state.fingers.erase = false;
-	state.fingers.cue = false;
+	model.panic();
 	paint();
 });
 
@@ -756,7 +672,7 @@ function tapVideo(name) {
 }
 
 function primePage() {
-	if (state.grabbed.has("file_loop_start") || state.grabbed.has("file_loop_length")) return;
+	if (model.locked("file_loop_start") || model.locked("file_loop_length")) return;
 	const start = state.page * state.pageSize;
 	const names = state.videos.slice(start, start + state.pageSize);
 	const key = names.join("\n") + "@" + valueOf("file_loop_start", 0) + "," + valueOf("file_loop_length", 1);
@@ -841,14 +757,14 @@ function blendRects() {
 function pickBlend(event) {
 	const index = gestures.blendAtPoint({ x: event.clientX, y: event.clientY, rects: blendRects() });
 	if (index == null || Number(state.local.record_blend_mode) === index) return;
-	sendSet("record_blend_mode", index);
+	model.value("record_blend_mode", index);
 	paint();
 }
 blendGrid.addEventListener("pointerdown", (event) => {
 	if (!openSocket()) return;
 	capture(blendGrid, event);
 	blendPid = event.pointerId;
-	grab(["record_blend_mode"]);
+	model.fingerDown(["record_blend_mode"]);
 	pickBlend(event);
 });
 blendGrid.addEventListener("pointermove", (event) => {
@@ -858,7 +774,8 @@ blendGrid.addEventListener("pointermove", (event) => {
 const blendUp = (event) => {
 	if (event.pointerId !== blendPid) return;
 	blendPid = null;
-	endGrab(["record_blend_mode"]);
+	model.fingerUp(["record_blend_mode"]);
+	paint();
 };
 blendGrid.addEventListener("pointerup", blendUp);
 blendGrid.addEventListener("pointercancel", blendUp);
@@ -891,7 +808,7 @@ function bindLoop(el, part) {
 		pid = event.pointerId;
 		sx = event.clientX;
 		origin = { start: valueOf("file_loop_start", 0), length: valueOf("file_loop_length", 0) };
-		grab(["file_loop_start", "file_loop_length"]);
+		model.fingerDown(["file_loop_start", "file_loop_length"]);
 	});
 	el.addEventListener("pointermove", (event) => {
 		if (event.pointerId !== pid) return;
@@ -902,14 +819,15 @@ function bindLoop(el, part) {
 			dx: event.clientX - sx,
 			width: loopTrack.getBoundingClientRect().width,
 		});
-		sendSet("file_loop_start", out.start);
-		sendSet("file_loop_length", out.length);
+		model.value("file_loop_start", out.start);
+		model.value("file_loop_length", out.length);
 		paint();
 	});
 	const up = (event) => {
 		if (event.pointerId !== pid) return;
 		pid = null;
-		endGrab(["file_loop_start", "file_loop_length"]);
+		model.fingerUp(["file_loop_start", "file_loop_length"]);
+		paint();
 	};
 	el.addEventListener("pointerup", up);
 	el.addEventListener("pointercancel", up);
@@ -952,11 +870,11 @@ function currentTransform() {
 }
 
 function writeTransform(t) {
-	sendSet("video_tx", t.tx);
-	sendSet("video_ty", t.ty);
-	sendSet("video_sx", t.sx);
-	sendSet("video_sy", t.sy);
-	sendSet("video_rot", t.rot);
+	model.value("video_tx", t.tx);
+	model.value("video_ty", t.ty);
+	model.value("video_sx", t.sx);
+	model.value("video_sy", t.sy);
+	model.value("video_rot", t.rot);
 	layoutFrame();
 }
 
@@ -991,7 +909,10 @@ function commitTransform(next) {
 function endPinchSoon() {
 	clearTimeout(pinchTimer);
 	pinchTimer = setTimeout(() => {
-		if (points.size === 0 && !pinchOrigin) endGrab(transformNames);
+		if (points.size === 0 && !pinchOrigin) {
+			model.fingerUp(transformNames);
+			paint();
+		}
 	}, 200);
 }
 
@@ -1008,7 +929,7 @@ pad.addEventListener("pointerdown", (event) => {
 	if (event.button === 2) event.preventDefault();
 	capture(pad, event);
 	points.set(event.pointerId, { x: event.clientX, y: event.clientY, mode: mode });
-	grab(transformNames);
+	model.fingerDown(transformNames);
 	markPad();
 });
 pad.addEventListener("pointermove", (event) => {
@@ -1071,7 +992,10 @@ const liftPoint = (event) => {
 	if (!points.has(event.pointerId)) return;
 	points.delete(event.pointerId);
 	markPad();
-	if (points.size === 0 && !pinchOrigin) endGrab(transformNames);
+	if (points.size === 0 && !pinchOrigin) {
+		model.fingerUp(transformNames);
+		paint();
+	}
 };
 pad.addEventListener("pointerup", liftPoint);
 pad.addEventListener("pointercancel", liftPoint);
@@ -1089,7 +1013,7 @@ pad.addEventListener("wheel", (event) => {
 		preserveAspect: !!state.local.video_aspect,
 		minS: schema.video_sx.min, maxS: schema.video_sx.max,
 	});
-	if (points.size === 0) grab(transformNames);
+	if (points.size === 0) model.fingerDown(transformNames);
 	commitTransform({ tx: cur.tx, ty: cur.ty, sx: scaled.sx, sy: scaled.sy, rot: cur.rot });
 	endPinchSoon();
 }, { passive: false });
@@ -1102,7 +1026,7 @@ document.addEventListener("gesturestart", (event) => {
 	if (!gestureOnPad(event) || !openSocket()) return;
 	if (gestures.sourceIgnoresTransform(Number(state.local.source_kind))) return;
 	pinchOrigin = currentTransform();
-	grab(transformNames);
+	model.fingerDown(transformNames);
 	pad.classList.add("touch", "scale");
 });
 document.addEventListener("gesturechange", (event) => {
@@ -1131,7 +1055,8 @@ document.addEventListener("gestureend", (event) => {
 	pad.classList.remove("scale");
 	if (points.size === 0) {
 		pad.classList.remove("touch");
-		endGrab(transformNames);
+		model.fingerUp(transformNames);
+		paint();
 	}
 });
 
@@ -1331,7 +1256,7 @@ function bindAdsr(handleEl, handle) {
 			y: event.clientY,
 			names: names,
 		};
-		grab(names);
+		model.fingerDown(names);
 	});
 	handleEl.addEventListener("pointermove", (event) => {
 		if (event.pointerId !== pid) return;
@@ -1348,15 +1273,16 @@ function bindAdsr(handleEl, handle) {
 			sustainSpan: g.bot - g.top,
 			maxTime: schema[timeName].max,
 		});
-		if (handle === "attack") sendSet("env_attack", out.attack);
-		else if (handle === "release") sendSet("env_release", out.release);
-		else { sendSet("env_decay", out.decay); sendSet("env_sustain", out.sustain); }
+		if (handle === "attack") model.value("env_attack", out.attack);
+		else if (handle === "release") model.value("env_release", out.release);
+		else { model.value("env_decay", out.decay); model.value("env_sustain", out.sustain); }
 		paint();
 	});
 	const up = (event) => {
 		if (event.pointerId !== pid) return;
 		pid = null;
-		endGrab(origin.names);
+		model.fingerUp(origin.names);
+		paint();
 	};
 	handleEl.addEventListener("pointerup", up);
 	handleEl.addEventListener("pointercancel", up);
@@ -1385,13 +1311,14 @@ function makeBlendPick(name) {
 	function pick(event) {
 		const index = gestures.blendAtPoint({ x: event.clientX, y: event.clientY, rects: rects() });
 		if (index == null || Number(state.local[name]) === index) return;
-		sendSet(name, index);
+		model.value(name, index);
 		paint();
 	}
 	grid.addEventListener("pointerdown", (event) => {
 		if (!openSocket()) return;
 		capture(grid, event);
 		pid = event.pointerId;
+		model.fingerDown([name]);
 		pick(event);
 	});
 	grid.addEventListener("pointermove", (event) => {
@@ -1401,7 +1328,8 @@ function makeBlendPick(name) {
 	const up = (event) => {
 		if (event.pointerId !== pid) return;
 		pid = null;
-		noteUse("set", name, state.local[name]);
+		model.fingerUp([name]);
+		paint();
 	};
 	grid.addEventListener("pointerup", up);
 	grid.addEventListener("pointercancel", up);
@@ -1478,23 +1406,24 @@ bpmBox.addEventListener("pointerdown", (event) => {
 	bpmPid = event.pointerId;
 	bpmOrigin = valueOf("bpm", schema.bpm.min);
 	bpmY = event.clientY;
-	grab(["bpm"]);
+	model.fingerDown(["bpm"]);
 });
 bpmBox.addEventListener("pointermove", (event) => {
 	if (event.pointerId !== bpmPid) return;
-	sendSet("bpm", gestures.bpmDrag({ bpm: bpmOrigin, dy: event.clientY - bpmY, min: schema.bpm.min, max: schema.bpm.max }));
+	model.value("bpm", gestures.bpmDrag({ bpm: bpmOrigin, dy: event.clientY - bpmY, min: schema.bpm.min, max: schema.bpm.max }));
 	paint();
 });
 const bpmEnd = (event) => {
 	if (event.pointerId !== bpmPid) return;
 	bpmPid = null;
-	endGrab(["bpm"]);
+	model.fingerUp(["bpm"]);
+	paint();
 };
 bpmBox.addEventListener("pointerup", bpmEnd);
 bpmBox.addEventListener("pointercancel", bpmEnd);
 function bumpBpm(dir) {
 	if (!openSocket()) return;
-	sendSet("bpm", gestures.bpmDrag({ bpm: valueOf("bpm", schema.bpm.min), dy: -dir * 3, min: schema.bpm.min, max: schema.bpm.max }));
+	model.value("bpm", gestures.bpmDrag({ bpm: valueOf("bpm", schema.bpm.min), dy: -dir * 3, min: schema.bpm.min, max: schema.bpm.max }));
 	noteUse("set", "bpm", state.local.bpm);
 	paint();
 }
@@ -1526,7 +1455,7 @@ function stepCam(dir) {
 	if (!openSocket()) return;
 	const control = schema.webcam_index;
 	const cur = Math.round(valueOf("webcam_index", control.min));
-	sendSet("webcam_index", Math.min(control.max, Math.max(control.min, cur + dir)));
+	model.value("webcam_index", Math.min(control.max, Math.max(control.min, cur + dir)));
 	noteUse("set", "webcam_index", state.local.webcam_index);
 	paint();
 }
@@ -1802,9 +1731,9 @@ fxBtn.addEventListener("click", () => showOverlay("mix"));
 setupBtn.addEventListener("click", () => showOverlay("setup"));
 exportBtn.addEventListener("click", () => {
 	if (!openSocket()) return;
-	sendSet("record_enabled", !state.local.record_enabled);
+	model.value("record_enabled", !state.local.record_enabled);
 	noteUse("set", "record_enabled", state.local.record_enabled);
-	noteExport(!!state.local.record_enabled);
+	model.markExport(!!state.local.record_enabled);
 	paint();
 });
 
@@ -2037,80 +1966,23 @@ function fit() {
 	fitDrawCanvas();
 }
 
-function applySnapshot(msg) {
-	const prevExport = !!state.local.record_enabled;
-	for (const key of Object.keys(msg)) {
-		if (key === "t" || key === "videos" || key === "folders") continue;
-		state.remote[key] = msg[key];
-	}
-	if (Array.isArray(msg.videos)) state.videos = msg.videos.slice();
-	if (Array.isArray(msg.folders)) state.folders = msg.folders.slice();
-	for (const name of Object.keys(schema)) {
-		if (state.grabbed.has(name)) continue;
-		if (name in msg) state.local[name] = msg[name];
-	}
-	if ("source_error" in msg) {
-		if (msg.source_error) {
-			state.midError = msg.source_error;
-			state.midKind = "source";
-		} else if (state.midKind === "source") {
-			state.midError = "";
-			state.midKind = "";
-		}
-	}
-	if (msg.video !== state.followed) {
-		state.followed = msg.video;
-		state.paged = false;
-	}
-	if (!state.paged) {
-		const at = state.videos.indexOf(state.remote.video);
-		if (at >= 0) state.page = Math.floor(at / Math.max(1, state.pageSize));
-	}
-	const stageN = Number(state.remote.stage) || 0;
-	if (stageN === 4 && state.relStage !== 4) state.relFrom = Number(state.remote.envelope) || 0;
-	state.relStage = stageN;
-	const nowExport = !!state.local.record_enabled;
-	if (nowExport !== prevExport || nowExport !== state.exportOn) noteExport(nowExport);
-	else if (nowExport) state.exportReason = "";
-	if (msg.export_error) state.exportReason = msg.export_error;
-	paint();
-}
-
-function applyReject(msg) {
-	if (msg.name && schema[msg.name] && Object.prototype.hasOwnProperty.call(state.remote, msg.name) && !state.grabbed.has(msg.name))
-		state.local[msg.name] = state.remote[msg.name];
-	if (msg.name === "record_enabled") {
-		state.exportReason = msg.reason || "";
-		noteExport(!!state.local.record_enabled);
-	}
-	if (msg.name === "source" || msg.name === "folder") {
-		state.midError = msg.reason || "";
-		state.midKind = msg.name;
-	}
-	paint();
-}
-
-socket.onopen = () => { state.link = "up"; paint(); };
+socket.onopen = () => { model.linkUp(); paint(); };
 socket.onclose = () => {
-	state.link = "down";
-	stopHold("gate", false);
-	stopHold("erase", false);
-	stopHold("cue", false);
-	state.fingers.gate = false;
-	state.fingers.erase = false;
-	state.fingers.cue = false;
+	model.linkLost();
 	points.clear();
 	pinchOrigin = null;
 	clearTimeout(pinchTimer);
 	pad.classList.remove("touch", "rot", "scale");
-	releaseGrab([...state.grabbed]);
+	paint();
 };
 socket.onmessage = (event) => {
 	let msg;
 	try { msg = JSON.parse(event.data); } catch (err) { return; }
 	if (!msg || typeof msg !== "object") return;
-	if (msg.t === "snapshot") applySnapshot(msg);
-	else if (msg.t === "reject") applyReject(msg);
+	if (msg.t === "snapshot") model.frame(msg);
+	else if (msg.t === "reject") model.reject(msg);
+	else return;
+	paint();
 };
 
 document.addEventListener("contextmenu", (event) => {
