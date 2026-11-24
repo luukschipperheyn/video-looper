@@ -13,6 +13,7 @@
 #include "control/Instrument.hpp"
 #include "gl/Compositor.hpp"
 #include "gl/FxPipeline.hpp"
+#include "gl/PictureChoice.hpp"
 #include "buffer/RingBuffer.hpp"
 #include "looper/LooperEngine.hpp"
 #include "looper/OverdubGate.hpp"
@@ -352,7 +353,7 @@ int App::run() {
 		GateFrame dub = gate.step(holds, gateSettings(params), source.committing(), dt);
 		if (dub.restartVideo) instrument.restartVideo();
 
-		GLuint liveSource = compositor.sourceTexture();
+		GLuint liveSource = compositor.image(Picture::Source);
 		if (params.getBool("source_fx_enabled") && liveSource != 0)
 			liveSource = sourceFx.process(liveSource, liveSource, 0.0f, fxSettings(params, "source_fx_"), sourceStamp);
 
@@ -369,31 +370,30 @@ int App::run() {
 		LoopPicture looped = looper.step(dt, readFps, write, compositor);
 		LoopRead loopRead{looped.tex0, looped.tex1, looped.mix * params.getFloat("gain_mix")};
 
-		// The window shows the Audition while cueing or overdubbing, and the Program otherwise.
+		PictureMoment moment = PictureMoment::Idle;
+		if (dub.overdub && dub.image == DubImage::ProgramFx)
+			moment = PictureMoment::Bake;
+		else if (dub.cue)
+			moment = PictureMoment::Cue;
+		else if (dub.overdub)
+			moment = PictureMoment::Overdub;
+		PictureChoice pictures = choosePictures(moment, dub.opacity);
+
+		GLuint fxOutput = 0;
+		if (params.getBool("fx_enabled"))
+			fxOutput = fx.process(loopRead.tex0, loopRead.tex1, loopRead.mix, fxSettings(params, "fx_"));
+		compositor.program(loopRead, fxOutput);
+		compositor.audition(loopRead, dubImage, pictures.previewOpacity, dub.blendMode);
+
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		if (dub.cue || dub.overdub) {
-			compositor.show(compositor.audition(loopRead, dubImage, dub.opacity, dub.blendMode), 0, 0, w, h);
-		} else if (params.getBool("fx_enabled")) {
-			GLuint fxOut = fx.process(loopRead.tex0, loopRead.tex1, loopRead.mix, fxSettings(params, "fx_"));
-			compositor.show(fxOut, 0, 0, w, h);
-		} else {
-			compositor.showLoop(loopRead, 0, 0, w, h);
-		}
+		compositor.show(compositor.image(pictures.shown), 0, 0, w, h);
 
-		// The preview and Export show what an Overdub would produce at full envelope.
-		bool previewVisible = params.getBool("show_preview") || params.getBool("preview_window");
-		bool idle = !dub.cue && !dub.overdub;
-		if ((previewVisible && idle) || params.getBool("record_enabled"))
-			compositor.audition(loopRead, liveSource, params.getFloat("record_blend_opacity"),
-			                    params.getInt("record_blend_mode"));
-
-		// Capture the Audition into the recorder at the export frame rate
 		if (recorder.isRecording()) {
 			recordAccumSeconds += dt;
 			while (recordAccumSeconds + 1e-6 >= recordFramePeriod) {
 				recordAccumSeconds -= recordFramePeriod;
 				std::printf("[rec] capture frame begin %dx%d\n", fbw, fbh);
-				const std::vector<unsigned char>& frame = compositor.readAudition();
+				const std::vector<unsigned char>& frame = compositor.read(pictures.exported);
 				std::printf("[rec] append start\n");
 				bool ok = recorder.appendBGRAFrame(frame.data(), fbw * 4);
 				std::printf("[rec] append %s\n", ok ? "ok" : "fail");
@@ -410,9 +410,9 @@ int App::run() {
 			int pw = static_cast<int>(w * scale);
 			int ph = static_cast<int>(pw * (static_cast<float>(fbh) / static_cast<float>(fbw)));
 			int margin = 12;
-			GLuint shown =
-				params.getBool("debug_preview_backbuffer") ? ring.textureAtBack(looped.idx0) : compositor.auditionTexture();
-			compositor.show(shown, w - pw - margin, margin, pw, ph);
+			GLuint preview = compositor.image(pictures.previewed);
+			if (params.getBool("debug_preview_backbuffer")) preview = ring.textureAtBack(looped.idx0);
+			compositor.show(preview, w - pw - margin, margin, pw, ph);
 			glViewport(0, 0, w, h);
 		}
 
@@ -423,7 +423,7 @@ int App::run() {
 			glViewport(0, 0, pw, ph);
 			glClearColor(0.07f, 0.07f, 0.08f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
-			compositor.show(compositor.auditionTexture(), 0, 0, pw, ph);
+			compositor.show(compositor.image(pictures.previewed), 0, 0, pw, ph);
 			glfwSwapBuffers(previewWindow);
 			glfwMakeContextCurrent(window);
 		} else if (previewWindow && glfwWindowShouldClose(previewWindow)) {

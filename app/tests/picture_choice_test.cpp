@@ -62,7 +62,7 @@ static void expectExport(const char* moment, const PictureChoice& choice) {
 
 static void frame(const char* moment, PictureMoment which, float writeOpacity, Picture shown) {
 	const float recordOpacity = 1.0f;
-	PictureChoice choice = choosePictures(which, writeOpacity, recordOpacity);
+	PictureChoice choice = choosePictures(which, writeOpacity);
 	expectShown(moment, choice, shown);
 	expectPreview(moment, choice, writeOpacity, recordOpacity);
 	expectExport(moment, choice);
