@@ -46,6 +46,14 @@ public:
 	// the Source kind as it is until that load swaps in. Shader, Black, and Draw are written.
 	Outcome setNumber(const std::string& name, double value);
 	Outcome setText(const std::string& name, const std::string& text);
+	// Adds delta to an Int or Float control and sets it. The control table's clamp is the end stop.
+	// Refused the same way setNumber refuses a bad control. source_kind is refused.
+	Outcome nudge(const std::string& name, double delta);
+	// Flips a Bool control. Refused when it is not a Bool in the table.
+	Outcome toggle(const std::string& name);
+	// Cycles Shader, File, Black, Webcam. Draw stays out. Plus on Webcam or Draw does nothing. Minus on
+	// Draw sets Black. Any other plus or minus is setNumber of the kind one step that way.
+	void stepSourceKind(int delta);
 
 	// Releases the Latch and the latched Cue.
 	void panic();
