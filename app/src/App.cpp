@@ -30,6 +30,7 @@
 #include "link/LinkBridge.hpp"
 #include "util/ContainRect.hpp"
 #include "io/AVFRecorder.hpp"
+#include "io/Export.hpp"
 #include "remote/RemoteApply.hpp"
 #include "remote/RemoteSession.hpp"
 #include "setup/SetupStore.hpp"
@@ -167,13 +168,12 @@ int App::run() {
 		setupSaver.settle(captureSetup(params, folders));
 	}
 	std::string sourceFailure;
+	std::string exportFailure;
 
 	Clock clock;
 	clock.setQuantum(params.getFloat("quantum"));
 	AVFRecorder recorder;
-	double recordAccumSeconds = 0.0;
-	double recordFramePeriod = 1.0 / 60.0;
-	bool prevRecEnabled = false;
+	Export diskExport(params, instrument, recorder, compositor);
 	OverdubGate gate;
 
 	float readFps = 60.0f;
@@ -190,7 +190,8 @@ int App::run() {
 		down.showUi = keyDown(GLFW_KEY_U);
 		const int digitKey[] = {GLFW_KEY_0, GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4,
 		                        GLFW_KEY_5, GLFW_KEY_6, GLFW_KEY_7, GLFW_KEY_8, GLFW_KEY_9};
-		for (int d = 0; d < 10; ++d) down.digit[d] = keyDown(digitKey[d]);
+		for (int d = 0; d < 10; ++d)
+			down.digit[d] = keyDown(digitKey[d]);
 		down.sourcePrev = keyDown(GLFW_KEY_MINUS);
 		down.sourceNext = keyDown(GLFW_KEY_EQUAL);
 		down.blendPrev = keyDown(GLFW_KEY_LEFT_BRACKET);
@@ -226,10 +227,7 @@ int App::run() {
 			fbw = w;
 			fbh = h;
 			resizeFrame(fbw, fbh, ring, looper, compositor, fx, sourceFx);
-			if (recorder.isRecording()) {
-				recorder.stop();
-				params.setBool("record_enabled", false);
-			}
+			diskExport.resized();
 		}
 		glViewport(0, 0, w, h);
 
@@ -239,30 +237,6 @@ int App::run() {
 		lastTime = now;
 
 		reloadShaders(hot, compositor, fx, sourceFx);
-
-		// Manage recording state edge transitions
-		bool recEnabled = params.getBool("record_enabled");
-		if (recEnabled && !prevRecEnabled) {
-			std::string outPath = params.getString("record_path");
-			double rfps = params.getFloat("record_fps");
-			if (!outPath.empty()) {
-				recordFramePeriod = (rfps > 0.0 ? (1.0 / rfps) : (1.0 / 60.0));
-				recordAccumSeconds = 0.0;
-				std::printf("[rec] start %dx%d @ %.2f fps -> %s\n", fbw, fbh, rfps, outPath.c_str());
-				bool ok = recorder.start(outPath, fbw, fbh, rfps);
-				if (!ok) {
-					std::fprintf(stderr, "[rec] failed to start writer\n");
-					params.setBool("record_enabled", false);
-				}
-			} else {
-				params.setBool("record_enabled", false);
-			}
-		}
-		if (!recEnabled && prevRecEnabled) {
-			std::printf("[rec] stop\n");
-			recorder.stop();
-		}
-		prevRecEnabled = recEnabled;
 
 		source.tick(dt);
 		instrument.record(source.status());
@@ -279,8 +253,8 @@ int App::run() {
 		                  source.frameWidth() > 0 && source.frameHeight() > 0;
 		SourcePlacement placed{};
 		if (hasPicture) placed = sourcePlacement(fbw, fbh, source.frameWidth(), source.frameHeight(), params);
-		WholeStamp sourceStamp =
-			compositor.drawSource(static_cast<SourceKind>(srcKind), t, placed, params.getBool("video_bars"), hasPicture);
+		WholeStamp sourceStamp = compositor.drawSource(static_cast<SourceKind>(srcKind), t, placed,
+		                                               params.getBool("video_bars"), hasPicture);
 
 		float bpm = params.getFloat("bpm");
 		float quantum = params.getFloat("quantum");
@@ -388,21 +362,11 @@ int App::run() {
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		compositor.show(compositor.image(pictures.shown), 0, 0, w, h);
 
-		if (recorder.isRecording()) {
-			recordAccumSeconds += dt;
-			while (recordAccumSeconds + 1e-6 >= recordFramePeriod) {
-				recordAccumSeconds -= recordFramePeriod;
-				std::printf("[rec] capture frame begin %dx%d\n", fbw, fbh);
-				const std::vector<unsigned char>& frame = compositor.read(pictures.exported);
-				std::printf("[rec] append start\n");
-				bool ok = recorder.appendBGRAFrame(frame.data(), fbw * 4);
-				std::printf("[rec] append %s\n", ok ? "ok" : "fail");
-				if (!ok) {
-					std::fprintf(stderr, "[rec] append dropped (not ready)\n");
-					break;
-				}
-			}
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		diskExport.frame(dt, pictures.exported, fbw, fbh);
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		if (diskExport.failure() != exportFailure) {
+			exportFailure = diskExport.failure();
+			if (remote.enabled() && !exportFailure.empty()) remote.send(rejectFrame("record_enabled", exportFailure));
 		}
 
 		if (params.getBool("show_preview") && !params.getBool("preview_window")) {
@@ -436,14 +400,19 @@ int App::run() {
 		}
 
 		if (remote.enabled()) {
-			RemoteLive live{
-				(float(looped.idx0) + looped.mix) / float(ring.size()), dub.envelope, dub.stage, dub.gate, dub.cue,
-				dub.erase};
+			RemoteLive live{(float(looped.idx0) + looped.mix) / float(ring.size()),
+			                dub.envelope,
+			                dub.stage,
+			                dub.gate,
+			                dub.cue,
+			                dub.erase};
 			std::vector<std::string> folderPaths = folders.paths();
 			bool catalogChanged = videoNames != sentVideoNames || folderPaths != sentFolderPaths;
-			std::string full = remoteSnapshot(params, live, videoNames, folderPaths, true, sourceFailure);
+			std::string full =
+				remoteSnapshot(params, live, videoNames, folderPaths, true, sourceFailure, exportFailure);
 			remote.setSnapshot(full);
-			std::string wire = catalogChanged ? full : remoteSnapshot(params, live, {}, {}, false, sourceFailure);
+			std::string wire =
+				catalogChanged ? full : remoteSnapshot(params, live, {}, {}, false, sourceFailure, exportFailure);
 			if (wire != remoteSnapshotSent) {
 				remoteSnapshotSent = wire;
 				remote.send(wire);

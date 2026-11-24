@@ -2072,6 +2072,7 @@ function applySnapshot(msg) {
 	const nowExport = !!state.local.record_enabled;
 	if (nowExport !== prevExport || nowExport !== state.exportOn) noteExport(nowExport);
 	else if (nowExport) state.exportReason = "";
+	if (msg.export_error) state.exportReason = msg.export_error;
 	paint();
 }
 

@@ -38,7 +38,7 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 
 | Path | Role |
 |------|------|
-| `app/src/App.cpp` | GLFW/ImGui lifecycle, main loop orchestration, export capture |
+| `app/src/App.cpp` | GLFW/ImGui lifecycle and main loop orchestration. One call a frame asks Export to take the frame that is due |
 | `app/src/control/ControlTable.hpp` | Every control once: name, type, default, range, whether the Web interface sees or sets it, whether it is saved |
 | `app/src/control/Instrument.*` | Carries out what a performer asks for from any surface: set a control (clamped), Panic, Prev/Next/random Video, load, Dub, choose a folder or the webcam. It records `SourceStatus` into the controls. `SourcePort` is what it asks of the Source |
 | `app/src/control/Hotkeys.*` | One frame of the keys that are down, and whether a text field has focus. A rising key asks the Instrument for a change. Returns the Overdub hold and the Cue hold |
@@ -47,12 +47,13 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/buffer/RingBuffer.*` | Dual-bank GPU textures/FBOs (`frameCount` frames × 2 banks); front = read, back = write |
 | `app/src/looper/LoopPlan.*` | Pure frame of the Loop: read head, which back-bank slots are filled (Overdub, copy forward, or Bake FX), and when the banks swap |
 | `app/src/looper/LooperEngine.*` | Runs that plan against the banks, then the playhead overlay. The picture path draws each slot |
-| `app/src/gl/Compositor.*`, `Frame.cpp`, `PictureChoice.*` | The picture path. Keeps the framed Source, the Audition, and the Program as named images. Owns the blit and blend shaders, the quad, the frame size, those images, the picture texture (`PicturePort`), the Draw texture, and the export readback. `choosePictures` names the image the window, the preview, and Export ask for, and the opacity of the Audition. Tested in `app/tests/picture_choice_test.cpp`. `initFrame` and `resizeFrame` set that size on the Loop and both FX pipelines. `reloadShaders` polls the watches once. `drawSource` returns the Source FX stamp |
+| `app/src/gl/Compositor.*`, `Frame.cpp`, `PictureChoice.*` | The picture path. Keeps the framed Source, the Audition, and the Program as named images. Owns the blit and blend shaders, the quad, the frame size, those images, the picture texture (`PicturePort`), the Draw texture, and the export readback (`PictureRead`). `choosePictures` names the image the window, the preview, and Export ask for, and the opacity of the Audition. Tested in `app/tests/picture_choice_test.cpp`. `initFrame` and `resizeFrame` set that size on the Loop and both FX pipelines. `reloadShaders` polls the watches once. `drawSource` returns the Source FX stamp |
 | `app/src/io/SourceController.*` | The life of the Source. Requests come from the Instrument. It opens a Video or webcam off the main thread, swaps it in with its first frame, and **Commit**s a Video until it ends. It writes no controls. No GL or AVFoundation; decoders come from a `DecoderFactory` and pictures go to a `PicturePort`. Tested with fake decoders in `app/tests/source_controller_test.cpp` |
 | `app/src/io/FolderList.*` | The Folder list. Videos folders in order, one of them current, each with the Videos captured when it was added. Selecting one does not read the disk |
 | `app/src/io/PageCache.*` | Opens the Videos on the Web interface's current page ahead of a tap |
 | `app/src/io/AVFFileSource.*` / `AVFWebcamSource.*` | The AVFoundation `VideoDecoder` / `CameraDecoder`: file decode / camera → GL texture. `AVFDecoders.hpp` is their factory |
-| `app/src/io/AVFRecorder.*` | BGRA frames → `.mov` |
+| `app/src/io/Export.*` | The life of Export: on, off, a failed start, and which frames are written. Turning it off, including a failed start and a size change, goes through the Instrument. When a frame is due it asks the picture path for the image by the name `choosePictures` returned. A writer that is not ready drops that frame and returns. Tested in `app/tests/export_test.cpp` |
+| `app/src/io/AVFRecorder.*` | The AVFoundation `Recorder`: BGRA frames → `.mov`. The file format is H.264 in a QuickTime movie. The test fake implements the same port |
 | `app/src/io/VideoSource.hpp` | `SourceKind { Shader, File, Black, Webcam, Draw }`; the ports `VideoDecoder`, `CameraDecoder`, `DecoderFactory`, and `PicturePort` |
 | `app/src/io/DrawImage.mm` | Draw PNG → straight-alpha BGRA, bottom row first |
 | `app/src/gl/FxPipeline.*` | Feedback / Diff / Chroma / Kaleido / Blur / Repeat / Grid; one pipeline on the Program, one on the Source; ping-pong targets; each owns its quad. The Source FX stamp is the placement the picture path used for the framed Source |
@@ -76,19 +77,18 @@ Order inside `App::run`’s `while`, each frame:
 1. **Poll** GLFW events  
 2. **Hotkeys** (see UI + hotkeys). They run from the keys that are down. ImGui `WantCaptureKeyboard` means a text field has focus, and then no hotkey fires and Space and C do not open the Overdub gate or Cue  
 3. **Preview window** create/destroy from `preview_window`  
-4. **Resize** — if framebuffer size changes: `resizeFrame` rebuilds the ring (120 frames), both FX pipelines, the looper playhead, and the picture targets, in that order; **stop** disk recorder if active  
+4. **Resize** — if framebuffer size changes: `resizeFrame` rebuilds the ring (120 frames), both FX pipelines, the looper playhead, and the picture targets, in that order; if Export is on, `Export::resized` asks the Instrument to turn it off  
 5. **Hot-reload** — `reloadShaders` polls the watches once. Every program that uses a changed shader reloads, including both FX pipelines  
-6. **Disk record edge** — start/stop `AVFRecorder` from `record_enabled` + `record_path`  
-7. **`source.tick`, then `Instrument::record`** — a swap lands in the controls. The tick uploads a webcam or Video frame into the Compositor's picture texture; the `Compositor` then draws Shader, Black, or the placed picture as the framed Source  
-8. **Clock / Link** — tempo → `readFps` (optionally coupled to BPM)  
-9. **Web interface messages, then the Overdub gate** — each drained message goes through `applyRemote` to the `Instrument`; `OverdubGate::step` takes the holds and returns this frame's write: overdub or not, opacity, image, blend mode, Cue  
-10. **`looper.step`** — one call advances the read head, plans every back-bank fill and any swap, then does the texture work. Cue is decided here: the plan writes nothing and does not swap. The picture's textures are the front bank from before a swap  
-11. **Pictures** — `choosePictures` names the window, the preview, and Export. The picture path keeps the Program (Program FX when it is on, otherwise the Loop) and the Audition at the opacity an Overdub would write  
-12. **Present** — the window asks for the Audition while cueing or overdubbing, including Bake FX, and for the Program otherwise  
-13. **Export** — while Export is on, `Compositor::read` of the Program (BGRA, top row first) goes to `appendBGRAFrame` at `record_fps`  
-14. **Inset and second window** — each asks for the Audition. The debug toggle shows the back-bank slot in the inset instead  
-15. **ImGui** ControlsPanel + optional playhead overlay  
-16. **Swap** buffers (+ ImGui viewports)
+6. **`source.tick`, then `Instrument::record`** — a swap lands in the controls. The tick uploads a webcam or Video frame into the Compositor's picture texture; the `Compositor` then draws Shader, Black, or the placed picture as the framed Source  
+7. **Clock / Link** — tempo → `readFps` (optionally coupled to BPM)  
+8. **Web interface messages, then the Overdub gate** — each drained message goes through `applyRemote` to the `Instrument`; `OverdubGate::step` takes the holds and returns this frame's write: overdub or not, opacity, image, blend mode, Cue  
+9. **`looper.step`** — one call advances the read head, plans every back-bank fill and any swap, then does the texture work. Cue is decided here: the plan writes nothing and does not swap. The picture's textures are the front bank from before a swap  
+10. **Pictures** — `choosePictures` names the window, the preview, and Export. The picture path keeps the Program (Program FX when it is on, otherwise the Loop) and the Audition at the opacity an Overdub would write  
+11. **Present** — the window asks for the Audition while cueing or overdubbing, including Bake FX, and for the Program otherwise  
+12. **Export** — `Export::frame` sees the control. A rising edge starts the writer. A falling edge stops it. A failed start asks the Instrument to turn Export off and keeps a reason. While it is on, a due frame asks the picture path for the named image (BGRA, top row first) and appends it at `record_fps`. A writer that is not ready drops that frame and returns  
+13. **Inset and second window** — each asks for the Audition. The debug toggle shows the back-bank slot in the inset instead  
+14. **ImGui** ControlsPanel + optional playhead overlay  
+15. **Swap** buffers (+ ImGui viewports)
 
 Ring size is fixed at **120** frames at current framebuffer resolution (`ring.setup(fbw, fbh, 120)`).
 
@@ -180,15 +180,15 @@ Program params: `fx_param1/2/3`. Source params: `source_fx_param1/2/3`. Source F
 
 ---
 
-## Record / export (disk)
+## Export
 
-Separate from looper “record into ring”:
+Separate from an Overdub, which writes into the Loop. `Export` owns on, off, a failed start, and the frame cadence. The Mac controls and the Web interface turn it on and off through the Instrument. The Instrument refuses Export with no path (`no export path`). `Export` does not check the path again.
 
-- UI: Enable Recording + path (or Save As…) + Record FPS  
-- Rising edge starts `AVFRecorder` at framebuffer size; empty path refuses start  
-- Each period, `Compositor::read` of the Program (BGRA, top row first) goes to `appendBGRAFrame`  
-- Resize while recording stops recorder and clears `record_enabled`  
-- Export records the Program, with Program FX, not the Audition
+- A rising edge starts the `Recorder` at the framebuffer size and at `record_fps`. `AVFRecorder` writes H.264 in a QuickTime `.mov`, the same format as before
+- A failed start asks the Instrument to turn Export off. The reason `could not start` stays on `Export::failure` and the snapshot field `export_error`. The Web interface shows that reason beside Export, the same way it shows a Source load failure from `source_error`
+- Turning Export off, and a size change while it is on, go through the Instrument. The falling edge stops the writer. A size change is not a failed start, so it leaves no reason
+- When a frame is due, Export asks the picture path for the image named by `choosePictures` (the Program, with Program FX when it is on), not the Audition
+- A 24 fps export against a 60 Hz frame loop writes 24 frames in one second. A writer that is not ready drops that frame and returns, so the frame loop is not stalled
 
 ---
 
@@ -248,7 +248,6 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 
 | Bug | Where |
 |-----|-------|
-| `[rec]` printf on every captured frame | `App.cpp` capture loop |
 | Placeholder bundle id `com.example.video-looper` | `Info.plist` |
 
 ---
@@ -258,7 +257,7 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 1. **Bank coherence** — every back-bank slot is filled once per pass before the banks swap, including slots the wrap frame passes and slots Cue skipped. Copy keeps the Loop; Overdub and Bake FX replace it.  
 2. **Cue never mutates the Loop** — the plan writes nothing and does not swap while Cue is on.  
 3. **Commit** forces recording-active writes at opacity 1 and bypasses ADSR. The Video plays once for that Commit, and `file_loop` and `file_paused` stay the performer's. It ends when the reader is exhausted. A tick that holds the current frame does not end it.  
-4. **Resize invalidates** ring contents (full `setup` destroy/recreate) and aborts disk recording. Accepted for now by the owner; don't change it as a side effect.  
+4. **Resize invalidates** ring contents (full `setup` destroy/recreate) and turns Export off through the Instrument. Accepted for now by the owner; don't change it as a side effect.  
 5. **Read interpolation** — present mixes `idx0`/`idx1` with `gain_mix`; write path uses integer slot indices.  
 6. **FX present vs commit** — Program FX is kept in the Program image each frame. The window shows the Program when not cueing or overdubbing. Bake FX writes the previous Program image into the loop. Source FX is on the framed Source before the Audition and an Overdub.  
 7. **Preview vs main** — the window asks for the Audition while cueing or overdubbing, and for the Program otherwise. The inset and the second window ask for the Audition at the opacity an Overdub would write. The debug toggle shows the back-bank slot in the inset instead.
@@ -270,6 +269,7 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 | Concern | Start here |
 |---------|------------|
 | Frame orchestration | `app/src/App.cpp` |
+| Export on, off, cadence, and the frame it asks for | `app/src/io/Export.cpp` |
 | What a control is, its default and range | `app/src/control/ControlTable.hpp` |
 | What setting a control or pressing a button does | `app/src/control/Instrument.cpp` |
 | When the Loop is written and with what | `app/src/looper/OverdubGate.cpp` |
