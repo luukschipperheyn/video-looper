@@ -169,7 +169,7 @@ int App::run() {
 				params.setInt("videos_count", 0);
 			}
 		}
-		if (params.getInt("source_kind") == (int)SourceKind::Webcam) instrument.chooseWebcam();
+		instrument.restoreSource();
 		setupSaver.settle(captureSetup(params, folders));
 	}
 	std::string sourceFailure;
@@ -279,7 +279,8 @@ int App::run() {
 		}
 		prevRecEnabled = recEnabled;
 
-		source.tick(dt, params);
+		source.tick(dt);
+		instrument.record(source.status());
 		std::string drawPng;
 		if (remote.takeDraw(drawPng)) {
 			std::vector<unsigned char> bgra;
@@ -370,9 +371,7 @@ int App::run() {
 		holds.cueKey = hotkeyHolds.cue;
 		holds.cuePad = pads.cue;
 		GateFrame dub = gate.step(holds, gateSettings(params), source.committing(), dt);
-		if (dub.restartVideo && params.getInt("file_run_mode") == 1 &&
-		    params.getInt("source_kind") == (int)SourceKind::File)
-			source.restartFileAtLoopStart();
+		if (dub.restartVideo) instrument.restartVideo();
 
 		GLuint liveSource = compositor.sourceTexture();
 		if (params.getBool("source_fx_enabled") && liveSource != 0) {

@@ -40,7 +40,7 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 |------|------|
 | `app/src/App.cpp` | GLFW/ImGui lifecycle, main loop orchestration, export capture |
 | `app/src/control/ControlTable.hpp` | Every control once: name, type, default, range, whether the Web interface sees or sets it, whether it is saved |
-| `app/src/control/Instrument.*` | Carries out what a performer asks for from any surface: set a control (clamped), Panic, Prev/Next/random Video, load, Dub, choose a folder or the webcam. `SourcePort` is what it asks of the Source |
+| `app/src/control/Instrument.*` | Carries out what a performer asks for from any surface: set a control (clamped), Panic, Prev/Next/random Video, load, Dub, choose a folder or the webcam. It records `SourceStatus` into the controls. `SourcePort` is what it asks of the Source |
 | `app/src/control/Hotkeys.*` | One frame of the keys that are down, and whether a text field has focus. A rising key asks the Instrument for a change. Returns the Overdub hold and the Cue hold |
 | `app/src/ui/ParamBus.*` | The current value of every control; a fresh bus holds the table's defaults |
 | `app/src/looper/OverdubGate.*` | Decides per frame whether the Loop is written, with which image, blend mode and opacity: holds, ADSR, release tail, Erase, Cue, Commit bypass. Pure |
@@ -48,7 +48,7 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/looper/LoopPlan.*` | Pure frame of the Loop: read head, which back-bank slots are filled (Overdub, copy forward, or Bake FX), and when the banks swap |
 | `app/src/looper/LooperEngine.*` | Runs that plan against the banks, then the playhead overlay |
 | `app/src/gl/Compositor.*` | Draws the framed Source, the Loop as read, and the Audition; owns the Source and Audition targets, the picture texture (`PicturePort`), the Draw texture, and the export readback |
-| `app/src/io/SourceController.*` | The life of the Source: ask for a Video or webcam, open it off the main thread, swap it in with its first frame, **Commit** a Video until it ends. No GL or AVFoundation; decoders come from a `DecoderFactory` and pictures go to a `PicturePort`. Tested with fake decoders in `app/tests/source_controller_test.cpp` |
+| `app/src/io/SourceController.*` | The life of the Source. Requests come from the Instrument. It opens a Video or webcam off the main thread, swaps it in with its first frame, and **Commit**s a Video until it ends. It writes no controls. No GL or AVFoundation; decoders come from a `DecoderFactory` and pictures go to a `PicturePort`. Tested with fake decoders in `app/tests/source_controller_test.cpp` |
 | `app/src/io/PageCache.*` | Opens the Videos on the Web interface's current page ahead of a tap |
 | `app/src/io/AVFFileSource.*` / `AVFWebcamSource.*` | The AVFoundation `VideoDecoder` / `CameraDecoder`: file decode / camera → GL texture. `AVFDecoders.hpp` is their factory |
 | `app/src/io/AVFRecorder.*` | BGRA frames → `.mov` |
@@ -78,7 +78,7 @@ Order inside `App::run`’s `while`, each frame:
 4. **Resize** — if framebuffer size changes: rebuild ring (120 frames), source, FX, looper, compositor targets; **stop** disk recorder if active  
 5. **Hot-reload** shaders / FX  
 6. **Disk record edge** — start/stop `AVFRecorder` from `record_enabled` + `record_path`  
-7. **`source.tick`** — webcam/file upload into the Compositor's picture texture; the `Compositor` then draws Shader, Black, or the placed picture as the framed Source  
+7. **`source.tick`, then `Instrument::record`** — a swap lands in the controls. The tick uploads a webcam or Video frame into the Compositor's picture texture; the `Compositor` then draws Shader, Black, or the placed picture as the framed Source  
 8. **Clock / Link** — tempo → `readFps` (optionally coupled to BPM)  
 9. **Web interface messages, then the Overdub gate** — each drained message goes through `applyRemote` to the `Instrument`; `OverdubGate::step` takes the holds and returns this frame's write: overdub or not, opacity, image, blend mode, Cue  
 10. **`looper.step`** — one call advances the read head, plans every back-bank fill and any swap, then does the texture work. Cue is decided here: the plan writes nothing and does not swap. The picture's textures are the front bank from before a swap  
@@ -107,9 +107,9 @@ Ring size is fixed at **120** frames at current framebuffer resolution (`ring.se
 
 File and webcam frames are drawn into the Source, then that image is what an Overdub writes. **Preserve aspect** (`video_aspect`, default on) fits them with contain: the image fills the loop's width or its height. Off stretches them to the loop frame first. **Black bars** (`video_bars`, default on) paints the unused side black; off leaves it transparent, so the Loop shows through and an Overdub does not paint it. The Web interface Source trackpad drags with one finger, a mouse button, or a trackpad click to translate. A pinch moves by the midpoint and scales and rotates (`video_tx`, `video_ty`, `video_sx`, `video_sy`, `video_rot`, identity at 0, 0, 1, 1, 0). With Preserve aspect on, a pinch scales both axes together. A trackpad pinch does the same: Safari reports scale and clockwise rotation, and Chromium and Firefox report that pinch as a wheel event with the ctrl key set. A wheel without the ctrl key does not scale or rotate. The page itself stays at scale 1: a pinch anywhere and a double tap do not zoom the page. Alt-drag scales: dragging up by the frame height doubles it, and with Preserve aspect off a sideways drag scales width the same way. Shift-drag or the right button rotates: a drag across the frame width is half a turn, and dragging right turns the image clockwise. Shader, Black, and Draw ignore the transform and fill the loop frame. The switches are on the Mac Source section and the Web interface Source section.
 
-**Folder / random Video** (`SourceController`):
+**Folder / random Video**:
 
-- `videos_folder` scanned for `.mp4/.mov/.m4v/.mkv/.avi`  
+- Setting `videos_folder` scans that folder for `.mp4/.mov/.m4v/.mkv/.avi`. The Instrument stores the list  
 - `V` / “Load Random File” picks a Video from the current Videos folder and loads it as the Source, the same way Prev and Next do. It does not Commit.
 - Prev/Next cycle folder list and load immediately (clears commit state)
 
@@ -117,7 +117,7 @@ File and webcam frames are drawn into the Source, then that image is what an Ove
 
 **Draw** replaces that grid with a canvas. Pen, eraser, six colors, two brush sizes, and clear. The ground is transparent or black. Strokes stay in the page when the Source changes away and back, until the page reloads; they are not in the setup file. While Draw is the Source the page sends the picture as a PNG on a binary WebSocket frame, throttled while the finger moves and once when it lifts. A newer picture replaces one still waiting. The app stretches it over the loop frame. Transparent pixels do not paint the Loop; a black ground does. An empty Draw, before the first picture, is transparent.
 
-**File Trigger mode** (`file_run_mode == 1`): on rising edge of the Source overdub gate or Cue, `restartFileAtLoopStart()` if source is File. Erase does not restart it.
+**File Trigger mode** (`file_run_mode == 1`): on rising edge of the Source overdub gate or Cue, `Instrument::restartVideo` restarts the Video when the Source is a Video. Erase does not restart it.
 
 ---
 
@@ -218,11 +218,11 @@ Separate from looper “record into ring”:
 
 `app/src/control/ControlTable.hpp` lists every control once: name, type, default, range, whether the Web interface sees it (`Web::Hidden` / `Read` / `Write`), and whether it is in the saved setup (`Keep::Session` / `Saved` / `StartsOff`). A fresh `ParamBus` holds those defaults, so getters take no fallback. The schema the page reads, the snapshot, the saved setup's fields, and the Mac sliders' ranges all come from the table. To add a control, add its row.
 
-A change from the Mac controls, a hotkey, or the Web interface goes through `Instrument`, which clamps numbers to the table's range and does what follows from the change: Preserve aspect copies scale x onto scale y, choosing the webcam starts a webcam load, a new tempo goes to Link when Link is on, Export with no path is refused. The Web interface adapter (`applyRemote`) adds the read-only check. Commit state is not a control; `SourceController::committing()` reports it.
+A change from the Mac controls, a hotkey, or the Web interface goes through `Instrument`, which clamps numbers to the table's range and does what follows from the change: Preserve aspect copies scale x onto scale y, choosing Shader, Black, or Draw asks the Source to show that, choosing a Video loads `file_path` when one is set, editing `file_path` loads that Video, choosing the webcam or its index starts a webcam load, loop and pause and the loop range are sent as playback, a new tempo goes to Link when Link is on, Export with no path is refused. When a load swaps in, `Instrument::record` writes the Source kind, the Video path, and the webcam index. The Web interface adapter (`applyRemote`) adds the read-only check. Commit state is not a control; `SourceController::committing()` reports it.
 
 ## Saved setup
 
-`~/Library/Application Support/video-looper/setup.json` is written 0.2 s after the setup stops changing, and again on quit. Launch applies it after the defaults, so a missing or broken file leaves the defaults. Restored fields: blend, opacity, blend gain, envelope, FX, Source FX, Source kind and transform, black bars, preserve aspect, webcam, video loop / pause / run mode / loop range, current Video, Folder list, tempo, whether the Web interface is on, export path and export fps. A Commit plays its Video once and does not change video loop or pause. Latch, latched Cue, and Export start off (`Keep::StartsOff` in the control table). Link, the preview window, playheads, Mac UI visibility, the URL token, and the window are not in the file. A folder that cannot be read is dropped. If the current Video cannot be opened, the Source stays a Video, nothing is loaded, and the Web interface keeps the load failure on its snapshot. The Loop's frames are not restored (ADR-0003). A restored Video's first frame is the start of its saved loop range.
+`~/Library/Application Support/video-looper/setup.json` is written 0.2 s after the setup stops changing, and again on quit. Launch applies it after the defaults, so a missing or broken file leaves the defaults. Launch restore of a Video, webcam, Shader, Black, or Draw is `Instrument::restoreSource`. Restored fields: blend, opacity, blend gain, envelope, FX, Source FX, Source kind and transform, black bars, preserve aspect, webcam, video loop / pause / run mode / loop range, current Video, Folder list, tempo, whether the Web interface is on, export path and export fps. A Commit plays its Video once and does not change video loop or pause. Latch, latched Cue, and Export start off (`Keep::StartsOff` in the control table). Link, the preview window, playheads, Mac UI visibility, the URL token, and the window are not in the file. A folder that cannot be read is dropped. If the current Video cannot be opened, the Source stays a Video, nothing is loaded, and the Web interface keeps the load failure on its snapshot. The Loop's frames are not restored (ADR-0003). A restored Video's first frame is the start of its saved loop range.
 
 `web-use.jsonl` in that same folder is an append-only record of Web interface gestures, one JSON object per line: `at` (UTC), `e` (`set`, `hold`, `release`, `open`, `close`, `chain`, `tap`, `act`), `name`, and `v` when the gesture has a value. A fader, blend swipe, transform, or envelope drag is one `set` when the finger lifts, with the value it landed on. A trackpad pinch is one `set` when the gesture ends. A held Overdub gate, Erase, or Cue is one `hold` and one `release`, not the repeats that keep the pad down. Opening the ADSR/opacity layer or Setup is `open` / `close`. The file keeps its newest lines once it passes 4 MB. It is not restored into the instrument and it is not sent off the Mac.
 
@@ -249,7 +249,6 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 |-----|-------|
 | Preview ignores the ADSR envelope (always full record opacity) | `App.cpp` preview audition call |
 | Disk recording captures the audition composite, not the presented main view (FX missing) | `App.cpp` capture reads `Compositor::readAudition` |
-| Editing `file_path` while a file is playing does not reload it | `SourceController::ensureSource` only starts when `!fileActive` |
 | `[rec]` printf on every captured frame | `App.cpp` capture loop |
 | Placeholder bundle id `com.example.video-looper` | `Info.plist` |
 

@@ -70,12 +70,23 @@ void ControlsPanel::draw(const ParamBus& params, Instrument& instrument, const L
 			heading("Source");
 			const char* kinds[] = {"Shader", "File", "Black", "Webcam", "Draw"};
 			int kind = choice("Source", "source_kind", kinds, 5);
+			if (kind != (int)SourceKind::File) filePathActive = false;
 			int camIndex = params.getInt("webcam_index");
 			if (ImGui::InputInt("Webcam Index", &camIndex)) instrument.setNumber("webcam_index", camIndex);
 			toggle("Black bars", "video_bars");
 			toggle("Preserve aspect", "video_aspect");
 			if (kind == (int)SourceKind::File) {
-				textField("File Path", "file_path");
+				if (!filePathActive) {
+					filePathBuf = params.getString("file_path");
+					if (filePathBuf.size() >= 512) filePathBuf.clear();
+				}
+				char filePath[512];
+				std::strncpy(filePath, filePathBuf.c_str(), sizeof filePath);
+				filePath[sizeof filePath - 1] = '\0';
+				ImGui::InputText("File Path", filePath, sizeof filePath);
+				filePathBuf = filePath;
+				if (ImGui::IsItemDeactivatedAfterEdit()) instrument.setText("file_path", filePathBuf);
+				filePathActive = ImGui::IsItemActive();
 				if (ImGui::Button("Browse...")) {
 					macOpenFileDialogAsync("Select Video File", [inst](std::string p) {
 						if (!p.empty()) inst->loadVideo(p);
