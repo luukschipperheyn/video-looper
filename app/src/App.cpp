@@ -16,6 +16,7 @@
 #include "gl/PictureChoice.hpp"
 #include "buffer/RingBuffer.hpp"
 #include "looper/LooperEngine.hpp"
+#include "looper/LoopFrame.hpp"
 #include "looper/OverdubGate.hpp"
 #include "util/HotReload.hpp"
 #include "ui/ParamBus.hpp"
@@ -105,15 +106,13 @@ int App::run() {
 
 	GLFWwindow* previewWindow = nullptr;
 
-	int fbw, fbh;
-	glfwGetFramebufferSize(window, &fbw, &fbh);
 	RingBuffer ring;
 	LooperEngine looper(ring);
 	const std::string shaderDir = SHADER_DIR;
 	Compositor compositor;
 	FxPipeline fx;
 	FxPipeline sourceFx;
-	initFrame(fbw, fbh, shaderDir, ring, looper, compositor, fx, sourceFx);
+	initFrame(kLoopWidth, kLoopHeight, shaderDir, ring, looper, compositor, fx, sourceFx);
 	SourceController source(compositor, avfDecoders());
 
 	HotReload hot;
@@ -223,12 +222,6 @@ int App::run() {
 
 		int w, h;
 		glfwGetFramebufferSize(window, &w, &h);
-		if (w != fbw || h != fbh) {
-			fbw = w;
-			fbh = h;
-			resizeFrame(fbw, fbh, ring, looper, compositor, fx, sourceFx);
-			diskExport.resized();
-		}
 		glViewport(0, 0, w, h);
 
 		double now = glfwGetTime();
@@ -245,7 +238,7 @@ int App::run() {
 		bool hasPicture = (srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
 		                  source.frameWidth() > 0 && source.frameHeight() > 0;
 		SourcePlacement placed{};
-		if (hasPicture) placed = sourcePlacement(fbw, fbh, source.frameWidth(), source.frameHeight(), params);
+		if (hasPicture) placed = sourcePlacement(kLoopWidth, kLoopHeight, source.frameWidth(), source.frameHeight(), params);
 		WholeStamp sourceStamp = compositor.drawSource(static_cast<SourceKind>(srcKind), t, placed,
 		                                               params.getBool("video_bars"), hasPicture);
 
@@ -352,21 +345,24 @@ int App::run() {
 		compositor.program(loopRead, fxOutput);
 		compositor.audition(loopRead, dubImage, pictures.previewOpacity, dub.blendMode);
 
+		ContainRect program = containRect(kLoopWidth, kLoopHeight, w, h);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		compositor.show(compositor.image(pictures.shown), 0, 0, w, h);
+		if (program.w > 0 && program.h > 0)
+			compositor.show(compositor.image(pictures.shown), program.x, program.y, program.w, program.h);
 
-		diskExport.frame(dt, pictures.exported, fbw, fbh);
+		diskExport.frame(dt, pictures.exported, kLoopWidth, kLoopHeight);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		exportFailure = diskExport.failure();
 
 		if (params.getBool("show_preview") && !params.getBool("preview_window")) {
 			float scale = params.getFloat("preview_scale");
-			int pw = static_cast<int>(w * scale);
-			int ph = static_cast<int>(pw * (static_cast<float>(fbh) / static_cast<float>(fbw)));
 			int margin = 12;
+			ContainRect inset =
+				containRect(kLoopWidth, kLoopHeight, static_cast<int>(w * scale), static_cast<int>(h * scale));
 			GLuint preview = compositor.image(pictures.previewed);
 			if (params.getBool("debug_preview_backbuffer")) preview = ring.textureAtBack(looped.idx0);
-			compositor.show(preview, w - pw - margin, margin, pw, ph);
+			if (inset.w > 0 && inset.h > 0)
+				compositor.show(preview, w - inset.w - margin, margin, inset.w, inset.h);
 			glViewport(0, 0, w, h);
 		}
 
@@ -377,7 +373,9 @@ int App::run() {
 			glViewport(0, 0, pw, ph);
 			glClearColor(0.07f, 0.07f, 0.08f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
-			compositor.show(compositor.image(pictures.previewed), 0, 0, pw, ph);
+			ContainRect fitted = containRect(kLoopWidth, kLoopHeight, pw, ph);
+			if (fitted.w > 0 && fitted.h > 0)
+				compositor.show(compositor.image(pictures.previewed), fitted.x, fitted.y, fitted.w, fitted.h);
 			glfwSwapBuffers(previewWindow);
 			glfwMakeContextCurrent(window);
 		} else if (previewWindow && glfwWindowShouldClose(previewWindow)) {

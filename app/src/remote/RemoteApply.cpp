@@ -1,5 +1,7 @@
 #include "remote/RemoteApply.hpp"
 
+#include "looper/LoopFrame.hpp"
+
 #include "control/ControlTable.hpp"
 #include "ui/ParamBus.hpp"
 
@@ -65,7 +67,8 @@ std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const
 	       ",\"stage\":" + std::to_string(live.stage) + ",\"gate\":" + (live.gate ? "true" : "false") +
 	       ",\"cue\":" + (live.cue ? "true" : "false") + ",\"erase\":" + (live.erase ? "true" : "false") +
 	       ",\"video\":" + jsonString(video) + ",\"source_error\":" + jsonString(sourceError) +
-	       ",\"export_error\":" + jsonString(exportError);
+	       ",\"export_error\":" + jsonString(exportError) +
+	       ",\"loop_w\":" + std::to_string(kLoopWidth) + ",\"loop_h\":" + std::to_string(kLoopHeight);
 	if (!catalog) return out + "}";
 	out += ",\"videos\":[";
 	for (size_t i = 0; i < videos.size(); ++i)

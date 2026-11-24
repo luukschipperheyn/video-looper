@@ -10,7 +10,7 @@ Entry: `app/src/main.cpp` → `App::run()` in `app/src/App.cpp`.
 
 Target use is **live VJ performance**: steady frame rate and no hitches or lost loops mid-set outweigh offline quality. No formal memory or resolution budget is set yet.
 
-GPU memory is dominated by the ring: `2 banks × 120 frames × fbW × fbH × 4 bytes`. Framebuffer size is in physical pixels, so a 1280×720 window on Retina (2560×1440) costs ~3.5 GB; fullscreen 4K costs ~8 GB. Any feature that adds per-frame GPU storage multiplies against this.
+GPU memory is dominated by the ring: `2 banks × 120 frames × 1280 × 720 × 4 bytes` (~0.88 GB). The Loop is 1280×720 for the set (ADR-0002), so a Retina or 4K window does not multiply this. Any feature that adds per-frame GPU storage multiplies against this.
 
 Test clips for the File source and folder/commit paths: `~/Movies/video-datasets/vids` (~100 `.mp4`, mixed sizes up to ~100 MB; `.json` manifests in the folder are skipped by the scan). No `.mkv`/`.avi` samples, so those extensions are untested.
 
@@ -47,7 +47,7 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/buffer/RingBuffer.*` | Dual-bank GPU textures/FBOs (`frameCount` frames × 2 banks); front = read, back = write |
 | `app/src/looper/LoopPlan.*` | Pure frame of the Loop: read head, which back-bank slots are filled (Overdub, copy forward, or Bake FX), and when the banks swap |
 | `app/src/looper/LooperEngine.*` | Runs that plan against the banks, then the playhead overlay. The picture path draws each slot |
-| `app/src/gl/Compositor.*`, `Frame.cpp`, `PictureChoice.*` | The picture path. Keeps the framed Source, the Audition, and the Program as named images. Owns the blit and blend shaders, the quad, the frame size, those images, the picture texture (`PicturePort`), the Draw texture, and the export readback (`PictureRead`). `choosePictures` names the image the window, the preview, and Export ask for, and the opacity of the Audition. Tested in `app/tests/picture_choice_test.cpp`. `initFrame` and `resizeFrame` set that size on the Loop and both FX pipelines. `reloadShaders` polls the watches once. `drawSource` returns the Source FX stamp |
+| `app/src/gl/Compositor.*`, `Frame.cpp`, `PictureChoice.*` | The picture path. Keeps the framed Source, the Audition, and the Program as named images. Owns the blit and blend shaders, the quad, the frame size, those images, the picture texture (`PicturePort`), the Draw texture, and the export readback (`PictureRead`). `choosePictures` names the image the window, the preview, and Export ask for, and the opacity of the Audition. Tested in `app/tests/picture_choice_test.cpp`. `initFrame` sets that size to 1280×720 at startup. The window does not call `resizeFrame`. `reloadShaders` polls the watches once. `drawSource` returns the Source FX stamp |
 | `app/src/io/SourceController.*` | The life of the Source. Requests come from the Instrument. It opens a Video or webcam off the main thread, swaps it in with its first frame, and **Commit**s a Video until it ends. It writes no controls. No GL or AVFoundation; decoders come from a `DecoderFactory` and pictures go to a `PicturePort`. Tested with fake decoders in `app/tests/source_controller_test.cpp` |
 | `app/src/io/FolderList.*` | The Folder list. Videos folders in order, one of them current, each with the Videos captured when it was added. Selecting one does not read the disk |
 | `app/src/io/PageCache.*` | Opens the Videos on the Web interface's current page ahead of a tap |
@@ -79,20 +79,20 @@ Order inside `App::run`’s `while`, each frame:
 1. **Poll** GLFW events  
 2. **Hotkeys** (see UI + hotkeys). They run from the keys that are down. ImGui `WantCaptureKeyboard` means a text field has focus, and then no hotkey fires and Space and C do not open the Overdub gate or Cue  
 3. **Preview window** create/destroy from `preview_window`  
-4. **Resize** — if framebuffer size changes: `resizeFrame` rebuilds the ring (120 frames), both FX pipelines, the looper playhead, and the picture targets, in that order; if Export is on, `Export::resized` asks the Instrument to turn it off  
+4. **Window** — read the framebuffer size for the viewport. The Loop stays 1280×720; a resize does not rebuild it or stop Export  
 5. **Hot-reload** — `reloadShaders` polls the watches once. Every program that uses a changed shader reloads, including both FX pipelines  
 6. **`source.tick`, then `Instrument::record`** — a swap lands in the controls. The tick uploads a webcam or Video frame into the Compositor's picture texture; the `Compositor` then draws Shader, Black, or the placed picture as the framed Source  
 7. **Clock / Link** — tempo → `readFps` (optionally coupled to BPM)  
 8. **Web interface, then the Overdub gate** — `WebInterface::frame` takes the Instrument and this frame's live state and gives back the pad holds. The live state carries the previous frame's loop fraction, envelope, and gate flags, the Folder list, a new load failure, the Export failure, and thumbnails that just finished. `OverdubGate::step` takes those holds and returns this frame's write: overdub or not, opacity, image, blend mode, Cue  
 9. **`looper.step`** — one call advances the read head, plans every back-bank fill and any swap, then does the texture work. Cue is decided here: the plan writes nothing and does not swap. The picture's textures are the front bank from before a swap  
 10. **Pictures** — `choosePictures` names the window, the preview, and Export. The picture path keeps the Program (Program FX when it is on, otherwise the Loop) and the Audition at the opacity an Overdub would write  
-11. **Present** — the window asks for the Audition while cueing or overdubbing, including Bake FX, and for the Program otherwise  
+11. **Present** — the window asks for the Audition while cueing or overdubbing, including Bake FX, and for the Program otherwise, scaled to fit  
 12. **Export** — `Export::frame` sees the control. A rising edge starts the writer. A falling edge stops it. A failed start asks the Instrument to turn Export off and keeps a reason. While it is on, a due frame asks the picture path for the named image (BGRA, top row first) and appends it at `record_fps`. A writer that is not ready drops that frame and returns  
-13. **Inset and second window** — each asks for the Audition. The debug toggle shows the back-bank slot in the inset instead  
+13. **Inset and second window** — each asks for the Audition, scaled to fit. The debug toggle shows the back-bank slot in the inset instead  
 14. **ImGui** ControlsPanel + optional playhead overlay  
 15. **Swap** buffers (+ ImGui viewports)
 
-Ring size is fixed at **120** frames at current framebuffer resolution (`ring.setup(fbw, fbh, 120)`).
+Ring size is fixed at **120** frames at **1280×720** (`initFrame(kLoopWidth, kLoopHeight, ...)`, constants in `LoopFrame.hpp`). The window only scales that image.
 
 ---
 
@@ -192,9 +192,9 @@ Program params: `fx_param1/2/3`. Source params: `source_fx_param1/2/3`. Source F
 
 Separate from an Overdub, which writes into the Loop. `Export` owns on, off, a failed start, and the frame cadence. The Mac controls and the Web interface turn it on and off through the Instrument. The Instrument refuses Export with no path (`no export path`). `Export` does not check the path again.
 
-- A rising edge starts the `Recorder` at the framebuffer size and at `record_fps`. `AVFRecorder` writes H.264 in a QuickTime `.mov`, the same format as before
+- A rising edge starts the `Recorder` at the Loop's resolution (1280×720) and at `record_fps`. `AVFRecorder` writes H.264 in a QuickTime `.mov`, the same format as before
 - A failed start asks the Instrument to turn Export off. The reason `could not start` stays on `Export::failure` and the snapshot field `export_error`. The Web interface shows that reason beside Export, the same way it shows a Source load failure from `source_error`
-- Turning Export off, and a size change while it is on, go through the Instrument. The falling edge stops the writer. A size change is not a failed start, so it leaves no reason
+- Turning Export off goes through the Instrument. The falling edge stops the writer. A window resize does not stop Export
 - When a frame is due, Export asks the picture path for the image named by `choosePictures` (the Program, with Program FX when it is on), not the Audition
 - A 24 fps export against a 60 Hz frame loop writes 24 frames in one second. A writer that is not ready drops that frame and returns, so the frame loop is not stalled
 
@@ -225,7 +225,7 @@ Separate from an Overdub, which writes into the Loop. `Export` owns on, off, a f
 
 ## Controls
 
-`app/src/control/ControlTable.hpp` lists every control once: name, type, default, range, whether the Web interface sees it (`Web::Hidden` / `Read` / `Write`), and whether it is in the saved setup (`Keep::Session` / `Saved` / `StartsOff`). A fresh `ParamBus` holds those defaults, so getters take no fallback. The schema the page reads, the snapshot, the saved setup's fields, and the Mac sliders' ranges all come from the table. To add a control, add its row.
+`app/src/control/ControlTable.hpp` lists every control once: name, type, default, range, whether the Web interface sees it (`Web::Hidden` / `Read` / `Write`), and whether it is in the saved setup (`Keep::Session` / `Saved` / `StartsOff`). A fresh `ParamBus` holds those defaults, so getters take no fallback. The schema the page reads, the snapshot, the saved setup's fields, and the Mac sliders' ranges all come from the table. To add a control, add its row. The snapshot also carries `loop_w` and `loop_h`, the Loop's resolution, and the page takes its aspect from those.
 
 A change from the Mac controls, a hotkey, or the Web interface goes through `Instrument`, which clamps numbers to the table's range and does what follows from the change: Preserve aspect copies scale x onto scale y, choosing Shader, Black, or Draw asks the Source to show that, choosing a Video loads `file_path` when one is set, editing `file_path` loads that Video, choosing the webcam or its index starts a webcam load, loop and pause and the loop range are sent as playback, a new tempo goes to Link when Link is on, Export with no path is refused. When a load swaps in, `Instrument::record` writes the Source kind, the Video path, and the webcam index. The Web interface adds the read-only check. Commit state is not a control; `SourceController::committing()` reports it.
 
@@ -265,7 +265,7 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 1. **Bank coherence** — every back-bank slot is filled once per pass before the banks swap, including slots the wrap frame passes and slots Cue skipped. Copy keeps the Loop; Overdub and Bake FX replace it.  
 2. **Cue never mutates the Loop** — the plan writes nothing and does not swap while Cue is on.  
 3. **Commit** forces recording-active writes at opacity 1 and bypasses ADSR. The Video plays once for that Commit, and `file_loop` and `file_paused` stay the performer's. It ends when the reader is exhausted. A tick that holds the current frame does not end it.  
-4. **Resize invalidates** ring contents (full `setup` destroy/recreate) and turns Export off through the Instrument. Accepted for now by the owner; don't change it as a side effect.  
+4. **Loop resolution** — 1280×720, set at startup and unchanged for the set (ADR-0002). Resizing, moving, or fullscreening the window scales the Program, the inset, and the second window to fit. It does not rebuild the ring or stop Export.  
 5. **Read interpolation** — present mixes `idx0`/`idx1` with `gain_mix`; write path uses integer slot indices.  
 6. **FX present vs commit** — Program FX is kept in the Program image each frame. The window shows the Program when not cueing or overdubbing. Bake FX writes the previous Program image into the loop. Source FX is on the framed Source before the Audition and an Overdub.  
 7. **Preview vs main** — the window asks for the Audition while cueing or overdubbing, and for the Program otherwise. The inset and the second window ask for the Audition at the opacity an Overdub would write. The debug toggle shows the back-bank slot in the inset instead.
