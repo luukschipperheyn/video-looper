@@ -5,9 +5,7 @@
 
 #include <cmath>
 
-FxPipeline::FxPipeline()
-	: w(0), h(0), wholeTex(0), wholeCenterX(0), wholeCenterY(0), wholeHalfX(0), wholeHalfY(0), wholeRot(0),
-	  postFront(0) {
+FxPipeline::FxPipeline() : w(0), h(0), postFront(0) {
 	postTex[0] = 0;
 	postTex[1] = 0;
 	postFbo[0] = 0;
@@ -64,16 +62,16 @@ void FxPipeline::registerWatches(HotReload& hot) {
 	hot.watch(repeatFragPath);
 }
 
-FxReload FxPipeline::hotReload(HotReload& hot) {
+FxReload FxPipeline::hotReload(const std::unordered_set<std::string>& changed) {
 	FxReload reload;
-	reload.vertex = hot.changed(vsPath);
-	reload.feedback = hot.changed(feedbackFragPath);
-	reload.diff = hot.changed(feedbackDiffFragPath);
-	reload.chroma = hot.changed(feedbackChromaFragPath);
-	reload.kaleido = hot.changed(feedbackKaleidoFragPath);
-	reload.blurX = hot.changed(blurXFragPath);
-	reload.blurY = hot.changed(blurYFragPath);
-	reload.repeat = hot.changed(repeatFragPath);
+	reload.vertex = changed.count(vsPath) != 0;
+	reload.feedback = changed.count(feedbackFragPath) != 0;
+	reload.diff = changed.count(feedbackDiffFragPath) != 0;
+	reload.chroma = changed.count(feedbackChromaFragPath) != 0;
+	reload.kaleido = changed.count(feedbackKaleidoFragPath) != 0;
+	reload.blurX = changed.count(blurXFragPath) != 0;
+	reload.blurY = changed.count(blurYFragPath) != 0;
+	reload.repeat = changed.count(repeatFragPath) != 0;
 	applyReload(reload);
 	return reload;
 }
@@ -88,17 +86,8 @@ void FxPipeline::applyReload(const FxReload& reload) {
 	if (reload.vertex || reload.repeat) shaderRepeat.loadFromFiles(vsPath, repeatFragPath);
 }
 
-void FxPipeline::setWholeStamp(GLuint tex, float centerX, float centerY, float halfX, float halfY, float rot) {
-	wholeTex = tex;
-	wholeCenterX = centerX;
-	wholeCenterY = centerY;
-	wholeHalfX = halfX;
-	wholeHalfY = halfY;
-	wholeRot = rot;
-}
-
 GLuint FxPipeline::process(GLuint ringTex0, GLuint ringTex1, float baseMix, const FxSettings& fx,
-                           FullscreenQuad& quad) {
+                           const WholeStamp& stamp) {
 	const int viewportW = w;
 	const int viewportH = h;
 	const int fxMode = fx.mode;
@@ -129,15 +118,15 @@ GLuint FxPipeline::process(GLuint ringTex0, GLuint ringTex1, float baseMix, cons
 		shaderRepeat.setUniform("uCount", static_cast<float>(copies));
 		shaderRepeat.setUniform("uBlend", fx.repeatBlend);
 		shaderRepeat.setUniform("uGrid", grid ? 1 : 0);
-		bool whole = wholeTex != 0;
+		bool whole = stamp.tex != 0;
 		glActiveTexture(GL_TEXTURE2);
-		glBindTexture(GL_TEXTURE_2D, whole ? wholeTex : ringTex0);
+		glBindTexture(GL_TEXTURE_2D, whole ? stamp.tex : ringTex0);
 		shaderRepeat.setUniform("uVideo", 2);
 		shaderRepeat.setUniform("uWhole", whole ? 1 : 0);
 		shaderRepeat.setUniform("uFrame", static_cast<float>(viewportW), static_cast<float>(viewportH));
-		shaderRepeat.setUniform("uCenter", wholeCenterX, wholeCenterY);
-		shaderRepeat.setUniform("uHalf", wholeHalfX, wholeHalfY);
-		shaderRepeat.setUniform("uRot", wholeRot);
+		shaderRepeat.setUniform("uCenter", stamp.centerX, stamp.centerY);
+		shaderRepeat.setUniform("uHalf", stamp.halfX, stamp.halfY);
+		shaderRepeat.setUniform("uRot", stamp.rot);
 		quad.draw();
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		postFront = postWrite;

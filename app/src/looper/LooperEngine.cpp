@@ -1,5 +1,7 @@
 #include "looper/LooperEngine.hpp"
 
+#include "gl/Compositor.hpp"
+
 #include <cmath>
 #include "imgui.h"
 
@@ -15,8 +17,7 @@ void LooperEngine::resize() {
 	mark.readFrame = read;
 }
 
-void LooperEngine::paint(const SlotFill& fill, ShaderProgram& shaderBlit, ShaderProgram& shaderBlendTwo,
-                         FullscreenQuad& quad, const LoopWrite& write) {
+void LooperEngine::paint(const SlotFill& fill, Compositor& compositor, const LoopWrite& write) {
 	const int width = ring.getWidth();
 	const int height = ring.getHeight();
 	if (width <= 0 || height <= 0) return;
@@ -24,35 +25,16 @@ void LooperEngine::paint(const SlotFill& fill, ShaderProgram& shaderBlit, Shader
 	ring.bindWriteFboAt(fill.index);
 	glViewport(0, 0, width, height);
 
-	if (fill.action == SlotAction::Bake) {
-		shaderBlit.use();
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, write.replaceWith);
-		shaderBlit.setUniform("uTex", 0);
-		quad.draw();
-	} else if (fill.action == SlotAction::Overdub) {
-		shaderBlendTwo.use();
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, ring.textureAt(fill.index));
-		shaderBlendTwo.setUniform("uTex0", 0);
-		glActiveTexture(GL_TEXTURE1);
-		glBindTexture(GL_TEXTURE_2D, write.image);
-		shaderBlendTwo.setUniform("uTex1", 1);
-		shaderBlendTwo.setUniform("uMix", write.opacity);
-		shaderBlendTwo.setUniform("uMode", write.blendMode);
-		quad.draw();
-	} else {
-		shaderBlit.use();
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, ring.textureAt(fill.index));
-		shaderBlit.setUniform("uTex", 0);
-		quad.draw();
-	}
+	if (fill.action == SlotAction::Bake)
+		compositor.blit(write.replaceWith);
+	else if (fill.action == SlotAction::Overdub)
+		compositor.blend(ring.textureAt(fill.index), write.image, write.opacity, write.blendMode);
+	else
+		compositor.blit(ring.textureAt(fill.index));
 	ring.unbindWriteFbo();
 }
 
-LoopPicture LooperEngine::step(float dtSeconds, float readFps, ShaderProgram& shaderBlit, ShaderProgram& shaderBlendTwo,
-                               FullscreenQuad& quad, const LoopWrite& write) {
+LoopPicture LooperEngine::step(float dtSeconds, float readFps, const LoopWrite& write, Compositor& compositor) {
 	LoopWish wish;
 	wish.cue = write.cue;
 	wish.overdub = write.overdub;
@@ -67,7 +49,7 @@ LoopPicture LooperEngine::step(float dtSeconds, float readFps, ShaderProgram& sh
 	picture.tex1 = ring.textureAt(picture.idx1);
 
 	for (const BankWrite& bank : plan.banks) {
-		for (const SlotFill& fill : bank.fills) paint(fill, shaderBlit, shaderBlendTwo, quad, write);
+		for (const SlotFill& fill : bank.fills) paint(fill, compositor, write);
 		if (bank.swap) ring.swapBanks();
 	}
 	return picture;

@@ -29,6 +29,15 @@ struct FxSettings {
 	int repeatBlend = 0;
 };
 
+struct WholeStamp {
+	GLuint tex = 0;
+	float centerX = 0;
+	float centerY = 0;
+	float halfX = 0;
+	float halfY = 0;
+	float rot = 0;
+};
+
 class FxPipeline {
 public:
 	FxPipeline();
@@ -41,18 +50,12 @@ public:
 
 	void resize(int width, int height);
 	void registerWatches(HotReload& hot);
-	// Reads the watches and reloads. A second pipeline should applyReload with that result:
-	// changed() records the new time, so only the first call in a frame sees the edit.
-	FxReload hotReload(HotReload& hot);
+	FxReload hotReload(const std::unordered_set<std::string>& changed);
 	void applyReload(const FxReload& reload);
-
-	// Repeat and Grid on a Video or webcam stamp this whole picture. tex 0 repeats the framed image instead.
-	// center and half are in frame pixels, the same placement video_fit.frag uses.
-	void setWholeStamp(GLuint tex, float centerX, float centerY, float halfX, float halfY, float rot);
 
 	// Renders one FX frame at the pipeline's size from two neighbouring frames mixed by baseMix. Returns the
 	// texture holding the result.
-	GLuint process(GLuint tex0, GLuint tex1, float baseMix, const FxSettings& fx, FullscreenQuad& quad);
+	GLuint process(GLuint tex0, GLuint tex1, float baseMix, const FxSettings& fx, const WholeStamp& stamp = {});
 
 	// Texture containing the most recently presented FX output
 	GLuint getPrevOutputTexture() const;
@@ -64,8 +67,6 @@ private:
 
 	int w;
 	int h;
-	GLuint wholeTex;
-	float wholeCenterX, wholeCenterY, wholeHalfX, wholeHalfY, wholeRot;
 	GLuint postTex[2];
 	GLuint postFbo[2];
 	int postFront;
@@ -77,6 +78,8 @@ private:
 	ShaderProgram shaderBlurX;
 	ShaderProgram shaderBlurY;
 	ShaderProgram shaderRepeat;
+
+	FullscreenQuad quad;
 
 	std::string vsPath;
 	std::string feedbackFragPath;

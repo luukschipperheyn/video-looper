@@ -5,16 +5,14 @@ bool HotReload::watch(const std::string& path) {
 	return true;
 }
 
-bool HotReload::changed(const std::string& path) {
-	auto nowM = getMtime(path);
-	auto it = pathToMtime.find(path);
-	if (it == pathToMtime.end()) {
-		pathToMtime[path] = nowM;
-		return false;
+std::unordered_set<std::string> HotReload::poll() {
+	std::unordered_set<std::string> changed;
+	for (auto& entry : pathToMtime) {
+		time_t nowM = getMtime(entry.first);
+		if (nowM != entry.second && nowM != 0) {
+			entry.second = nowM;
+			changed.insert(entry.first);
+		}
 	}
-	if (nowM != it->second && nowM != 0) {
-		it->second = nowM;
-		return true;
-	}
-	return false;
+	return changed;
 }
