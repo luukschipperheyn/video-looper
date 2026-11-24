@@ -33,6 +33,18 @@ open build/video_looper.app
 
 Override Link root: `LINK_ROOT=/path/to/link ./build.sh`
 
+## Tests
+
+Configure the project from the repo root. Run `ctest` in the build directory. `ctest` builds the C++ test programs, runs those programs, and runs the node gestures test. A failed check makes `ctest` exit non-zero.
+
+```bash
+cmake -S . -B build
+cd build
+ctest --output-on-failure
+```
+
+`./build.sh` still builds and launches only `video_looper`.
+
 ## Formatting
 
 C++/ObjC++ under `app/src` follows `.clang-format` (uses Xcode's clang-format):

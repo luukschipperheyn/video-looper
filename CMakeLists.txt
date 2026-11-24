@@ -199,4 +199,31 @@ if(USE_ABLETON_LINK)
   target_compile_definitions(video_looper PRIVATE USE_ABLETON_LINK)
 endif()
 
+enable_testing()
 
+set(cpp_tests
+  remote_session_test
+  usage_log_test
+  draw_image_test
+  contain_rect_test
+  repeat_test
+  setup_test
+  overdub_gate_test
+  instrument_test
+  source_controller_test
+)
+foreach(test_name IN LISTS cpp_tests)
+  add_test(NAME ${test_name} COMMAND ${test_name})
+endforeach()
+add_test(
+  NAME gestures_test
+  COMMAND node ${CMAKE_SOURCE_DIR}/app/tests/gestures_test.js
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+
+list(JOIN cpp_tests " " cpp_test_targets)
+file(WRITE "${CMAKE_BINARY_DIR}/CTestCustom.cmake"
+"set(CTEST_CUSTOM_PRE_TEST
+  \"\\\"${CMAKE_COMMAND}\\\" --build \\\"${CMAKE_BINARY_DIR}\\\" --target ${cpp_test_targets}\"
+)
+")
