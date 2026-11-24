@@ -46,8 +46,8 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/looper/OverdubGate.*` | Decides per frame whether the Loop is written, with which image, blend mode and opacity: holds, ADSR, release tail, Erase, Cue, Commit bypass. Pure |
 | `app/src/buffer/RingBuffer.*` | Dual-bank GPU textures/FBOs (`frameCount` frames × 2 banks); front = read, back = write |
 | `app/src/looper/LoopPlan.*` | Pure frame of the Loop: read head, which back-bank slots are filled (Overdub, copy forward, or Bake FX), and when the banks swap |
-| `app/src/looper/LooperEngine.*` | Runs that plan against the banks, then the playhead overlay |
-| `app/src/gl/Compositor.*` | Draws the framed Source, the Loop as read, and the Audition; owns the Source and Audition targets, the picture texture (`PicturePort`), the Draw texture, and the export readback |
+| `app/src/looper/LooperEngine.*` | Runs that plan against the banks, then the playhead overlay. The picture path draws each slot |
+| `app/src/gl/Compositor.*`, `Frame.cpp` | The picture path. Draws the framed Source, the Loop as read, and the Audition. Owns the blit and blend shaders, the quad, the frame size, the Source and Audition targets, the picture texture (`PicturePort`), the Draw texture, and the export readback. `initFrame` and `resizeFrame` set that size on the Loop and both FX pipelines. `reloadShaders` polls the watches once. `drawSource` returns the Source FX stamp |
 | `app/src/io/SourceController.*` | The life of the Source. Requests come from the Instrument. It opens a Video or webcam off the main thread, swaps it in with its first frame, and **Commit**s a Video until it ends. It writes no controls. No GL or AVFoundation; decoders come from a `DecoderFactory` and pictures go to a `PicturePort`. Tested with fake decoders in `app/tests/source_controller_test.cpp` |
 | `app/src/io/FolderList.*` | The Folder list. Videos folders in order, one of them current, each with the Videos captured when it was added. Selecting one does not read the disk |
 | `app/src/io/PageCache.*` | Opens the Videos on the Web interface's current page ahead of a tap |
@@ -55,7 +55,7 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/io/AVFRecorder.*` | BGRA frames → `.mov` |
 | `app/src/io/VideoSource.hpp` | `SourceKind { Shader, File, Black, Webcam, Draw }`; the ports `VideoDecoder`, `CameraDecoder`, `DecoderFactory`, and `PicturePort` |
 | `app/src/io/DrawImage.mm` | Draw PNG → straight-alpha BGRA, bottom row first |
-| `app/src/gl/FxPipeline.*` | Feedback / Diff / Chroma / Kaleido / Blur / Repeat / Grid; one pipeline on the Program, one on the Source; ping-pong targets; hot-reload |
+| `app/src/gl/FxPipeline.*` | Feedback / Diff / Chroma / Kaleido / Blur / Repeat / Grid; one pipeline on the Program, one on the Source; ping-pong targets; each owns its quad. The Source FX stamp is the placement the picture path used for the framed Source |
 | `app/src/gl/Shader.*`, `FullscreenQuad.*`, `util/GlUtils.hpp` | GL helpers |
 | `app/src/remote/RemoteSession.*` | HTTP + WebSocket server for the Web interface, holds, thumbnails |
 | `app/src/remote/RemoteApply.*` | The Web interface adapter: turns one message into an Instrument call and a reject frame; builds the snapshot |
@@ -76,8 +76,8 @@ Order inside `App::run`’s `while`, each frame:
 1. **Poll** GLFW events  
 2. **Hotkeys** (see UI + hotkeys). They run from the keys that are down. ImGui `WantCaptureKeyboard` means a text field has focus, and then no hotkey fires and Space and C do not open the Overdub gate or Cue  
 3. **Preview window** create/destroy from `preview_window`  
-4. **Resize** — if framebuffer size changes: rebuild ring (120 frames), source, FX, looper, compositor targets; **stop** disk recorder if active  
-5. **Hot-reload** shaders / FX  
+4. **Resize** — if framebuffer size changes: `resizeFrame` rebuilds the ring (120 frames), both FX pipelines, the looper playhead, and the picture targets, in that order; **stop** disk recorder if active  
+5. **Hot-reload** — `reloadShaders` polls the watches once. Every program that uses a changed shader reloads, including both FX pipelines  
 6. **Disk record edge** — start/stop `AVFRecorder` from `record_enabled` + `record_path`  
 7. **`source.tick`, then `Instrument::record`** — a swap lands in the controls. The tick uploads a webcam or Video frame into the Compositor's picture texture; the `Compositor` then draws Shader, Black, or the placed picture as the framed Source  
 8. **Clock / Link** — tempo → `readFps` (optionally coupled to BPM)  
@@ -166,7 +166,7 @@ Two chains, each an `FxPipeline`. **Program FX** (`fx_enabled`) runs on the pres
 | 5 | Repeat | extra copies along one step. Distance is `param1` as a fraction of the frame height. Angle is `param2` in turns (0 points right, increasing turns upward). Count is `fx_count` or `source_fx_count`, 0..16 extra copies. Copies combine with `fx_repeat_blend` or `source_fx_repeat_blend` (the Overdub blend modes, default Lighten). Black does not cover; a copy landing on empty black is placed as itself. Samples outside the frame are black. |
 | 6 | Grid | the same stamp on that step and on the perpendicular step (`turns + 0.25`). Count is extra copies along each axis, 0..6, so a count of 4 is a 5×5 grid. Same distance, blend, and black-does-not-cover rule as Repeat. |
 
-Program params: `fx_param1/2/3`. Source params: `source_fx_param1/2/3`. Source FX defaults to Repeat, distance 0.12, angle 0, count 4. `fx_commit` + Program `fx_enabled` writes the previous Program FX output into the ring instead of the live Source. Shaders hot-reload via `HotReload` watches under `app/shaders/`. The Program pipeline reads the watches; the Source pipeline reloads from that same result, because a watch reports a change only once per edit.
+Program params: `fx_param1/2/3`. Source params: `source_fx_param1/2/3`. Source FX defaults to Repeat, distance 0.12, angle 0, count 4. `fx_commit` + Program `fx_enabled` writes the previous Program FX output into the ring instead of the live Source. Shaders hot-reload via `HotReload` watches under `app/shaders/`. `reloadShaders` polls those watches once and reloads the picture-path programs and both FX pipelines from that result. The Source pipeline reloads from the Program pipeline's result. A vertex-shader edit reaches every program that uses it. Repeat and Grid on Source FX stamp the placement `drawSource` returned for that frame.
 
 ---
 

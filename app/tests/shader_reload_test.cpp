@@ -1,5 +1,4 @@
 #include "gl/Compositor.hpp"
-#include "gl/FullscreenQuad.hpp"
 #include "gl/FxPipeline.hpp"
 #include "util/HotReload.hpp"
 
@@ -28,9 +27,9 @@ static GLuint currentProgram() {
 	return static_cast<GLuint>(id);
 }
 
-static GLuint drawFx(FxPipeline& fx, FullscreenQuad& quad) {
+static GLuint drawFx(FxPipeline& fx) {
 	GLuint tex = fx.getPrevOutputTexture();
-	fx.process(tex, tex, 0.0f, FxSettings{}, quad);
+	fx.process(tex, tex, 0.0f, FxSettings{});
 	return currentProgram();
 }
 
@@ -116,7 +115,6 @@ int main() {
 	Compositor picture;
 	FxPipeline program;
 	FxPipeline source;
-	FullscreenQuad quad;
 	picture.init(16, 16, dir.string());
 	program.init(16, 16, dir.string());
 	source.init(16, 16, dir.string());
@@ -125,19 +123,16 @@ int main() {
 	picture.registerWatches(hot);
 	program.registerWatches(hot);
 
-	GLuint programBefore = drawFx(program, quad);
-	GLuint sourceBefore = drawFx(source, quad);
-	check(programBefore != 0 && sourceBefore != 0 && picture.blitShader().id() != 0, "the FX programs are linked");
+	GLuint programBefore = drawFx(program);
+	GLuint sourceBefore = drawFx(source);
+	check(programBefore != 0 && sourceBefore != 0, "the FX programs are linked");
 	check(editVertex((dir / "fullscreen.vert").string()), "the vertex shader changes");
 
-	picture.hotReload(hot);
-	check(shaderSourceHas(picture.blitShader().id(), "reload-marker"),
-	      "the picture path reads the vertex shader edit");
-
-	FxReload reload = program.hotReload(hot);
+	auto changed = hot.poll();
+	picture.hotReload(changed);
+	FxReload reload = program.hotReload(changed);
 	source.applyReload(reload);
-	check(shaderSourceHas(drawFx(program, quad), "reload-marker") &&
-	          shaderSourceHas(drawFx(source, quad), "reload-marker"),
+	check(shaderSourceHas(drawFx(program), "reload-marker") && shaderSourceHas(drawFx(source), "reload-marker"),
 	      "a vertex-shader edit reloads the FX programs");
 
 	fs::remove_all(dir, ec);

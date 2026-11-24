@@ -2,8 +2,13 @@
 
 #include "util/GlUtils.hpp"
 
+#include <OpenGL/OpenGL.h>
 #include <cstdio>
 #include <cstring>
+
+Compositor::Compositor() {
+	mainContext = CGLGetCurrentContext();
+}
 
 Compositor::~Compositor() {
 	destroy();
@@ -103,13 +108,33 @@ void Compositor::registerWatches(HotReload& hot) {
 	hot.watch(blendPath);
 }
 
-void Compositor::hotReload(HotReload& hot) {
-	// changed() records the new time, so the vertex shader is asked once and the answer shared.
-	bool vertex = hot.changed(vsPath);
-	if (hot.changed(testPath) || vertex) shaderTest.loadFromFiles(vsPath, testPath);
-	if (hot.changed(blitPath) || vertex) shaderBlit.loadFromFiles(vsPath, blitPath);
-	if (hot.changed(fitPath) || vertex) shaderFit.loadFromFiles(vsPath, fitPath);
-	if (hot.changed(blendPath) || vertex) shaderBlend.loadFromFiles(vsPath, blendPath);
+void Compositor::hotReload(const std::unordered_set<std::string>& changed) {
+	bool vertex = changed.count(vsPath) != 0;
+	if (changed.count(testPath) || vertex) shaderTest.loadFromFiles(vsPath, testPath);
+	if (changed.count(blitPath) || vertex) shaderBlit.loadFromFiles(vsPath, blitPath);
+	if (changed.count(fitPath) || vertex) shaderFit.loadFromFiles(vsPath, fitPath);
+	if (changed.count(blendPath) || vertex) shaderBlend.loadFromFiles(vsPath, blendPath);
+}
+
+WholeStamp Compositor::drawSource(SourceKind kind, float timeSeconds, const SourcePlacement& placed, bool bars,
+                                  bool hasPicture) {
+	WholeStamp stamp;
+	if (kind == SourceKind::Shader)
+		drawTestPattern(timeSeconds);
+	else if (kind == SourceKind::Black)
+		drawBlack();
+	else if (kind == SourceKind::Draw)
+		drawDraw();
+	else if (hasPicture) {
+		stamp.tex = pictureTex;
+		stamp.centerX = placed.centerX;
+		stamp.centerY = placed.centerY;
+		stamp.halfX = placed.halfX;
+		stamp.halfY = placed.halfY;
+		stamp.rot = placed.rot;
+		drawPlacedPicture(placed, bars);
+	}
+	return stamp;
 }
 
 void Compositor::drawTestPattern(float timeSeconds) {
@@ -165,6 +190,14 @@ void Compositor::drawPlacedPicture(const SourcePlacement& placed, bool bars) {
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+void Compositor::blit(GLuint tex) {
+	shaderBlit.use();
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, tex);
+	shaderBlit.setUniform("uTex", 0);
+	quadForCurrent().draw();
+}
+
 void Compositor::blend(GLuint tex0, GLuint tex1, float mix, int mode) {
 	shaderBlend.use();
 	glActiveTexture(GL_TEXTURE0);
@@ -211,9 +244,21 @@ void Compositor::showLoop(const LoopRead& loop, int x, int y, int width, int hei
 
 void Compositor::show(GLuint tex, int x, int y, int width, int height) {
 	glViewport(x, y, width, height);
-	shaderBlit.use();
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, tex);
-	shaderBlit.setUniform("uTex", 0);
-	fullscreen.draw();
+	blit(tex);
+}
+
+FullscreenQuad& Compositor::quadForCurrent() {
+	CGLContextObj ctx = CGLGetCurrentContext();
+	if (ctx == static_cast<CGLContextObj>(mainContext)) return fullscreen;
+	if (!sharedQuad) {
+		sharedQuad = std::make_unique<FullscreenQuad>();
+		sharedContext = ctx;
+	}
+	return *sharedQuad;
+}
+
+void Compositor::releaseSharedQuad() {
+	if (!sharedQuad || CGLGetCurrentContext() != static_cast<CGLContextObj>(sharedContext)) return;
+	sharedQuad.reset();
+	sharedContext = nullptr;
 }

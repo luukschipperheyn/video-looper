@@ -2,12 +2,13 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <sys/stat.h>
 
 class HotReload {
 public:
 	bool watch(const std::string& path);
-	bool changed(const std::string& path);
+	std::unordered_set<std::string> poll();
 
 private:
 	std::unordered_map<std::string, time_t> pathToMtime;

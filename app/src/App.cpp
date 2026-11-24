@@ -13,7 +13,6 @@
 #include "control/Instrument.hpp"
 #include "gl/Compositor.hpp"
 #include "gl/FxPipeline.hpp"
-#include "util/Repeat.hpp"
 #include "buffer/RingBuffer.hpp"
 #include "looper/LooperEngine.hpp"
 #include "looper/OverdubGate.hpp"
@@ -29,7 +28,6 @@
 #include "io/VideoThumbs.hpp"
 #include "link/LinkBridge.hpp"
 #include "util/ContainRect.hpp"
-#include "util/GlUtils.hpp"
 #include "io/AVFRecorder.hpp"
 #include "remote/RemoteApply.hpp"
 #include "remote/RemoteSession.hpp"
@@ -105,22 +103,17 @@ int App::run() {
 	std::printf("OpenGL version: %s\n", glGetString(GL_VERSION));
 
 	GLFWwindow* previewWindow = nullptr;
-	FullscreenQuad* quadPreview = nullptr;
 
 	int fbw, fbh;
 	glfwGetFramebufferSize(window, &fbw, &fbh);
 	RingBuffer ring;
-	ring.setup(fbw, fbh, 120);
 	LooperEngine looper(ring);
-	looper.init();
 	const std::string shaderDir = SHADER_DIR;
 	Compositor compositor;
-	compositor.init(fbw, fbh, shaderDir);
-	SourceController source(compositor, avfDecoders());
 	FxPipeline fx;
 	FxPipeline sourceFx;
-	fx.init(fbw, fbh, shaderDir);
-	sourceFx.init(fbw, fbh, shaderDir);
+	initFrame(fbw, fbh, shaderDir, ring, looper, compositor, fx, sourceFx);
+	SourceController source(compositor, avfDecoders());
 
 	HotReload hot;
 	compositor.registerWatches(hot);
@@ -213,17 +206,13 @@ int App::run() {
 				if (previewWindow) {
 					glfwMakeContextCurrent(previewWindow);
 					glfwSwapInterval(1);
-					quadPreview = new FullscreenQuad();
 					glfwMakeContextCurrent(window);
 				}
 			}
 		} else {
 			if (previewWindow) {
 				glfwMakeContextCurrent(previewWindow);
-				if (quadPreview) {
-					delete quadPreview;
-					quadPreview = nullptr;
-				}
+				compositor.releaseSharedQuad();
 				glfwDestroyWindow(previewWindow);
 				previewWindow = nullptr;
 				glfwMakeContextCurrent(window);
@@ -235,11 +224,7 @@ int App::run() {
 		if (w != fbw || h != fbh) {
 			fbw = w;
 			fbh = h;
-			ring.setup(fbw, fbh, 120);
-			fx.resize(fbw, fbh);
-			sourceFx.resize(fbw, fbh);
-			looper.resize();
-			compositor.resize(fbw, fbh);
+			resizeFrame(fbw, fbh, ring, looper, compositor, fx, sourceFx);
 			if (recorder.isRecording()) {
 				recorder.stop();
 				params.setBool("record_enabled", false);
@@ -252,8 +237,7 @@ int App::run() {
 		float dt = static_cast<float>(now - lastTime);
 		lastTime = now;
 
-		compositor.hotReload(hot);
-		sourceFx.applyReload(fx.hotReload(hot));
+		reloadShaders(hot, compositor, fx, sourceFx);
 
 		// Manage recording state edge transitions
 		bool recEnabled = params.getBool("record_enabled");
@@ -290,18 +274,12 @@ int App::run() {
 		}
 		int srcKind = params.getInt("source_kind");
 		// A Video or webcam picture at its own size, ready to be placed in the frame.
-		bool picture = (srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
-		               source.frameWidth() > 0 && source.frameHeight() > 0;
+		bool hasPicture = (srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
+		                  source.frameWidth() > 0 && source.frameHeight() > 0;
 		SourcePlacement placed{};
-		if (picture) placed = sourcePlacement(fbw, fbh, source.frameWidth(), source.frameHeight(), params);
-		if (srcKind == (int)SourceKind::Shader)
-			compositor.drawTestPattern(t);
-		else if (srcKind == (int)SourceKind::Black)
-			compositor.drawBlack();
-		else if (srcKind == (int)SourceKind::Draw)
-			compositor.drawDraw();
-		else if (picture)
-			compositor.drawPlacedPicture(placed, params.getBool("video_bars"));
+		if (hasPicture) placed = sourcePlacement(fbw, fbh, source.frameWidth(), source.frameHeight(), params);
+		WholeStamp sourceStamp =
+			compositor.drawSource(static_cast<SourceKind>(srcKind), t, placed, params.getBool("video_bars"), hasPicture);
 
 		float bpm = params.getFloat("bpm");
 		float quantum = params.getFloat("quantum");
@@ -375,16 +353,8 @@ int App::run() {
 		if (dub.restartVideo) instrument.restartVideo();
 
 		GLuint liveSource = compositor.sourceTexture();
-		if (params.getBool("source_fx_enabled") && liveSource != 0) {
-			FxSettings settings = fxSettings(params, "source_fx_");
-			// Repeat and Grid stamp the whole picture, so one that runs past the frame is not cropped first.
-			if (fxStampsCopies(settings.mode) && picture)
-				sourceFx.setWholeStamp(compositor.pictureTexture(), placed.centerX, placed.centerY, placed.halfX,
-				                       placed.halfY, placed.rot);
-			else
-				sourceFx.setWholeStamp(0, 0, 0, 0, 0, 0);
-			liveSource = sourceFx.process(liveSource, liveSource, 0.0f, settings, compositor.quad());
-		}
+		if (params.getBool("source_fx_enabled") && liveSource != 0)
+			liveSource = sourceFx.process(liveSource, liveSource, 0.0f, fxSettings(params, "source_fx_"), sourceStamp);
 
 		GLuint dubImage = dub.image == DubImage::Black ? compositor.blackTexture() : liveSource;
 
@@ -396,8 +366,7 @@ int App::run() {
 		write.image = dubImage;
 		write.bake = dub.image == DubImage::ProgramFx;
 		write.replaceWith = write.bake ? fx.getPrevOutputTexture() : 0;
-		LoopPicture looped = looper.step(dt, readFps, compositor.blitShader(), compositor.blendShader(),
-		                                 compositor.quad(), write);
+		LoopPicture looped = looper.step(dt, readFps, write, compositor);
 		LoopRead loopRead{looped.tex0, looped.tex1, looped.mix * params.getFloat("gain_mix")};
 
 		// The window shows the Audition while cueing or overdubbing, and the Program otherwise.
@@ -405,8 +374,7 @@ int App::run() {
 		if (dub.cue || dub.overdub) {
 			compositor.show(compositor.audition(loopRead, dubImage, dub.opacity, dub.blendMode), 0, 0, w, h);
 		} else if (params.getBool("fx_enabled")) {
-			GLuint fxOut =
-				fx.process(loopRead.tex0, loopRead.tex1, loopRead.mix, fxSettings(params, "fx_"), compositor.quad());
+			GLuint fxOut = fx.process(loopRead.tex0, loopRead.tex1, loopRead.mix, fxSettings(params, "fx_"));
 			compositor.show(fxOut, 0, 0, w, h);
 		} else {
 			compositor.showLoop(loopRead, 0, 0, w, h);
@@ -455,19 +423,12 @@ int App::run() {
 			glViewport(0, 0, pw, ph);
 			glClearColor(0.07f, 0.07f, 0.08f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
-			compositor.blitShader().use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, compositor.auditionTexture());
-			compositor.blitShader().setUniform("uTex", 0);
-			if (quadPreview) quadPreview->draw();
+			compositor.show(compositor.auditionTexture(), 0, 0, pw, ph);
 			glfwSwapBuffers(previewWindow);
 			glfwMakeContextCurrent(window);
 		} else if (previewWindow && glfwWindowShouldClose(previewWindow)) {
 			glfwMakeContextCurrent(previewWindow);
-			if (quadPreview) {
-				delete quadPreview;
-				quadPreview = nullptr;
-			}
+			compositor.releaseSharedQuad();
 			glfwDestroyWindow(previewWindow);
 			previewWindow = nullptr;
 			glfwMakeContextCurrent(window);

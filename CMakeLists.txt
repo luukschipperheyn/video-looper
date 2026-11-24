@@ -35,6 +35,7 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/gl/FullscreenQuad.cpp
   app/src/gl/FxPipeline.cpp
   app/src/gl/Compositor.cpp
+  app/src/gl/Frame.cpp
   app/src/control/Instrument.cpp
   app/src/control/Hotkeys.cpp
   app/src/buffer/RingBuffer.cpp

@@ -1,9 +1,9 @@
 #pragma once
 
 #include "buffer/RingBuffer.hpp"
-#include "gl/FullscreenQuad.hpp"
-#include "gl/Shader.hpp"
 #include "looper/LoopPlan.hpp"
+
+class Compositor;
 
 struct LoopWrite {
 	bool cue = false;
@@ -30,14 +30,12 @@ public:
 	void init();
 	void resize();
 
-	LoopPicture step(float dtSeconds, float readFps, ShaderProgram& shaderBlit, ShaderProgram& shaderBlendTwo,
-	                 FullscreenQuad& quad, const LoopWrite& write);
+	LoopPicture step(float dtSeconds, float readFps, const LoopWrite& write, Compositor& compositor);
 
 	void drawHeadsOverlay(int viewportW, int viewportH) const;
 
 private:
-	void paint(const SlotFill& fill, ShaderProgram& shaderBlit, ShaderProgram& shaderBlendTwo, FullscreenQuad& quad,
-	           const LoopWrite& write);
+	void paint(const SlotFill& fill, Compositor& compositor, const LoopWrite& write);
 
 	RingBuffer& ring;
 	LoopMark mark;
