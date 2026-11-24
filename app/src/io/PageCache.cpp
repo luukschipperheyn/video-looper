@@ -1,5 +1,7 @@
 #include "io/PageCache.hpp"
 
+#include "io/SourceLoad.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -143,10 +145,8 @@ void PageCache::run() {
 		int h = 0;
 		bool ok = src->startFile(path);
 		if (ok) {
-			float from = std::clamp(start, 0.0f, 1.0f);
-			float len = std::clamp(length, 0.0f, 1.0f);
-			float to = std::clamp(from + len, from + 0.001f, 1.0f);
-			src->setLoopRange(from, to);
+			LoopRange range = loopRange(start, length);
+			src->setLoopRange(range.start, range.end);
 			ok = src->copyFrame(frame, w, h);
 		}
 		if (!ok) src->stop();

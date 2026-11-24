@@ -9,12 +9,13 @@
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 
-#include "gl/Shader.hpp"
-#include "gl/FullscreenQuad.hpp"
+#include "control/Instrument.hpp"
+#include "gl/Compositor.hpp"
 #include "gl/FxPipeline.hpp"
 #include "util/Repeat.hpp"
 #include "buffer/RingBuffer.hpp"
 #include "looper/LooperEngine.hpp"
+#include "looper/OverdubGate.hpp"
 #include "util/HotReload.hpp"
 #include "ui/ParamBus.hpp"
 #include "ui/ControlsPanel.hpp"
@@ -37,19 +38,10 @@ static void glfwErrorCallback(int code, const char* desc) {
 	std::fprintf(stderr, "GLFW error %d: %s\n", code, desc);
 }
 
-// Same placement video_fit.frag uses. center and half are in frame pixels.
-struct SourcePlacement {
-	float centerX;
-	float centerY;
-	float halfX;
-	float halfY;
-	float rot;
-};
-
 static SourcePlacement sourcePlacement(int frameW, int frameH, int srcW, int srcH, const ParamBus& params) {
-	bool aspect = params.getBool("video_aspect", true);
-	float sx = params.getFloat("video_sx", 1.0f);
-	float sy = aspect ? sx : params.getFloat("video_sy", 1.0f);
+	bool aspect = params.getBool("video_aspect");
+	float sx = params.getFloat("video_sx");
+	float sy = aspect ? sx : params.getFloat("video_sy");
 	float baseW = static_cast<float>(frameW);
 	float baseH = static_cast<float>(frameH);
 	if (aspect) {
@@ -57,10 +49,30 @@ static SourcePlacement sourcePlacement(int frameW, int frameH, int srcW, int src
 		baseW = static_cast<float>(fitted.w);
 		baseH = static_cast<float>(fitted.h);
 	}
-	float tx = params.getFloat("video_tx", 0.0f);
-	float ty = params.getFloat("video_ty", 0.0f);
+	float tx = params.getFloat("video_tx");
+	float ty = params.getFloat("video_ty");
 	return {(0.5f + tx) * frameW, (0.5f + ty) * frameH, baseW * 0.5f * sx, baseH * 0.5f * sy,
-	        params.getFloat("video_rot", 0.0f)};
+	        params.getFloat("video_rot")};
+}
+
+// prefix is "fx_" for Program FX and "source_fx_" for Source FX.
+static FxSettings fxSettings(const ParamBus& params, const std::string& prefix) {
+	return {params.getInt(prefix + "mode"),     params.getFloat(prefix + "param1"),
+	        params.getFloat(prefix + "param2"), params.getFloat(prefix + "param3"),
+	        params.getInt(prefix + "count"),    params.getInt(prefix + "repeat_blend")};
+}
+
+static GateSettings gateSettings(const ParamBus& params) {
+	GateSettings out;
+	out.envelope = params.getBool("env_enabled");
+	out.attack = params.getFloat("env_attack");
+	out.decay = params.getFloat("env_decay");
+	out.sustain = params.getFloat("env_sustain");
+	out.release = params.getFloat("env_release");
+	out.opacity = params.getFloat("record_blend_opacity");
+	out.blendMode = params.getInt("record_blend_mode");
+	out.bakeFx = params.getBool("fx_commit") && params.getBool("fx_enabled");
+	return out;
 }
 
 int App::run() {
@@ -100,58 +112,17 @@ int App::run() {
 	looper.init(fbw, fbh);
 	SourceController source;
 	source.init(fbw, fbh);
+	const std::string shaderDir = SHADER_DIR;
+	Compositor compositor;
+	compositor.init(fbw, fbh, shaderDir);
 	FxPipeline fx;
 	FxPipeline sourceFx;
-	// Audition render targets
-	GLuint auditionTexA = 0, auditionTexB = 0;
-	GLuint auditionFboA = 0, auditionFboB = 0;
-
-	ShaderProgram shaderTest;
-	ShaderProgram shaderBlit;
-	ShaderProgram shaderFit;
-	ShaderProgram shaderBlendTwo;
-	std::string vsPath = std::string(SHADER_DIR) + "/fullscreen.vert";
-	std::string testFragPath = std::string(SHADER_DIR) + "/test_pattern.frag";
-	std::string blitFragPath = std::string(SHADER_DIR) + "/texture_blit.frag";
-	std::string fitFragPath = std::string(SHADER_DIR) + "/video_fit.frag";
-	std::string blendTwoFragPath = std::string(SHADER_DIR) + "/texture_blend_two.frag";
-	std::string feedbackFragPath = std::string(SHADER_DIR) + "/feedback.frag";
-	std::string feedbackDiffFragPath = std::string(SHADER_DIR) + "/feedback_diff.frag";
-	std::string feedbackChromaFragPath = std::string(SHADER_DIR) + "/feedback_chroma.frag";
-	std::string feedbackKaleidoFragPath = std::string(SHADER_DIR) + "/feedback_kaleido.frag";
-	std::string blurXFragPath = std::string(SHADER_DIR) + "/fx_blur_x.frag";
-	std::string blurYFragPath = std::string(SHADER_DIR) + "/fx_blur_y.frag";
-	std::string repeatFragPath = std::string(SHADER_DIR) + "/fx_repeat.frag";
-	shaderTest.loadFromFiles(vsPath, testFragPath);
-	shaderBlit.loadFromFiles(vsPath, blitFragPath);
-	shaderFit.loadFromFiles(vsPath, fitFragPath);
-	shaderBlendTwo.loadFromFiles(vsPath, blendTwoFragPath);
-	fx.init(fbw, fbh, vsPath, feedbackFragPath, feedbackDiffFragPath, feedbackChromaFragPath, feedbackKaleidoFragPath,
-	        blurXFragPath, blurYFragPath, repeatFragPath);
-	sourceFx.init(fbw, fbh, vsPath, feedbackFragPath, feedbackDiffFragPath, feedbackChromaFragPath,
-	              feedbackKaleidoFragPath, blurXFragPath, blurYFragPath, repeatFragPath);
-
-	// Create audition targets
-	auditionTexA = createTexture2D(fbw, fbh);
-	auditionFboA = createFbo(auditionTexA);
-	auditionTexB = createTexture2D(fbw, fbh);
-	auditionFboB = createFbo(auditionTexB);
-	GLuint blackTex = createTexture2D(1, 1);
-	{
-		const unsigned char blackPx[4] = {0, 0, 0, 255};
-		glBindTexture(GL_TEXTURE_2D, blackTex);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, blackPx);
-		glBindTexture(GL_TEXTURE_2D, 0);
-	}
+	fx.init(fbw, fbh, shaderDir);
+	sourceFx.init(fbw, fbh, shaderDir);
 
 	HotReload hot;
-	hot.watch(vsPath);
-	hot.watch(testFragPath);
-	hot.watch(blitFragPath);
-	hot.watch(fitFragPath);
-	hot.watch(blendTwoFragPath);
+	compositor.registerWatches(hot);
 	fx.registerWatches(hot);
-	FullscreenQuad quad;
 
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
@@ -168,70 +139,6 @@ int App::run() {
 	ImGui_ImplOpenGL3_Init("#version 410");
 
 	ParamBus params;
-	params.setBool("show_ui", true);
-	params.setFloat("gain_mix", 1.0f);
-	params.setFloat("record_blend_opacity", 1.0f);
-	params.setFloat("bpm", 120.0f);
-	params.setFloat("quantum", 4.0f);
-	params.setFloat("read_speed_mult", 1.0f);
-	params.setBool("tempo_coupled", true);
-	params.setBool("link_enabled", false);
-	params.setBool("link_startstop", false);
-	params.setBool("link_playing", false);
-	params.setBool("arm_record", false);
-	params.setBool("show_preview", true);
-	params.setBool("preview_window", false);
-	params.setFloat("preview_scale", 0.3f);
-	params.setInt("source_kind", (int)SourceKind::Shader);
-	params.setBool("video_bars", true);
-	params.setBool("video_aspect", true);
-	params.setFloat("video_tx", 0.0f);
-	params.setFloat("video_ty", 0.0f);
-	params.setFloat("video_sx", 1.0f);
-	params.setFloat("video_sy", 1.0f);
-	params.setFloat("video_rot", 0.0f);
-	params.setInt("record_blend_mode", 0);
-	params.setInt("webcam_index", 0);
-	params.setString("file_path", "");
-	params.setBool("file_loop", true);
-	params.setBool("file_paused", false);
-	params.setInt("file_run_mode", 0);
-	params.setFloat("file_loop_start", 0.0f);
-	params.setFloat("file_loop_length", 1.0f);
-	params.setBool("show_playheads", true);
-	params.setBool("debug_preview_backbuffer", false);
-	params.setString("videos_folder", "");
-	params.setInt("videos_count", 0);
-	params.setBool("commit_random", false);
-	params.setBool("commit_active", false);
-	params.setString("commit_current_file", "");
-	params.setBool("fx_enabled", false);
-	params.setBool("fx_commit", false);
-	params.setInt("fx_mode", 0);
-	params.setFloat("fx_param1", 0.8f);
-	params.setFloat("fx_param2", 0.985f);
-	params.setFloat("fx_param3", 0.0f);
-	params.setInt("fx_count", 4);
-	params.setInt("fx_repeat_blend", 6);
-	params.setBool("source_fx_enabled", false);
-	params.setInt("source_fx_mode", kRepeatFxMode);
-	params.setFloat("source_fx_param1", 0.12f);
-	params.setFloat("source_fx_param2", 0.0f);
-	params.setFloat("source_fx_param3", 0.0f);
-	params.setInt("source_fx_count", 4);
-	params.setInt("source_fx_repeat_blend", 6);
-	params.setBool("env_enabled", true);
-	params.setFloat("env_attack", 0.05f);
-	params.setFloat("env_decay", 0.20f);
-	params.setFloat("env_sustain", 1.0f);
-	params.setFloat("env_release", 0.30f);
-	params.setBool("cue_active", false);
-	params.setBool("record_enabled", false);
-	params.setFloat("record_fps", 60.0f);
-	params.setString("record_path", "");
-	params.setBool("ipad_page", false);
-	params.setBool("ipad_token", true);
-	params.setFloat("silence_ms", 300.0f);
 
 	const char* home = std::getenv("HOME");
 	std::filesystem::path support =
@@ -245,6 +152,8 @@ int App::run() {
 	std::vector<std::string> sentVideoNames;
 	std::vector<std::string> sentFolderPaths;
 	FolderList folders;
+	LinkBridge link;
+	Instrument instrument(params, source, folders, [&link](float bpm) { link.setTempo(bpm); });
 	SetupSaver setupSaver(support / "setup.json", 0.2);
 	{
 		PerformanceSetup setup;
@@ -253,33 +162,23 @@ int App::run() {
 			RestoredFolders restored = restoreFolders(setup);
 			for (const std::string& folder : restored.paths)
 				folders.add({folder, scanVideos(folder)});
-			if (!restored.current.empty() && folders.select(restored.current) && folders.current())
-				source.showFolder(restored.current, folders.current()->videos, params);
-			else {
+			if (restored.current.empty() || !instrument.chooseFolder(restored.current).ok) {
 				params.setString("videos_folder", "");
 				params.setInt("videos_count", 0);
 			}
 		}
-		if (params.getInt("source_kind", (int)SourceKind::Shader) == (int)SourceKind::Webcam)
-			source.loadWebcam(params.getInt("webcam_index", 0));
+		if (params.getInt("source_kind") == (int)SourceKind::Webcam) instrument.chooseWebcam();
 		setupSaver.settle(captureSetup(params, folders));
 	}
 	std::string sourceFailure;
 
 	Clock clock;
-	clock.setQuantum(params.getFloat("quantum", 4.0f));
-	LinkBridge link;
+	clock.setQuantum(params.getFloat("quantum"));
 	AVFRecorder recorder;
-	std::vector<unsigned char> readBuf;
-	std::vector<unsigned char> flipBuf;
 	double recordAccumSeconds = 0.0;
 	double recordFramePeriod = 1.0 / 60.0;
-	auto ensureBuffers = [&](int width, int height) {
-		const size_t sz = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
-		if (readBuf.size() != sz) readBuf.assign(sz, 0);
-		if (flipBuf.size() != sz) flipBuf.assign(sz, 0);
-	};
-	ensureBuffers(fbw, fbh);
+	bool prevRecEnabled = false;
+	OverdubGate gate;
 
 	float readFps = 60.0f;
 	double lastTime = glfwGetTime();
@@ -290,9 +189,7 @@ int App::run() {
 	bool prevLBracket = false, prevRBracket = false;
 	bool prevApostrophe = false, prevBackslash = false;
 	bool prevV = false;
-	bool prev1 = false, prev2 = false, prev3 = false, prev4 = false, prev5 = false;
-	bool prev6 = false, prev7 = false, prev8 = false, prev9 = false, prev0 = false;
-	bool shouldRecordOnRelease = false;
+	bool prevNumber[10] = {};
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
@@ -310,56 +207,35 @@ int App::run() {
 				return jp;
 			};
 			if (!wantKb) {
-				// Toggle UI
-				if (edgePressed(GLFW_KEY_U, prevU)) {
-					bool show = params.getBool("show_ui", true);
-					params.setBool("show_ui", !show);
-				}
-				// Set Blend Gain via number keys (1..9 => 0.1..0.9, 0 => 1.0)
-				if (edgePressed(GLFW_KEY_1, prev1)) params.setFloat("record_blend_opacity", 0.1f);
-				if (edgePressed(GLFW_KEY_2, prev2)) params.setFloat("record_blend_opacity", 0.2f);
-				if (edgePressed(GLFW_KEY_3, prev3)) params.setFloat("record_blend_opacity", 0.3f);
-				if (edgePressed(GLFW_KEY_4, prev4)) params.setFloat("record_blend_opacity", 0.4f);
-				if (edgePressed(GLFW_KEY_5, prev5)) params.setFloat("record_blend_opacity", 0.5f);
-				if (edgePressed(GLFW_KEY_6, prev6)) params.setFloat("record_blend_opacity", 0.6f);
-				if (edgePressed(GLFW_KEY_7, prev7)) params.setFloat("record_blend_opacity", 0.7f);
-				if (edgePressed(GLFW_KEY_8, prev8)) params.setFloat("record_blend_opacity", 0.8f);
-				if (edgePressed(GLFW_KEY_9, prev9)) params.setFloat("record_blend_opacity", 0.9f);
-				if (edgePressed(GLFW_KEY_0, prev0)) params.setFloat("record_blend_opacity", 1.0f);
-				// Prev/Next input source (- / =)
+				if (edgePressed(GLFW_KEY_U, prevU)) instrument.setSwitch("show_ui", !params.getBool("show_ui"));
+				// Opacity on the number keys (1..9 => 0.1..0.9, 0 => 1.0)
+				const int numberKeys[] = {GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4, GLFW_KEY_5,
+				                          GLFW_KEY_6, GLFW_KEY_7, GLFW_KEY_8, GLFW_KEY_9, GLFW_KEY_0};
+				for (int k = 0; k < 10; ++k)
+					if (edgePressed(numberKeys[k], prevNumber[k]))
+						instrument.setNumber("record_blend_opacity", (k + 1) / 10.0);
+				// Prev/Next Source kind (- / =)
 				if (edgePressed(GLFW_KEY_MINUS, prevMinus)) {
-					int s = params.getInt("source_kind", (int)SourceKind::Shader);
-					if (s > (int)SourceKind::Shader) params.setInt("source_kind", s - 1);
+					int s = params.getInt("source_kind");
+					if (s > (int)SourceKind::Shader) instrument.setNumber("source_kind", s - 1);
 				}
 				if (edgePressed(GLFW_KEY_EQUAL, prevEqual)) {
-					int s = params.getInt("source_kind", (int)SourceKind::Shader);
-					if (s < (int)SourceKind::Black) params.setInt("source_kind", s + 1);
+					int s = params.getInt("source_kind");
+					if (s < (int)SourceKind::Black) instrument.setNumber("source_kind", s + 1);
 				}
-				// Prev/Next record blend mode ([ / ])
-				if (edgePressed(GLFW_KEY_LEFT_BRACKET, prevLBracket)) {
-					int m = params.getInt("record_blend_mode", 0);
-					if (m > 0) params.setInt("record_blend_mode", m - 1);
-				}
-				if (edgePressed(GLFW_KEY_RIGHT_BRACKET, prevRBracket)) {
-					int m = params.getInt("record_blend_mode", 0);
-					if (m < 11) params.setInt("record_blend_mode", m + 1);
-				}
-				// Prev/Next FX mode (' / \)
-				if (edgePressed(GLFW_KEY_APOSTROPHE, prevApostrophe)) {
-					int m = params.getInt("fx_mode", 0);
-					if (m > 0) params.setInt("fx_mode", m - 1);
-				}
-				if (edgePressed(GLFW_KEY_BACKSLASH, prevBackslash)) {
-					int m = params.getInt("fx_mode", 0);
-					if (m < kGridFxMode) params.setInt("fx_mode", m + 1);
-				}
-				// Load Random File (v)
-				if (edgePressed(GLFW_KEY_V, prevV)) {
-					source.triggerLoadRandomFile(params);
-				}
+				// Prev/Next blend mode ([ / ]) and Program FX mode (' / \); the instrument stops at either end
+				if (edgePressed(GLFW_KEY_LEFT_BRACKET, prevLBracket))
+					instrument.setNumber("record_blend_mode", params.getInt("record_blend_mode") - 1);
+				if (edgePressed(GLFW_KEY_RIGHT_BRACKET, prevRBracket))
+					instrument.setNumber("record_blend_mode", params.getInt("record_blend_mode") + 1);
+				if (edgePressed(GLFW_KEY_APOSTROPHE, prevApostrophe))
+					instrument.setNumber("fx_mode", params.getInt("fx_mode") - 1);
+				if (edgePressed(GLFW_KEY_BACKSLASH, prevBackslash))
+					instrument.setNumber("fx_mode", params.getInt("fx_mode") + 1);
+				if (edgePressed(GLFW_KEY_V, prevV)) instrument.randomVideo();
 			}
 		}
-		if (params.getBool("preview_window", false)) {
+		if (params.getBool("preview_window")) {
 			if (!previewWindow) {
 				previewWindow = glfwCreateWindow(640, 360, "Preview", nullptr, window);
 				if (previewWindow) {
@@ -392,16 +268,7 @@ int App::run() {
 			fx.resize(fbw, fbh);
 			sourceFx.resize(fbw, fbh);
 			looper.resize(fbw, fbh);
-			// Recreate audition targets
-			if (auditionFboA) glDeleteFramebuffers(1, &auditionFboA);
-			if (auditionTexA) glDeleteTextures(1, &auditionTexA);
-			if (auditionFboB) glDeleteFramebuffers(1, &auditionFboB);
-			if (auditionTexB) glDeleteTextures(1, &auditionTexB);
-			auditionTexA = createTexture2D(fbw, fbh);
-			auditionFboA = createFbo(auditionTexA);
-			auditionTexB = createTexture2D(fbw, fbh);
-			auditionFboB = createFbo(auditionTexB);
-			ensureBuffers(fbw, fbh);
+			compositor.resize(fbw, fbh);
 			if (recorder.isRecording()) {
 				recorder.stop();
 				params.setBool("record_enabled", false);
@@ -414,19 +281,14 @@ int App::run() {
 		float dt = static_cast<float>(now - lastTime);
 		lastTime = now;
 
-		if (hot.changed(vsPath) || hot.changed(testFragPath)) shaderTest.loadFromFiles(vsPath, testFragPath);
-		if (hot.changed(vsPath) || hot.changed(blitFragPath)) shaderBlit.loadFromFiles(vsPath, blitFragPath);
-		if (hot.changed(vsPath) || hot.changed(fitFragPath)) shaderFit.loadFromFiles(vsPath, fitFragPath);
-		if (hot.changed(vsPath) || hot.changed(blendTwoFragPath))
-			shaderBlendTwo.loadFromFiles(vsPath, blendTwoFragPath);
+		compositor.hotReload(hot);
 		sourceFx.applyReload(fx.hotReload(hot));
 
 		// Manage recording state edge transitions
-		static bool prevRecEnabled = false;
-		bool recEnabled = params.getBool("record_enabled", false);
+		bool recEnabled = params.getBool("record_enabled");
 		if (recEnabled && !prevRecEnabled) {
-			std::string outPath = params.getString("record_path", "");
-			double rfps = params.getFloat("record_fps", 60.0f);
+			std::string outPath = params.getString("record_path");
+			double rfps = params.getFloat("record_fps");
 			if (!outPath.empty()) {
 				recordFramePeriod = (rfps > 0.0 ? (1.0 / rfps) : (1.0 / 60.0));
 				recordAccumSeconds = 0.0;
@@ -447,50 +309,29 @@ int App::run() {
 		prevRecEnabled = recEnabled;
 
 		source.tickAndGrab(now, dt, params);
-		int srcKind = params.getInt("source_kind", (int)SourceKind::Shader);
-		if (srcKind == (int)SourceKind::Shader) {
-			glBindFramebuffer(GL_FRAMEBUFFER, source.getPreviewFbo());
-			glViewport(0, 0, fbw, fbh);
-			shaderTest.use();
-			shaderTest.setUniform("uTime", t);
-			shaderTest.setUniform("uResolution", static_cast<float>(fbw), static_cast<float>(fbh));
-			quad.draw();
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		} else if (srcKind == (int)SourceKind::Black) {
-			glBindFramebuffer(GL_FRAMEBUFFER, source.getPreviewFbo());
-			glViewport(0, 0, fbw, fbh);
-			glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-			glClear(GL_COLOR_BUFFER_BIT);
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		} else if ((srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
-		           source.frameTexture() != 0 && source.frameWidth() > 0 && source.frameHeight() > 0) {
-			bool bars = params.getBool("video_bars", true);
-			SourcePlacement placed = sourcePlacement(fbw, fbh, source.frameWidth(), source.frameHeight(), params);
-			glBindFramebuffer(GL_FRAMEBUFFER, source.getPreviewFbo());
-			glViewport(0, 0, fbw, fbh);
-			shaderFit.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, source.frameTexture());
-			shaderFit.setUniform("uTex", 0);
-			shaderFit.setUniform("uFrame", static_cast<float>(fbw), static_cast<float>(fbh));
-			shaderFit.setUniform("uCenter", placed.centerX, placed.centerY);
-			shaderFit.setUniform("uHalf", placed.halfX, placed.halfY);
-			shaderFit.setUniform("uRot", placed.rot);
-			shaderFit.setUniform("uOutside", bars ? 1.0f : 0.0f);
-			quad.draw();
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		}
+		int srcKind = params.getInt("source_kind");
+		// A Video or webcam picture at its own size, ready to be placed in the frame.
+		bool picture = (srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
+		               source.frameTexture() != 0 && source.frameWidth() > 0 && source.frameHeight() > 0;
+		SourcePlacement placed{};
+		if (picture) placed = sourcePlacement(fbw, fbh, source.frameWidth(), source.frameHeight(), params);
+		if (srcKind == (int)SourceKind::Shader)
+			compositor.drawTestPattern(source.getPreviewFbo(), t);
+		else if (srcKind == (int)SourceKind::Black)
+			compositor.drawBlack(source.getPreviewFbo());
+		else if (picture)
+			compositor.drawPlaced(source.getPreviewFbo(), source.frameTexture(), placed, params.getBool("video_bars"));
 
-		float bpm = params.getFloat("bpm", 120.0f);
-		float quantum = params.getFloat("quantum", 4.0f);
+		float bpm = params.getFloat("bpm");
+		float quantum = params.getFloat("quantum");
 		clock.setQuantum(quantum);
-		bool linkEnabled = params.getBool("link_enabled", false);
+		bool linkEnabled = params.getBool("link_enabled");
 		link.setEnabled(linkEnabled);
 		link.setQuantum(quantum);
 		link.tick(dt);
 		if (linkEnabled) {
-			link.setStartStopSyncEnabled(params.getBool("link_startstop", false));
-			bool lp = params.getBool("link_playing", false);
+			link.setStartStopSyncEnabled(params.getBool("link_startstop"));
+			bool lp = params.getBool("link_playing");
 			link.setPlaying(lp);
 			double beats, phase, lbpm;
 			link.getBeatTime(quantum, beats, phase, lbpm);
@@ -501,10 +342,10 @@ int App::run() {
 			clock.requestTempo(bpm);
 		}
 		BeatTime bt = clock.now(dt);
-		if (params.getBool("tempo_coupled", false))
-			readFps = 60.0f * static_cast<float>(bt.bpm / 120.0) * params.getFloat("read_speed_mult", 1.0f);
+		if (params.getBool("tempo_coupled"))
+			readFps = 60.0f * static_cast<float>(bt.bpm / 120.0) * params.getFloat("read_speed_mult");
 		else
-			readFps = 60.0f * params.getFloat("read_speed_mult", 1.0f);
+			readFps = 60.0f * params.getFloat("read_speed_mult");
 
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glViewport(0, 0, w, h);
@@ -512,12 +353,10 @@ int App::run() {
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		ReadState rs = looper.advanceRead(dt, readFps);
-		int idx0 = rs.idx0, idx1 = rs.idx1, wraps = rs.wraps;
-		float mixf = rs.mix;
-		float gainMix = params.getFloat("gain_mix", 1.0f);
+		LoopRead loopRead{ring.textureAt(rs.idx0), ring.textureAt(rs.idx1), rs.mix * params.getFloat("gain_mix")};
 
-		remote.setTokenRequired(params.getBool("ipad_token", true));
-		remote.setEnabled(params.getBool("ipad_page", false));
+		remote.setTokenRequired(params.getBool("ipad_token"));
+		remote.setEnabled(params.getBool("ipad_page"));
 		std::vector<std::string> videos = source.videos();
 		if (videos != videoPaths) {
 			videoPaths = std::move(videos);
@@ -534,414 +373,101 @@ int App::run() {
 		else if (source.loadSwapped() || (srcKind != (int)SourceKind::File && srcKind != (int)SourceKind::Webcam))
 			sourceFailure.clear();
 		if (remote.enabled()) {
-			remote.setSilenceWindow(int(params.getFloat("silence_ms", 300.0f)));
+			remote.setSilenceWindow(int(params.getFloat("silence_ms")));
 			if (!loadFailure.empty()) remote.send(rejectFrame("source", loadFailure));
 			for (const RemoteSet& set : remote.drain()) {
-				switch (set.kind) {
-				case RemoteKind::Panic:
-					params.setBool("arm_record", false);
-					params.setBool("cue_active", false);
-					break;
-				case RemoteKind::Prev:
-					source.loadPrevFile(params);
-					break;
-				case RemoteKind::Next:
-					source.loadNextFile(params);
-					break;
-				case RemoteKind::Webcam:
-					source.loadWebcam(params.getInt("webcam_index", 0));
-					break;
-				case RemoteKind::Load: {
-					std::string path = videoByName(videoPaths, set.name);
-					if (path.empty())
-						remote.send(rejectFrame("source", "no such video"));
-					else
-						source.loadVideo(path, params.getFloat("file_loop_start", 0.0f),
-						                 params.getFloat("file_loop_length", 1.0f));
-					break;
-				}
-				case RemoteKind::Dub: {
-					std::string path = videoByName(videoPaths, set.name);
-					if (path.empty())
-						remote.send(rejectFrame("source", "no such video"));
-					else
-						source.queueDub(path, params.getFloat("file_loop_start", 0.0f),
-						                params.getFloat("file_loop_length", 1.0f));
-					break;
-				}
-				case RemoteKind::Page:
-					source.primePage(videosByName(videoPaths, set.names), params.getFloat("file_loop_start", 0.0f),
-					                 params.getFloat("file_loop_length", 1.0f));
-					break;
-				case RemoteKind::Folder:
-					if (folders.select(set.name))
-						source.showFolder(set.name, folders.current()->videos, params);
-					else
-						remote.send(rejectFrame("folder", "no such folder"));
-					break;
-				case RemoteKind::Set: {
-					ApplyResult result = applyRemoteSet(params, set);
-					if (result.reject) remote.send(rejectFrame(set.name, result.reason));
-					if (result.tempoChanged && params.getBool("link_enabled", false)) link.setTempo(result.bpm);
-					if (result.startWebcam) source.loadWebcam(params.getInt("webcam_index", 0));
-					break;
-				}
-				}
+				std::string reject = applyRemote(instrument, set);
+				if (!reject.empty()) remote.send(reject);
 			}
 		} else {
 			params.setBool("ipad_page", false);
 		}
 		RemoteSession::PadState pads = remote.pads();
 
-		// Compute record/cue and envelope
-		static float envVal = 0.0f;
-		static int envPhase = 0;
-		static bool gatePrev = false;
-		static bool sourcePrev = false;
-		static bool blackLatched = false;
-		bool commitActive = params.getBool("commit_active", false);
-		bool spaceHeld = (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS);
-		bool cHeld = (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS);
-		GateState combine = combineHolds({params.getBool("arm_record", false), spaceHeld, pads.gate,
-		                                  params.getBool("cue_active", false), cHeld, pads.cue});
-		bool sourceGate = combine.gate;
-		bool eraseHeld = pads.erase;
-		bool cueActive = combine.cue;
-		bool recGate = sourceGate || eraseHeld;
-
-		if (cueActive) shouldRecordOnRelease = false;
-		if (recGate) shouldRecordOnRelease = true;
-
-		bool envEnabled = params.getBool("env_enabled", true);
-		float A = params.getFloat("env_attack", 0.05f);
-		if (A < 0.0f) A = 0.0f;
-		float D = params.getFloat("env_decay", 0.20f);
-		if (D < 0.0f) D = 0.0f;
-		float S = params.getFloat("env_sustain", 1.0f);
-		if (S < 0.0f) S = 0.0f;
-		if (S > 1.0f) S = 1.0f;
-		float R = params.getFloat("env_release", 0.30f);
-		if (R < 0.0f) R = 0.0f;
-		if (!commitActive && envEnabled) {
-			if ((recGate || cueActive) && !gatePrev) {
-				envPhase = 1;
-			}
-			if (!(recGate || cueActive) && gatePrev && envPhase != 0) {
-				envPhase = 4;
-			}
-			switch (envPhase) {
-			case 0:
-				envVal = 0.0f;
-				break;
-			case 1:
-				if (A <= 0.0f) {
-					envVal = 1.0f;
-					envPhase = (D > 0.0f) ? 2 : 3;
-				} else {
-					envVal += dt / A;
-					if (envVal >= 1.0f) {
-						envVal = 1.0f;
-						envPhase = (D > 0.0f) ? 2 : 3;
-					}
-				}
-				break;
-			case 2:
-				if (D <= 0.0f) {
-					envVal = S;
-					envPhase = 3;
-				} else {
-					float step = (1.0f - S) * (dt / D);
-					envVal -= step;
-					if (envVal <= S) {
-						envVal = S;
-						envPhase = 3;
-					}
-				}
-				break;
-			case 3:
-				envVal = S;
-				if (!(recGate || cueActive)) envPhase = 4;
-				break;
-			case 4:
-				if (R <= 0.0f) {
-					envVal = 0.0f;
-					envPhase = 0;
-				} else {
-					envVal -= dt / (R <= 1e-6f ? 1e-6f : R);
-					if (envVal <= 0.0f) {
-						envVal = 0.0f;
-						envPhase = 0;
-					}
-				}
-				break;
-			}
-		}
-		// On rising edge of a Source overdub or Cue, optionally trigger file playback. Erase does not.
-		if ((sourceGate || cueActive) && !sourcePrev) {
-			if (params.getInt("file_run_mode", 0) == 1) {
-				if (params.getInt("source_kind", (int)SourceKind::Shader) == (int)SourceKind::File) {
-					source.restartFileAtLoopStart();
-				}
-			}
-		}
-		sourcePrev = sourceGate || cueActive;
-		gatePrev = recGate || cueActive;
-		bool paintBlack =
-			overdubIsBlack(eraseHeld, sourceGate, cueActive, envEnabled, envPhase, blackLatched) && !commitActive;
-
-		float writeOpacity = params.getFloat("record_blend_opacity", 1.0f) *
-		                     (commitActive || !envEnabled ? ((recGate || commitActive) ? 1.0f : 0.0f) : envVal);
-		bool fxCommit = params.getBool("fx_commit", false) && params.getBool("fx_enabled", false);
-		int recordBlendMode = params.getInt("record_blend_mode", 0);
-		// bool recordingActive = commitActive || (envEnabled ? (recGate && (envVal > 0.0f)) : recGate);
-
-		bool recordingActive = commitActive || (envEnabled ? (shouldRecordOnRelease && (envVal > 0.0f)) : recGate);
+		GateHolds holds;
+		holds.latch = params.getBool("arm_record");
+		holds.space = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+		holds.pad = pads.gate;
+		holds.erase = pads.erase;
+		holds.cueLatch = params.getBool("cue_active");
+		holds.cueKey = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS;
+		holds.cuePad = pads.cue;
+		GateFrame dub = gate.step(holds, gateSettings(params), source.committing(), dt);
+		if (dub.restartVideo && params.getInt("file_run_mode") == 1 &&
+		    params.getInt("source_kind") == (int)SourceKind::File)
+			source.restartFileAtLoopStart();
 
 		GLuint liveSource = source.getPreviewTexture();
-		if (params.getBool("source_fx_enabled", false) && liveSource != 0) {
-			int mode = params.getInt("source_fx_mode", kRepeatFxMode);
-			float p1 = params.getFloat("source_fx_param1", 0.12f);
-			float p2 = params.getFloat("source_fx_param2", 0.0f);
-			float p3 = params.getFloat("source_fx_param3", 0.0f);
-			if (fxStampsCopies(mode)) p3 = static_cast<float>(params.getInt("source_fx_count", 4));
-			int repeatBlend = params.getInt("source_fx_repeat_blend", 6);
-			bool whole = fxStampsCopies(mode) &&
-			             (srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
-			             source.frameTexture() != 0 && source.frameWidth() > 0 && source.frameHeight() > 0;
-			if (whole) {
-				SourcePlacement placed = sourcePlacement(fbw, fbh, source.frameWidth(), source.frameHeight(), params);
+		if (params.getBool("source_fx_enabled") && liveSource != 0) {
+			FxSettings settings = fxSettings(params, "source_fx_");
+			// Repeat and Grid stamp the whole picture, so one that runs past the frame is not cropped first.
+			if (fxStampsCopies(settings.mode) && picture)
 				sourceFx.setWholeStamp(source.frameTexture(), placed.centerX, placed.centerY, placed.halfX,
 				                       placed.halfY, placed.rot);
-			} else {
+			else
 				sourceFx.setWholeStamp(0, 0, 0, 0, 0, 0);
-			}
-			liveSource = sourceFx.process(fbw, fbh, liveSource, liveSource, 0.0f, mode, p1, p2, p3, repeatBlend, quad);
+			liveSource = sourceFx.process(liveSource, liveSource, 0.0f, settings, compositor.quad());
 		}
 
-		GLuint dubImage = paintBlack ? blackTex : liveSource;
-		int dubMode = paintBlack ? 0 : recordBlendMode;
+		GLuint dubImage = dub.image == DubImage::Black ? compositor.blackTexture() : liveSource;
 
-		// Perform writes unless cueing (monitor only)
-		if (!cueActive) {
-			looper.writeAndSwap(fbw, fbh, shaderBlit, shaderBlendTwo, quad, idx0, wraps, recordingActive, writeOpacity,
-			                    dubMode, fxCommit && !paintBlack, fx.getPrevOutputTexture(), dubImage);
+		// Cue shows the Audition and leaves the Loop alone.
+		if (!dub.cue) {
+			LoopWrite write;
+			write.overdub = dub.overdub;
+			write.opacity = dub.opacity;
+			write.blendMode = dub.blendMode;
+			write.image = dubImage;
+			write.replaceWith = dub.image == DubImage::ProgramFx ? fx.getPrevOutputTexture() : 0;
+			looper.writeAndSwap(compositor.blitShader(), compositor.blendShader(), compositor.quad(), rs.idx0, rs.wraps,
+			                    write);
 		}
 
-		// Present audition / normal
-		if (cueActive) {
-			// Pass 1: front-bank loop composite -> A
-			glBindFramebuffer(GL_FRAMEBUFFER, auditionFboA);
-			glViewport(0, 0, fbw, fbh);
-			shaderBlendTwo.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, ring.textureAt(idx0));
-			shaderBlendTwo.setUniform("uTex0", 0);
-			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, ring.textureAt(idx1));
-			shaderBlendTwo.setUniform("uTex1", 1);
-			shaderBlendTwo.setUniform("uMix", mixf * gainMix);
-			shaderBlendTwo.setUniform("uMode", 0);
-			quad.draw();
-
-			// Pass 2: overlay preview with record blend -> B
-			glBindFramebuffer(GL_FRAMEBUFFER, auditionFboB);
-			glViewport(0, 0, fbw, fbh);
-			shaderBlendTwo.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, auditionTexA);
-			shaderBlendTwo.setUniform("uTex0", 0);
-			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, dubImage);
-			shaderBlendTwo.setUniform("uTex1", 1);
-			shaderBlendTwo.setUniform("uMix", writeOpacity);
-			shaderBlendTwo.setUniform("uMode", dubMode);
-			quad.draw();
-
-			// Present B
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
-			glViewport(0, 0, w, h);
-			shaderBlit.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, auditionTexB);
-			shaderBlit.setUniform("uTex", 0);
-			quad.draw();
-		} else if (recordingActive) {
-			// Show audition composite while recording
-			// Pass 1: front-bank loop composite -> A
-			glBindFramebuffer(GL_FRAMEBUFFER, auditionFboA);
-			glViewport(0, 0, fbw, fbh);
-			shaderBlendTwo.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, ring.textureAt(idx0));
-			shaderBlendTwo.setUniform("uTex0", 0);
-			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, ring.textureAt(idx1));
-			shaderBlendTwo.setUniform("uTex1", 1);
-			shaderBlendTwo.setUniform("uMix", mixf * gainMix);
-			shaderBlendTwo.setUniform("uMode", 0);
-			quad.draw();
-
-			// Pass 2: overlay preview with record blend -> B
-			glBindFramebuffer(GL_FRAMEBUFFER, auditionFboB);
-			glViewport(0, 0, fbw, fbh);
-			shaderBlendTwo.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, auditionTexA);
-			shaderBlendTwo.setUniform("uTex0", 0);
-			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, dubImage);
-			shaderBlendTwo.setUniform("uTex1", 1);
-			shaderBlendTwo.setUniform("uMix", writeOpacity);
-			shaderBlendTwo.setUniform("uMode", dubMode);
-			quad.draw();
-
-			// Present B
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
-			glViewport(0, 0, w, h);
-			shaderBlit.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, auditionTexB);
-			shaderBlit.setUniform("uTex", 0);
-			quad.draw();
+		// The window shows the Audition while cueing or overdubbing, and the Program otherwise.
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		if (dub.cue || dub.overdub) {
+			compositor.show(compositor.audition(loopRead, dubImage, dub.opacity, dub.blendMode), 0, 0, w, h);
+		} else if (params.getBool("fx_enabled")) {
+			GLuint fxOut =
+				fx.process(loopRead.tex0, loopRead.tex1, loopRead.mix, fxSettings(params, "fx_"), compositor.quad());
+			compositor.show(fxOut, 0, 0, w, h);
 		} else {
-			bool fxEnabled = params.getBool("fx_enabled", false);
-			if (fxEnabled) {
-				int fxMode = params.getInt("fx_mode", 0);
-				float p1p = params.getFloat("fx_param1", 0.8f);
-				float p2p = params.getFloat("fx_param2", 0.985f);
-				float p3p = params.getFloat("fx_param3", 0.0f);
-				if (fxStampsCopies(fxMode)) p3p = static_cast<float>(params.getInt("fx_count", 4));
-				int repeatBlend = params.getInt("fx_repeat_blend", 6);
-				float baseMix = mixf * gainMix;
-				GLuint fxOut = fx.process(w, h, ring.textureAt(idx0), ring.textureAt(idx1), baseMix, fxMode, p1p, p2p,
-				                          p3p, repeatBlend, quad);
-				glViewport(0, 0, w, h);
-				shaderBlit.use();
-				glActiveTexture(GL_TEXTURE0);
-				glBindTexture(GL_TEXTURE_2D, fxOut);
-				shaderBlit.setUniform("uTex", 0);
-				quad.draw();
-			} else {
-				looper.presentNoFx(w, h, shaderBlendTwo, quad, idx0, idx1, mixf, gainMix);
-			}
+			compositor.showLoop(loopRead, 0, 0, w, h);
 		}
 
-		// Build audition composite for preview (skip during cue/record; not envelope-influenced)
-		{
-			bool previewVisible = (params.getBool("show_preview", true) && !params.getBool("preview_window", false)) ||
-			                      params.getBool("preview_window", false);
+		// The preview and Export show what an Overdub would produce at full envelope.
+		bool previewVisible = params.getBool("show_preview") || params.getBool("preview_window");
+		bool idle = !dub.cue && !dub.overdub;
+		if ((previewVisible && idle) || params.getBool("record_enabled"))
+			compositor.audition(loopRead, liveSource, params.getFloat("record_blend_opacity"),
+			                    params.getInt("record_blend_mode"));
 
-			if (previewVisible && !cueActive && !recordingActive) {
-				float previewOpacity = params.getFloat("record_blend_opacity", 1.0f);
-				int recordBlendMode = params.getInt("record_blend_mode", 0);
-
-				// Pass A: loop front-bank composite -> A
-				glBindFramebuffer(GL_FRAMEBUFFER, auditionFboA);
-				glViewport(0, 0, fbw, fbh);
-				shaderBlendTwo.use();
-				glActiveTexture(GL_TEXTURE0);
-				glBindTexture(GL_TEXTURE_2D, ring.textureAt(idx0));
-				shaderBlendTwo.setUniform("uTex0", 0);
-				glActiveTexture(GL_TEXTURE1);
-				glBindTexture(GL_TEXTURE_2D, ring.textureAt(idx1));
-				shaderBlendTwo.setUniform("uTex1", 1);
-				shaderBlendTwo.setUniform("uMix", mixf * gainMix);
-				shaderBlendTwo.setUniform("uMode", 0);
-				quad.draw();
-
-				// Pass B: overlay live preview with fixed opacity -> B
-				glBindFramebuffer(GL_FRAMEBUFFER, auditionFboB);
-				glViewport(0, 0, fbw, fbh);
-				shaderBlendTwo.use();
-				glActiveTexture(GL_TEXTURE0);
-				glBindTexture(GL_TEXTURE_2D, auditionTexA);
-				shaderBlendTwo.setUniform("uTex0", 0);
-				glActiveTexture(GL_TEXTURE1);
-				glBindTexture(GL_TEXTURE_2D, liveSource);
-				shaderBlendTwo.setUniform("uTex1", 1);
-				shaderBlendTwo.setUniform("uMix", previewOpacity);
-				shaderBlendTwo.setUniform("uMode", recordBlendMode);
-				quad.draw();
-
-				glBindFramebuffer(GL_FRAMEBUFFER, 0);
-			}
-		}
-
-		// When recording is enabled, build the audition composite offscreen (if not already built)
-		if (params.getBool("record_enabled", false)) {
-			// Pass A: loop front-bank composite -> A
-			glBindFramebuffer(GL_FRAMEBUFFER, auditionFboA);
-			glViewport(0, 0, fbw, fbh);
-			shaderBlendTwo.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, ring.textureAt(idx0));
-			shaderBlendTwo.setUniform("uTex0", 0);
-			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, ring.textureAt(idx1));
-			shaderBlendTwo.setUniform("uTex1", 1);
-			shaderBlendTwo.setUniform("uMix", mixf * gainMix);
-			shaderBlendTwo.setUniform("uMode", 0);
-			quad.draw();
-			// Pass B: overlay live preview with record blend -> B
-			glBindFramebuffer(GL_FRAMEBUFFER, auditionFboB);
-			glViewport(0, 0, fbw, fbh);
-			shaderBlendTwo.use();
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, auditionTexA);
-			shaderBlendTwo.setUniform("uTex0", 0);
-			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, liveSource);
-			shaderBlendTwo.setUniform("uTex1", 1);
-			shaderBlendTwo.setUniform("uMix", params.getFloat("record_blend_opacity", 1.0f));
-			shaderBlendTwo.setUniform("uMode", params.getInt("record_blend_mode", 0));
-			quad.draw();
-		}
-
-		// Capture the audition composite into the recorder at target FPS
+		// Capture the Audition into the recorder at the export frame rate
 		if (recorder.isRecording()) {
 			recordAccumSeconds += dt;
 			while (recordAccumSeconds + 1e-6 >= recordFramePeriod) {
 				recordAccumSeconds -= recordFramePeriod;
 				std::printf("[rec] capture frame begin %dx%d\n", fbw, fbh);
-				glBindFramebuffer(GL_FRAMEBUFFER, auditionFboB);
-				glPixelStorei(GL_PACK_ALIGNMENT, 1);
-				glReadPixels(0, 0, fbw, fbh, GL_BGRA, GL_UNSIGNED_BYTE, readBuf.data());
-				GLenum err = glGetError();
-				if (err != GL_NO_ERROR) {
-					std::fprintf(stderr, "[rec] glReadPixels error: 0x%04x\n", err);
-				}
-				int stride = fbw * 4;
-				for (int y = 0; y < fbh; ++y) {
-					unsigned char* dst = flipBuf.data() + (fbh - 1 - y) * stride;
-					unsigned char* src = readBuf.data() + y * stride;
-					memcpy(dst, src, (size_t)stride);
-				}
+				const std::vector<unsigned char>& frame = compositor.readAudition();
 				std::printf("[rec] append start\n");
-				bool ok = recorder.appendBGRAFrame(flipBuf.data(), stride);
+				bool ok = recorder.appendBGRAFrame(frame.data(), fbw * 4);
 				std::printf("[rec] append %s\n", ok ? "ok" : "fail");
 				if (!ok) {
 					std::fprintf(stderr, "[rec] append dropped (not ready)\n");
 					break;
 				}
 			}
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
 
-		if (params.getBool("show_preview", true) && !params.getBool("preview_window", false)) {
-			float scale = params.getFloat("preview_scale", 0.3f);
+		if (params.getBool("show_preview") && !params.getBool("preview_window")) {
+			float scale = params.getFloat("preview_scale");
 			int pw = static_cast<int>(w * scale);
 			int ph = static_cast<int>(pw * (static_cast<float>(fbh) / static_cast<float>(fbw)));
 			int margin = 12;
-			int px = w - pw - margin;
-			int py = margin;
-			glViewport(px, py, pw, ph);
-			shaderBlit.use();
-			glActiveTexture(GL_TEXTURE0);
-			if (params.getBool("debug_preview_backbuffer", false))
-				glBindTexture(GL_TEXTURE_2D, ring.textureAtBack(idx0));
-			else
-				glBindTexture(GL_TEXTURE_2D, auditionTexB);
-			shaderBlit.setUniform("uTex", 0);
-			quad.draw();
+			GLuint shown =
+				params.getBool("debug_preview_backbuffer") ? ring.textureAtBack(rs.idx0) : compositor.auditionTexture();
+			compositor.show(shown, w - pw - margin, margin, pw, ph);
 			glViewport(0, 0, w, h);
 		}
 
@@ -952,10 +478,10 @@ int App::run() {
 			glViewport(0, 0, pw, ph);
 			glClearColor(0.07f, 0.07f, 0.08f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
-			shaderBlit.use();
+			compositor.blitShader().use();
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, auditionTexB);
-			shaderBlit.setUniform("uTex", 0);
+			glBindTexture(GL_TEXTURE_2D, compositor.auditionTexture());
+			compositor.blitShader().setUniform("uTex", 0);
 			if (quadPreview) quadPreview->draw();
 			glfwSwapBuffers(previewWindow);
 			glfwMakeContextCurrent(window);
@@ -973,7 +499,7 @@ int App::run() {
 
 		if (remote.enabled()) {
 			RemoteLive live{
-				(float(idx0) + mixf) / float(ring.size()), envVal, envPhase, sourceGate, cueActive, paintBlack};
+				(float(rs.idx0) + rs.mix) / float(ring.size()), dub.envelope, dub.stage, dub.gate, dub.cue, dub.erase};
 			std::vector<std::string> folderPaths = folders.paths();
 			bool catalogChanged = videoNames != sentVideoNames || folderPaths != sentFolderPaths;
 			std::string full = remoteSnapshot(params, live, videoNames, folderPaths, true, sourceFailure);
@@ -994,10 +520,9 @@ int App::run() {
 		ImGui::NewFrame();
 		{
 			ControlsPanel panel;
-			float outBpmDummy = 0.0f, outQuantumDummy = 0.0f;
-			panel.draw(params, link, ring, dt, outBpmDummy, outQuantumDummy, &source, remote, folders);
+			panel.draw(params, instrument, link, ring, dt, source, remote, folders);
 		}
-		if (params.getBool("show_playheads", true)) looper.drawHeadsOverlay(w, h);
+		if (params.getBool("show_playheads")) looper.drawHeadsOverlay(w, h);
 		ImGui::Render();
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
@@ -1018,11 +543,5 @@ int App::run() {
 	ImGui::DestroyContext();
 	glfwDestroyWindow(window);
 	glfwTerminate();
-	// Destroy audition targets
-	if (auditionFboA) glDeleteFramebuffers(1, &auditionFboA);
-	if (auditionTexA) glDeleteTextures(1, &auditionTexA);
-	if (auditionFboB) glDeleteFramebuffers(1, &auditionFboB);
-	if (auditionTexB) glDeleteTextures(1, &auditionTexB);
-	if (blackTex) glDeleteTextures(1, &blackTex);
 	return 0;
 }

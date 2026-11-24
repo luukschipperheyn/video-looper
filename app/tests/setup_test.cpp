@@ -67,8 +67,8 @@ int main() {
 	PerformanceSetup setup = captureSetup(params, folders);
 	check(setup.folders.size() == 2 && setup.folders[0] == "/waiting" && setup.folders[1] == "/current",
 	      "capture keeps the Folder list in order");
-	check(setup.videos_folder == "/current", "capture keeps the current Videos folder");
-	check(setup.file_path == "/Movies/a \"b\".mov", "capture keeps the current Video");
+	check(setup.values.getString("videos_folder") == "/current", "capture keeps the current Videos folder");
+	check(setup.values.getString("file_path") == "/Movies/a \"b\".mov", "capture keeps the current Video");
 
 	auto dir = std::filesystem::temp_directory_path() / "video-looper-setup-test";
 	std::filesystem::remove_all(dir);
@@ -127,15 +127,15 @@ int main() {
 	std::ofstream(dir / "notafile") << "x";
 	PerformanceSetup disks;
 	disks.folders = {(dir / "missing").string(), (dir / "kept").string(), (dir / "notafile").string()};
-	disks.videos_folder = (dir / "missing").string();
+	disks.values.setString("videos_folder", (dir / "missing").string());
 	RestoredFolders gone = restoreFolders(disks);
 	check(gone.paths.size() == 1 && gone.paths[0] == (dir / "kept").string() && gone.current.empty(),
 	      "unreadable folders drop out and a missing current folder is dropped");
-	disks.videos_folder = (dir / "kept").string();
+	disks.values.setString("videos_folder", (dir / "kept").string());
 	RestoredFolders stayed = restoreFolders(disks);
 	check(stayed.current == (dir / "kept").string(), "a readable current folder stays current");
 	disks.folders.clear();
-	disks.videos_folder = (dir / "kept").string();
+	disks.values.setString("videos_folder", (dir / "kept").string());
 	RestoredFolders added = restoreFolders(disks);
 	check(added.paths.size() == 1 && added.current == (dir / "kept").string(),
 	      "a current folder that is not in the list is still opened");
@@ -148,23 +148,23 @@ int main() {
 	SetupSaver saver(dir / "quiet.json", 0.25);
 	PerformanceSetup quiet;
 	saver.settle(quiet);
-	quiet.bpm = 140;
+	quiet.values.setFloat("bpm", 140);
 	saver.observe(quiet, 1.0);
 	PerformanceSetup early;
 	check(!readSetup(dir / "quiet.json", early), "a change is not written while the control is still moving");
-	quiet.bpm = 150;
+	quiet.values.setFloat("bpm", 150);
 	saver.observe(quiet, 1.125);
 	saver.observe(quiet, 1.25);
 	check(!readSetup(dir / "quiet.json", early), "another change restarts the wait");
 	saver.observe(quiet, 1.5);
 	PerformanceSetup settled;
-	check(readSetup(dir / "quiet.json", settled) && near(settled.bpm, 150.f),
+	check(readSetup(dir / "quiet.json", settled) && near(settled.values.getFloat("bpm"), 150.f),
 	      "the setup is written once the control has settled");
-	quiet.bpm = 160;
+	quiet.values.setFloat("bpm", 160);
 	saver.observe(quiet, 2.0);
 	saver.flush();
 	PerformanceSetup flushed;
-	check(readSetup(dir / "quiet.json", flushed) && near(flushed.bpm, 160.f),
+	check(readSetup(dir / "quiet.json", flushed) && near(flushed.values.getFloat("bpm"), 160.f),
 	      "quit writes a change that just happened");
 
 	ParamBus snapParams;

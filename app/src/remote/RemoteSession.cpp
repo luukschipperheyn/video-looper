@@ -2,7 +2,7 @@
 
 #include "remote/UsageLog.hpp"
 
-#include "remote/ControlSchema.hpp"
+#include "control/ControlTable.hpp"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <arpa/inet.h>

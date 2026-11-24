@@ -38,19 +38,25 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 
 | Path | Role |
 |------|------|
-| `app/src/App.cpp` | GLFW/ImGui lifecycle, ParamBus defaults, hotkeys, main loop orchestration, audition FBOs, disk capture |
+| `app/src/App.cpp` | GLFW/ImGui lifecycle, hotkeys, main loop orchestration, export capture |
+| `app/src/control/ControlTable.hpp` | Every control once: name, type, default, range, whether the Web interface sees or sets it, whether it is saved |
+| `app/src/control/Instrument.*` | Carries out what a performer asks for from any surface: set a control (clamped), Panic, Prev/Next/random Video, load, Dub, choose a folder or the webcam. `SourcePort` is what it asks of the Source |
+| `app/src/ui/ParamBus.*` | The current value of every control; a fresh bus holds the table's defaults |
+| `app/src/looper/OverdubGate.*` | Decides per frame whether the Loop is written, with which image, blend mode and opacity: holds, ADSR, release tail, Erase, Cue, Commit bypass. Pure |
 | `app/src/buffer/RingBuffer.*` | Dual-bank GPU textures/FBOs (`frameCount` frames × 2 banks); front = read, back = write |
 | `app/src/looper/LooperEngine.*` | Read-head advance, multi-slot write/copy to back bank, bank swap on wrap, playhead overlay |
-| `app/src/io/SourceController.*` | Source kind routing, preview tex/FBO, folder scan, random **commit**, prev/next file |
+| `app/src/gl/Compositor.*` | Draws the framed Source, the Loop as read, and the Audition; owns the Audition targets and the export readback |
+| `app/src/io/SourceController.*` | The `SourcePort` adapter: Source kind routing, preview tex/FBO, folder scan, loads, **Commit** state |
 | `app/src/io/PageCache.*` | Opens the Videos on the Web interface's current page ahead of a tap |
 | `app/src/io/AVFFileSource.*` / `AVFWebcamSource.*` | File decode / camera → GL texture |
 | `app/src/io/AVFRecorder.*` | BGRA frames → `.mov` |
 | `app/src/io/VideoSource.hpp` | `SourceKind { Shader, File, Black, Webcam }`, `IVideoSource` |
 | `app/src/gl/FxPipeline.*` | Feedback / Diff / Chroma / Kaleido / Blur / Repeat / Grid; one pipeline on the Program, one on the Source; ping-pong targets; hot-reload |
 | `app/src/gl/Shader.*`, `FullscreenQuad.*`, `util/GlUtils.hpp` | GL helpers |
-| `app/src/ui/ParamBus.*` | String-keyed bool/float/int/string bag (no schema validation) |
-| `app/src/setup/SetupStore.*` | Performance setup saved when a control settles and restored at launch |
-| `app/src/ui/ControlsPanel.*` | ImGui **Live** + **Settings** tabs |
+| `app/src/remote/RemoteSession.*` | HTTP + WebSocket server for the Web interface, holds, thumbnails |
+| `app/src/remote/RemoteApply.*` | The Web interface adapter: turns one message into an Instrument call and a reject frame; builds the snapshot |
+| `app/src/setup/SetupStore.*` | Performance setup (the controls the table marks Saved, plus the Folder list) saved when a control settles and restored at launch |
+| `app/src/ui/ControlsPanel.*` | ImGui **Live** + **Settings** tabs; every change goes through the Instrument |
 | `app/src/clock/Clock.hpp` | Local beat accumulator from BPM × dt |
 | `app/src/link/LinkBridge.*` | Real Ableton Link when `USE_ABLETON_LINK`; else local stub |
 | `app/src/util/HotReload.*` | mtime watches for shader reload |
@@ -61,23 +67,23 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 
 ## Main-loop stages
 
-Order inside `App::run`’s `while` (`App.cpp` ~192–647), each frame:
+Order inside `App::run`’s `while`, each frame:
 
 1. **Poll** GLFW events  
 2. **Hotkeys** (edge-triggered; see UI + hotkeys) — `WantCaptureKeyboard` is forced `false`, so keys always apply  
 3. **Preview window** create/destroy from `preview_window`  
-4. **Resize** — if framebuffer size changes: rebuild ring (120 frames), source, FX, looper, audition targets; **stop** disk recorder if active  
+4. **Resize** — if framebuffer size changes: rebuild ring (120 frames), source, FX, looper, compositor targets; **stop** disk recorder if active  
 5. **Hot-reload** shaders / FX  
 6. **Disk record edge** — start/stop `AVFRecorder` from `record_enabled` + `record_path`  
-7. **`source.tickAndGrab`** — webcam/file upload; Shader/Black filled into preview FBO in App  
+7. **`source.tickAndGrab`** — webcam/file upload; the `Compositor` draws Shader, Black, or the placed picture into the Source's preview FBO  
 8. **Clock / Link** — tempo → `readFps` (optionally coupled to BPM)  
 9. **`looper.advanceRead`** — fractional read head → `idx0/idx1/mix/wraps`  
-10. **Record/cue + ADSR** — gates, envelope, `recordingActive`, `writeOpacity`  
+10. **Web interface messages, then the Overdub gate** — each drained message goes through `applyRemote` to the `Instrument`; `OverdubGate::step` takes the holds and returns this frame's write: overdub or not, opacity, image, blend mode, Cue  
 11. **`writeAndSwap`** unless **cue** (cue = monitor only, no ring write)  
-12. **Present** — cue/record audition path, else FX or plain loop  
-13. **Preview audition** composite into `auditionTexB` when preview visible and not cue/recording  
-14. **Disk capture** — if recording: rebuild audition → `glReadPixels` BGRA → vertical flip → `appendBGRAFrame` at `record_fps`  
-15. **Inset / separate preview** blit of `auditionTexB` (or back-bank debug)  
+12. **Present** — the Audition (`Compositor::audition`) while cueing or overdubbing, else Program FX or the plain loop  
+13. **Preview audition** — the same `Compositor::audition` call at full opacity when the preview is visible and idle, or Export is on  
+14. **Disk capture** — if recording: `Compositor::readAudition` (BGRA, top row first) → `appendBGRAFrame` at `record_fps`  
+15. **Inset / separate preview** blit of the Audition texture (or back-bank debug)  
 16. **ImGui** ControlsPanel + optional playhead overlay  
 17. **Swap** buffers (+ ImGui viewports)
 
@@ -129,7 +135,7 @@ File and webcam frames are drawn into the Source, then that image is what an Ove
 
 **Erase** (Web interface hold under Overdub): opens that same gate, so the ADSR runs as an Overdub, and the image is opaque black rather than the Source. The blend mode is bypassed: the write is Mix, so the envelope fades the Loop toward black. Opacity still scales it. Source FX is not applied to the black. While Erase is held it wins over Latch, Space, and the Overdub pad. Releasing it while one of those still holds the gate switches the image back to the Source immediately. Releasing it with the gate closed keeps writing black through the release tail. Cue still skips the ring write. Commit still writes the Video.
 
-**ADSR** (`env_*`, default on): phases 0 idle → 1 attack → 2 decay → 3 sustain → 4 release. Disabled or `commit_active` → opacity is binary (gate/commit) rather than enveloped. `writeOpacity = record_blend_opacity * envOrGate`.
+**ADSR** (`env_*`, default on): phases 0 idle → 1 attack → 2 decay → 3 sustain → 4 release. Disabled or a Commit in progress → opacity is binary (gate/commit) rather than enveloped. The write opacity is `record_blend_opacity` × envelope or gate. All of this section lives in `OverdubGate` and is tested frame by frame in `app/tests/overdub_gate_test.cpp`.
 
 **Blend modes** (0–11): Mix, Add, Multiply, Screen, Overlay, Difference, Lighten, Darken, Hard Light, Soft Light, Color Dodge, Color Burn — shader `texture_blend_two.frag` via `uMode`.
 
@@ -202,15 +208,15 @@ Hotkeys ignore ImGui keyboard capture (`wantKb` hardcoded false).
 
 ---
 
-## ParamBus defaults (init)
+## Controls
 
-Notable defaults from `App.cpp` ~120–162: `show_ui`, `gain_mix=1`, `record_blend_opacity=1`, `bpm=120`, `quantum=4`, `read_speed_mult=1`, `tempo_coupled=true`, Link off, `source_kind=Shader`, `video_bars=true`, `env_enabled=true` (A/D/S/R 0.05/0.20/1.0/0.30), `fx_enabled=false`, `record_fps=60`, preview on inset scale 0.3, playheads on.
+`app/src/control/ControlTable.hpp` lists every control once: name, type, default, range, whether the Web interface sees it (`Web::Hidden` / `Read` / `Write`), and whether it is in the saved setup (`Keep::Session` / `Saved` / `StartsOff`). A fresh `ParamBus` holds those defaults, so getters take no fallback. The schema the page reads, the snapshot, the saved setup's fields, and the Mac sliders' ranges all come from the table. To add a control, add its row.
 
-Keys used elsewhere but not all initialized at startup (rely on get defaults): e.g. `file_run_mode`, `file_loop_start`, `file_loop_length`.
+A change from the Mac controls, a hotkey, or the Web interface goes through `Instrument`, which clamps numbers to the table's range and does what follows from the change: Preserve aspect copies scale x onto scale y, choosing the webcam starts a webcam load, a new tempo goes to Link when Link is on, Export with no path is refused. The Web interface adapter (`applyRemote`) adds the read-only check. Commit state is not a control; `SourceController::committing()` reports it.
 
 ## Saved setup
 
-`~/Library/Application Support/video-looper/setup.json` is written 0.2 s after the setup stops changing, and again on quit. Launch applies it after the defaults, so a missing or broken file leaves the defaults. Restored fields: blend, opacity, blend gain, envelope, FX, Source FX, Source kind and transform, black bars, preserve aspect, webcam, video loop / pause / run mode / loop range, current Video, Folder list, tempo, whether the Web interface is on, export path and export fps. Latch, latched Cue, and Export start off. Link, the preview window, playheads, Mac UI visibility, the URL token, and the window are not in the file. A folder that cannot be read is dropped. If the current Video cannot be opened, the Source stays a Video, nothing is loaded, and the Web interface keeps the load failure on its snapshot. The Loop's frames are not restored (ADR-0003). A restored Video's first frame is the start of its saved loop range.
+`~/Library/Application Support/video-looper/setup.json` is written 0.2 s after the setup stops changing, and again on quit. Launch applies it after the defaults, so a missing or broken file leaves the defaults. Restored fields: blend, opacity, blend gain, envelope, FX, Source FX, Source kind and transform, black bars, preserve aspect, webcam, video loop / pause / run mode / loop range, current Video, Folder list, tempo, whether the Web interface is on, export path and export fps. Latch, latched Cue, and Export start off (`Keep::StartsOff` in the control table). Link, the preview window, playheads, Mac UI visibility, the URL token, and the window are not in the file. A folder that cannot be read is dropped. If the current Video cannot be opened, the Source stays a Video, nothing is loaded, and the Web interface keeps the load failure on its snapshot. The Loop's frames are not restored (ADR-0003). A restored Video's first frame is the start of its saved loop range.
 
 `web-use.jsonl` in that same folder is an append-only record of Web interface gestures, one JSON object per line: `at` (UTC), `e` (`set`, `hold`, `release`, `open`, `close`, `chain`, `tap`, `act`), `name`, and `v` when the gesture has a value. A fader, blend swipe, transform, or envelope drag is one `set` when the finger lifts, with the value it landed on. A held Overdub gate, Erase, or Cue is one `hold` and one `release`, not the repeats that keep the pad down. Opening the ADSR/opacity layer or Setup is `open` / `close`. The file keeps its newest lines once it passes 4 MB. It is not restored into the instrument and it is not sent off the Mac.
 
@@ -237,8 +243,8 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 |-----|-------|
 | `-`/`=` source cycle stops at Black; Webcam unreachable by hotkey | `App.cpp` `=` capped at `SourceKind::Black` |
 | Hotkeys fire while typing in ImGui text fields | `App.cpp` `wantKb = false` |
-| Preview ignores the ADSR envelope (always full record opacity) | `App.cpp` preview audition pass |
-| Disk recording captures the audition composite, not the presented main view (FX missing) | `App.cpp` capture reads `auditionFboB` |
+| Preview ignores the ADSR envelope (always full record opacity) | `App.cpp` preview audition call |
+| Disk recording captures the audition composite, not the presented main view (FX missing) | `App.cpp` capture reads `Compositor::readAudition` |
 | Editing `file_path` while a file is playing does not reload it | `SourceController::ensureSource` only starts when `!fileActive` |
 | `[rec]` printf on every captured frame | `App.cpp` capture loop |
 | Placeholder bundle id `com.example.video-looper` | `Info.plist` |
@@ -262,6 +268,10 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 | Concern | Start here |
 |---------|------------|
 | Frame orchestration | `app/src/App.cpp` |
+| What a control is, its default and range | `app/src/control/ControlTable.hpp` |
+| What setting a control or pressing a button does | `app/src/control/Instrument.cpp` |
+| When the Loop is written and with what | `app/src/looper/OverdubGate.cpp` |
+| Source, Audition, export readback | `app/src/gl/Compositor.cpp` |
 | Ring write/swap math | `app/src/looper/LooperEngine.cpp` |
 | Dual-bank storage | `app/src/buffer/RingBuffer.cpp` |
 | Live UI | `app/src/ui/ControlsPanel.cpp` |

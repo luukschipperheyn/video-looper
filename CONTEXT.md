@@ -92,6 +92,14 @@ _Avoid_: Record, recording, disk record
 
 ### Control
 
+**Control**:
+One named value a performer sets, such as the opacity or the tempo. Each has a default and, if it is a number, a range.
+_Avoid_: param, parameter, setting
+
+**Instrument**:
+The looper as the thing that is played. Every control surface (the Mac controls, the hotkeys, the Web interface) asks the instrument for a change; none of them changes a control by itself.
+_Avoid_: app, engine, backend
+
 **Web interface**:
 The page the app serves for live control from a browser.
 _Avoid_: iPad page
