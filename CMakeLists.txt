@@ -149,6 +149,18 @@ add_executable(picture_choice_test
 )
 target_include_directories(picture_choice_test PRIVATE app/src)
 
+add_executable(export_test
+  app/tests/export_test.cpp
+  app/src/io/Export.cpp
+  app/src/control/Instrument.cpp
+  app/src/ui/ParamBus.cpp
+  app/src/io/FolderList.cpp
+  app/src/io/SourceLoad.cpp
+  app/src/remote/RemoteApply.cpp
+  app/src/gl/PictureChoice.cpp
+)
+target_include_directories(export_test PRIVATE app/src)
+
 add_executable(instrument_test
   app/tests/instrument_test.cpp
   app/src/control/Instrument.cpp
@@ -268,6 +280,7 @@ set(cpp_tests
   hotkey_test
   source_controller_test
   source_request_test
+  export_test
 )
 foreach(test_name IN LISTS cpp_tests)
   add_test(NAME ${test_name} COMMAND ${test_name})

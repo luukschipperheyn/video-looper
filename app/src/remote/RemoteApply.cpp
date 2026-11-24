@@ -93,7 +93,8 @@ std::string applyRemote(Instrument& instrument, const RemoteSet& set) {
 }
 
 std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const std::vector<std::string>& videos,
-                           const std::vector<std::string>& folders, bool catalog, const std::string& sourceError) {
+                           const std::vector<std::string>& folders, bool catalog, const std::string& sourceError,
+                           const std::string& exportError) {
 	std::string out = "{\"t\":\"snapshot\"";
 	for (const Control& c : kControls) {
 		if (c.web == Web::Hidden) continue;
@@ -120,7 +121,8 @@ std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const
 	out += ",\"loop\":" + jsonNumber(live.loop) + ",\"envelope\":" + jsonNumber(live.envelope) +
 	       ",\"stage\":" + std::to_string(live.stage) + ",\"gate\":" + (live.gate ? "true" : "false") +
 	       ",\"cue\":" + (live.cue ? "true" : "false") + ",\"erase\":" + (live.erase ? "true" : "false") +
-	       ",\"video\":" + jsonString(video) + ",\"source_error\":" + jsonString(sourceError);
+	       ",\"video\":" + jsonString(video) + ",\"source_error\":" + jsonString(sourceError) +
+	       ",\"export_error\":" + jsonString(exportError);
 	if (!catalog) return out + "}";
 	out += ",\"videos\":[";
 	for (size_t i = 0; i < videos.size(); ++i)
