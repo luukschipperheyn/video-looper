@@ -58,8 +58,9 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/io/DrawImage.mm` | Draw PNG → straight-alpha BGRA, bottom row first |
 | `app/src/gl/FxPipeline.*` | Feedback / Diff / Chroma / Kaleido / Blur / Repeat / Grid; one pipeline on the Program, one on the Source; ping-pong targets; each owns its quad. The Source FX stamp is the placement the picture path used for the framed Source |
 | `app/src/gl/Shader.*`, `FullscreenQuad.*`, `util/GlUtils.hpp` | GL helpers |
-| `app/src/remote/RemoteSession.*` | HTTP + WebSocket server for the Web interface, holds, thumbnails |
-| `app/src/remote/RemoteApply.*` | The Web interface adapter: turns one message into an Instrument call and a reject frame; builds the snapshot |
+| `app/src/remote/WebInterface.*` | The Web interface. Once a frame, App gives it the Instrument and this frame's live state. It carries out the messages, Panic, the snapshot and the catalog, rejects, a load failure that stays until the Source recovers, the thumbnails, and the usage log, and gives back the pad holds |
+| `app/src/remote/RemoteSession.*` | The HTTP and WebSocket adapter under that call: the page, the token, framing, the pad holds, and the silence window. `MemoryWire` is the same adapter in memory, for tests |
+| `app/src/remote/RemoteApply.*` | The snapshot and reject text the Web interface sends |
 | `app/web/page_state.js` | Control state for the Web interface. Finger, value, frame, reject, and link loss. Tested in `app/tests/page_state_test.js` |
 | `app/src/setup/SetupStore.*` | Performance setup (the controls the table marks Saved, plus the Folder list) saved when a control settles and restored at launch |
 | `app/src/ui/ControlsPanel.*` | ImGui **Live** + **Settings** tabs; every change goes through the Instrument |
@@ -82,7 +83,7 @@ Order inside `App::run`’s `while`, each frame:
 5. **Hot-reload** — `reloadShaders` polls the watches once. Every program that uses a changed shader reloads, including both FX pipelines  
 6. **`source.tick`, then `Instrument::record`** — a swap lands in the controls. The tick uploads a webcam or Video frame into the Compositor's picture texture; the `Compositor` then draws Shader, Black, or the placed picture as the framed Source  
 7. **Clock / Link** — tempo → `readFps` (optionally coupled to BPM)  
-8. **Web interface messages, then the Overdub gate** — each drained message goes through `applyRemote` to the `Instrument`; `OverdubGate::step` takes the holds and returns this frame's write: overdub or not, opacity, image, blend mode, Cue  
+8. **Web interface, then the Overdub gate** — `WebInterface::frame` takes the Instrument and this frame's live state and gives back the pad holds. The live state carries the previous frame's loop fraction, envelope, and gate flags, the Folder list, a new load failure, the Export failure, and thumbnails that just finished. `OverdubGate::step` takes those holds and returns this frame's write: overdub or not, opacity, image, blend mode, Cue  
 9. **`looper.step`** — one call advances the read head, plans every back-bank fill and any swap, then does the texture work. Cue is decided here: the plan writes nothing and does not swap. The picture's textures are the front bank from before a swap  
 10. **Pictures** — `choosePictures` names the window, the preview, and Export. The picture path keeps the Program (Program FX when it is on, otherwise the Loop) and the Audition at the opacity an Overdub would write  
 11. **Present** — the window asks for the Audition while cueing or overdubbing, including Bake FX, and for the Program otherwise  
@@ -115,7 +116,9 @@ File and webcam frames are drawn into the Source, then that image is what an Ove
 - `V` / “Load Random File” picks a Video from the current Videos folder and loads it as the Source, the same way Prev and Next do. It does not Commit.
 - Prev and Next step through the Videos on the current Videos folder and load immediately.
 
-**Web interface** (`app/web/index.html`): The app serves this one page. `RemoteSession` inlines `app/web/gestures.js` at `/*GESTURES*/` and `app/web/page_state.js` at `/*PAGE_STATE*/`, and replaces `/*CONTROL_SCHEMA*/` with the control schema. ADR-0001 keeps the page as one file the server sends, with those scripts inlined.
+**Web interface** (`app/web/index.html`): The app serves this one page. The socket adapter inlines `app/web/gestures.js` at `/*GESTURES*/` and `app/web/page_state.js` at `/*PAGE_STATE*/`, and replaces `/*CONTROL_SCHEMA*/` with the control schema. ADR-0001 keeps the page as one file the server sends, with those scripts inlined. The protocol stays independent of the client.
+
+App calls `WebInterface::frame` once a frame, before the Overdub gate. That call carries out every message. Panic, in that one place, releases the Latch, the latched Cue, and every held pad. The same call sends the snapshot. A later frame sends the Videos and the Folder list again only after they change, and it skips a snapshot that matches the last one. A load failure stays on the snapshot until that load swaps in, or until the Source is Shader, Black, or Draw. A Draw picture comes back from the call and is stretched on the following frame.
 
 `page_state.js` holds the control values. The page reports finger down, the value, finger up, a frame, a reject, and link loss, then paints the module's state. `create` takes the socket and the timers. A finger locks the controls it is on, so a snapshot keeps the value under the finger until the finger lifts. The Overdub blend grid, the FX blend picker, and the Source FX blend picker use that lock. A hold on the Overdub gate, Erase, or Cue sends `hold` at once and again every 100 ms until the finger lifts, the link drops, or Panic runs. Panic sends `panic` and stops those holds. The use log records one `release` per hold that was down, and one `act` for Panic.
 
@@ -224,7 +227,7 @@ Separate from an Overdub, which writes into the Loop. `Export` owns on, off, a f
 
 `app/src/control/ControlTable.hpp` lists every control once: name, type, default, range, whether the Web interface sees it (`Web::Hidden` / `Read` / `Write`), and whether it is in the saved setup (`Keep::Session` / `Saved` / `StartsOff`). A fresh `ParamBus` holds those defaults, so getters take no fallback. The schema the page reads, the snapshot, the saved setup's fields, and the Mac sliders' ranges all come from the table. To add a control, add its row.
 
-A change from the Mac controls, a hotkey, or the Web interface goes through `Instrument`, which clamps numbers to the table's range and does what follows from the change: Preserve aspect copies scale x onto scale y, choosing Shader, Black, or Draw asks the Source to show that, choosing a Video loads `file_path` when one is set, editing `file_path` loads that Video, choosing the webcam or its index starts a webcam load, loop and pause and the loop range are sent as playback, a new tempo goes to Link when Link is on, Export with no path is refused. When a load swaps in, `Instrument::record` writes the Source kind, the Video path, and the webcam index. The Web interface adapter (`applyRemote`) adds the read-only check. Commit state is not a control; `SourceController::committing()` reports it.
+A change from the Mac controls, a hotkey, or the Web interface goes through `Instrument`, which clamps numbers to the table's range and does what follows from the change: Preserve aspect copies scale x onto scale y, choosing Shader, Black, or Draw asks the Source to show that, choosing a Video loads `file_path` when one is set, editing `file_path` loads that Video, choosing the webcam or its index starts a webcam load, loop and pause and the loop range are sent as playback, a new tempo goes to Link when Link is on, Export with no path is refused. When a load swaps in, `Instrument::record` writes the Source kind, the Video path, and the webcam index. The Web interface adds the read-only check. Commit state is not a control; `SourceController::committing()` reports it.
 
 ## Saved setup
 

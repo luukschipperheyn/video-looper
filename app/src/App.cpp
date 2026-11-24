@@ -31,8 +31,7 @@
 #include "util/ContainRect.hpp"
 #include "io/AVFRecorder.hpp"
 #include "io/Export.hpp"
-#include "remote/RemoteApply.hpp"
-#include "remote/RemoteSession.hpp"
+#include "remote/WebInterface.hpp"
 #include "setup/SetupStore.hpp"
 #include <cstdlib>
 #include <vector>
@@ -140,14 +139,10 @@ int App::run() {
 	const char* home = std::getenv("HOME");
 	std::filesystem::path support =
 		std::filesystem::path(home ? home : ".") / "Library/Application Support/video-looper";
-	RemoteSession remote(support / "remote-token");
-	remote.setUsageFile(support / "web-use.jsonl");
-	std::string remoteSnapshotSent;
+	WebInterface web(support / "remote-token");
+	web.setUsageFile(support / "web-use.jsonl");
 	VideoThumbs thumbs;
 	std::vector<std::string> videoPaths;
-	std::vector<std::string> videoNames;
-	std::vector<std::string> sentVideoNames;
-	std::vector<std::string> sentFolderPaths;
 	FolderList folders;
 	LinkBridge link;
 	Instrument instrument(params, source, folders, [&link](float bpm) { link.setTempo(bpm); });
@@ -167,7 +162,12 @@ int App::run() {
 		instrument.restoreSource();
 		setupSaver.settle(captureSetup(params, folders));
 	}
-	std::string sourceFailure;
+	float shownLoop = 0;
+	float shownEnvelope = 0;
+	int shownStage = 0;
+	bool shownGate = false;
+	bool shownCue = false;
+	bool shownErase = false;
 	std::string exportFailure;
 
 	Clock clock;
@@ -240,13 +240,6 @@ int App::run() {
 
 		source.tick(dt);
 		instrument.record(source.status());
-		std::string drawPng;
-		if (remote.takeDraw(drawPng)) {
-			std::vector<unsigned char> bgra;
-			int drawW = 0;
-			int drawH = 0;
-			if (decodeDrawImage(drawPng, bgra, drawW, drawH)) compositor.uploadDraw(bgra, drawW, drawH);
-		}
 		int srcKind = params.getInt("source_kind");
 		// A Video or webcam picture at its own size, ready to be placed in the frame.
 		bool hasPicture = (srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
@@ -286,44 +279,44 @@ int App::run() {
 		glClearColor(0.05f, 0.06f, 0.08f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
 
-		remote.setTokenRequired(params.getBool("ipad_token"));
-		remote.setEnabled(params.getBool("ipad_page"));
 		const PreparedFolder* folder = folders.current();
 		std::vector<std::string> videos = folder ? folder->videos : std::vector<std::string>{};
 		if (videos != videoPaths) {
 			videoPaths = std::move(videos);
-			videoNames.clear();
-			for (const std::string& p : videoPaths)
-				videoNames.push_back(std::filesystem::path(p).filename());
 			thumbs.setVideos(videoPaths);
 		}
 		std::vector<std::pair<std::string, std::string>> madeThumbs;
-		if (thumbs.take(madeThumbs)) remote.setThumbs(std::move(madeThumbs));
-		std::string loadFailure = source.takeLoadFailure();
-		if (!loadFailure.empty())
-			sourceFailure = loadFailure;
-		else if (source.loadSwapped() || (srcKind != (int)SourceKind::File && srcKind != (int)SourceKind::Webcam))
-			sourceFailure.clear();
-		if (remote.enabled()) {
-			remote.setSilenceWindow(int(params.getFloat("silence_ms")));
-			if (!loadFailure.empty()) remote.send(rejectFrame("source", loadFailure));
-			for (const RemoteSet& set : remote.drain()) {
-				std::string reject = applyRemote(instrument, set);
-				if (!reject.empty()) remote.send(reject);
-			}
-		} else {
-			params.setBool("ipad_page", false);
+		WebLive live{params, folders};
+		live.loop = shownLoop;
+		live.envelope = shownEnvelope;
+		live.stage = shownStage;
+		live.gate = shownGate;
+		live.cue = shownCue;
+		live.erase = shownErase;
+		live.thumbsFresh = thumbs.take(madeThumbs);
+		live.thumbs = std::move(madeThumbs);
+		live.loadFailure = source.takeLoadFailure();
+		live.loadSwapped = source.loadSwapped();
+		live.exportFailure = exportFailure;
+		live.enabled = params.getBool("ipad_page");
+		live.tokenRequired = params.getBool("ipad_token");
+		live.silenceMs = int(params.getFloat("silence_ms"));
+		WebInterface::Step step = web.frame(instrument, live);
+		if (step.hasDraw) {
+			std::vector<unsigned char> bgra;
+			int drawW = 0;
+			int drawH = 0;
+			if (decodeDrawImage(step.draw, bgra, drawW, drawH)) compositor.uploadDraw(bgra, drawW, drawH);
 		}
-		RemoteSession::PadState pads = remote.pads();
 
 		GateHolds holds;
 		holds.latch = params.getBool("arm_record");
 		holds.space = hotkeyHolds.overdub;
-		holds.pad = pads.gate;
-		holds.erase = pads.erase;
+		holds.pad = step.gate;
+		holds.erase = step.erase;
 		holds.cueLatch = params.getBool("cue_active");
 		holds.cueKey = hotkeyHolds.cue;
-		holds.cuePad = pads.cue;
+		holds.cuePad = step.cue;
 		GateFrame dub = gate.step(holds, gateSettings(params), source.committing(), dt);
 		if (dub.restartVideo) instrument.restartVideo();
 
@@ -364,10 +357,7 @@ int App::run() {
 
 		diskExport.frame(dt, pictures.exported, fbw, fbh);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		if (diskExport.failure() != exportFailure) {
-			exportFailure = diskExport.failure();
-			if (remote.enabled() && !exportFailure.empty()) remote.send(rejectFrame("record_enabled", exportFailure));
-		}
+		exportFailure = diskExport.failure();
 
 		if (params.getBool("show_preview") && !params.getBool("preview_window")) {
 			float scale = params.getFloat("preview_scale");
@@ -399,36 +389,19 @@ int App::run() {
 			params.setBool("preview_window", false);
 		}
 
-		if (remote.enabled()) {
-			RemoteLive live{(float(looped.idx0) + looped.mix) / float(ring.size()),
-			                dub.envelope,
-			                dub.stage,
-			                dub.gate,
-			                dub.cue,
-			                dub.erase};
-			std::vector<std::string> folderPaths = folders.paths();
-			bool catalogChanged = videoNames != sentVideoNames || folderPaths != sentFolderPaths;
-			std::string full =
-				remoteSnapshot(params, live, videoNames, folderPaths, true, sourceFailure, exportFailure);
-			remote.setSnapshot(full);
-			std::string wire =
-				catalogChanged ? full : remoteSnapshot(params, live, {}, {}, false, sourceFailure, exportFailure);
-			if (wire != remoteSnapshotSent) {
-				remoteSnapshotSent = wire;
-				remote.send(wire);
-			}
-			if (catalogChanged) {
-				sentVideoNames = videoNames;
-				sentFolderPaths = std::move(folderPaths);
-			}
-		}
+		shownLoop = (float(looped.idx0) + looped.mix) / float(ring.size());
+		shownEnvelope = dub.envelope;
+		shownStage = dub.stage;
+		shownGate = dub.gate;
+		shownCue = dub.cue;
+		shownErase = dub.erase;
 
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 		{
 			ControlsPanel panel;
-			panel.draw(params, instrument, link, ring, dt, source, remote, folders);
+			panel.draw(params, instrument, link, ring, dt, source, web, folders);
 		}
 		if (params.getBool("show_playheads")) looper.drawHeadsOverlay(w, h);
 		ImGui::Render();

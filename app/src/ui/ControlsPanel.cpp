@@ -10,7 +10,7 @@
 #include <filesystem>
 
 void ControlsPanel::draw(const ParamBus& params, Instrument& instrument, const LinkBridge& link, const RingBuffer& ring,
-                         float dt, const SourceController& source, const RemoteSession& remote,
+                         float dt, const SourceController& source, const WebInterface& web,
                          const FolderList& folders) {
 	if (!params.getBool("show_ui")) return;
 	if (!ImGui::Begin("Controls")) {
@@ -196,8 +196,8 @@ void ControlsPanel::draw(const ParamBus& params, Instrument& instrument, const L
 			bool ipad = toggle("Web interface", "ipad_page");
 			toggle("URL token", "ipad_token");
 			slider("Silence window (ms)", "silence_ms");
-			if (ipad && remote.enabled()) {
-				std::string url = remote.url();
+			if (ipad && web.enabled()) {
+				std::string url = web.url();
 				ImGui::InputText("URL", url.data(), url.size() + 1, ImGuiInputTextFlags_ReadOnly);
 				static std::string qrUrl;
 				static std::vector<std::vector<bool>> qr;
@@ -221,7 +221,7 @@ void ControlsPanel::draw(const ParamBus& params, Instrument& instrument, const L
 					}
 					ImGui::Dummy(ImVec2(side, side));
 				}
-				ImGui::TextUnformatted(remote.clientCount() > 0 ? "iPad connected" : "iPad not connected");
+				ImGui::TextUnformatted(web.clientCount() > 0 ? "iPad connected" : "iPad not connected");
 			}
 
 			ImGui::Separator();

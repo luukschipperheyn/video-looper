@@ -61,6 +61,8 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/util/MacFileDialog.mm
   app/src/remote/RemoteSession.cpp
   app/src/remote/RemoteApply.cpp
+  app/src/remote/Inbound.cpp
+  app/src/remote/WebInterface.cpp
   app/src/remote/UsageLog.cpp
   app/src/remote/QrCode.cpp
   app/src/setup/SetupStore.cpp
@@ -85,6 +87,8 @@ add_executable(remote_session_test
   app/tests/remote_session_test.cpp
   app/src/remote/RemoteSession.cpp
   app/src/remote/RemoteApply.cpp
+  app/src/remote/Inbound.cpp
+  app/src/remote/WebInterface.cpp
   app/src/remote/UsageLog.cpp
   app/src/control/Instrument.cpp
   app/src/ui/ParamBus.cpp
@@ -93,6 +97,22 @@ add_executable(remote_session_test
 )
 target_include_directories(remote_session_test PRIVATE app/src)
 target_compile_definitions(remote_session_test PRIVATE WEB_DIR="${CMAKE_SOURCE_DIR}/app/web")
+
+add_executable(web_interface_test
+  app/tests/web_interface_test.cpp
+  app/src/remote/WebInterface.cpp
+  app/src/remote/Inbound.cpp
+  app/src/remote/MemoryWire.cpp
+  app/src/remote/RemoteApply.cpp
+  app/src/remote/RemoteSession.cpp
+  app/src/remote/UsageLog.cpp
+  app/src/control/Instrument.cpp
+  app/src/ui/ParamBus.cpp
+  app/src/io/SourceLoad.cpp
+  app/src/io/FolderList.cpp
+)
+target_include_directories(web_interface_test PRIVATE app/src)
+target_compile_definitions(web_interface_test PRIVATE WEB_DIR="${CMAKE_SOURCE_DIR}/app/web")
 
 add_executable(usage_log_test
   app/tests/usage_log_test.cpp
@@ -273,6 +293,7 @@ enable_testing()
 
 set(cpp_tests
   remote_session_test
+  web_interface_test
   usage_log_test
   draw_image_test
   shader_reload_test

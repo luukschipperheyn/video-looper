@@ -4,6 +4,7 @@
 #include "control/Instrument.hpp"
 #include "remote/RemoteApply.hpp"
 #include "remote/RemoteSession.hpp"
+#include "remote/WebInterface.hpp"
 #include "ui/ParamBus.hpp"
 
 #include <arpa/inet.h>
@@ -164,9 +165,9 @@ static bool isSnapshot(const std::string& payload) {
 	return payload.rfind("{\"t\":\"snapshot\"", 0) == 0;
 }
 
-static std::vector<RemoteSet> waitDrain(RemoteSession& session) {
+static std::vector<Inbound> waitDrain(RemoteSession& session) {
 	for (int i = 0; i < 100; ++i) {
-		std::vector<RemoteSet> sets = session.drain();
+		std::vector<Inbound> sets = session.takeMessages();
 		if (!sets.empty()) return sets;
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
@@ -195,18 +196,16 @@ struct FakeSource : SourcePort {
 	SourceStatus status() const override { return {}; }
 };
 
-// One App frame: carry out what the page sent the way App does, send rejects and the snapshot. Returns the
-// tempo handed to Link, or -1 when Link was not touched.
-static float pump(RemoteSession& session, ParamBus& params) {
+static float pump(WebInterface& web, RemoteSession& session, ParamBus& params) {
+	for (int i = 0; i < 100 && !session.hasMessages(); ++i)
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	float linkTempo = -1.0f;
 	FakeSource source;
 	FolderList folders;
 	Instrument instrument(params, source, folders, [&](float bpm) { linkTempo = bpm; });
-	for (const RemoteSet& set : waitDrain(session)) {
-		std::string reject = applyRemote(instrument, set);
-		if (!reject.empty()) session.send(reject);
-	}
-	publish(session, params);
+	WebLive live{params, folders};
+	live.enabled = true;
+	web.frame(instrument, live);
 	return linkTempo;
 }
 
@@ -247,6 +246,7 @@ int main() {
 	auto tokenFile = dir / "remote-token";
 	{
 		RemoteSession session(tokenFile, "127.0.0.1", 0);
+		WebInterface web(session, {});
 		const std::string token = session.token();
 
 		session.setEnabled(true);
@@ -339,7 +339,7 @@ int main() {
 				sent = buf;
 			}
 			sendFrame(client.fd, 0x1, setFrame(name, sent));
-			pump(session, params);
+			pump(web, session, params);
 			std::string echoed = field(readText(client), name);
 			bool same = echoed == sent;
 			if (c.type == ControlType::Float)
@@ -349,23 +349,23 @@ int main() {
 		}
 
 		sendFrame(client.fd, 0x1, setFrame("bpm", "999"));
-		pump(session, params);
+		pump(web, session, params);
 		check(field(readText(client), "bpm") == "240", "10. bpm 999 comes back clamped to 240");
 		sendFrame(client.fd, 0x1, setFrame("webcam_index", "-3"));
-		pump(session, params);
+		pump(web, session, params);
 		check(field(readText(client), "webcam_index") == "0", "10. webcam_index -3 comes back clamped to 0");
 		sendFrame(client.fd, 0x1, setFrame("source_kind", "4"));
-		pump(session, params);
+		pump(web, session, params);
 		check(field(readText(client), "source_kind") == "4" && params.getInt("source_kind") == 4,
 		      "10. source_kind 4 is Draw and is written");
 		sendFrame(client.fd, 0x1, setFrame("source_kind", "9"));
-		pump(session, params);
-		check(field(readText(client), "source_kind") == "4", "10. source_kind 9 clamps to Draw");
+		pump(web, session, params);
+		check(params.getInt("source_kind") == 4, "10. source_kind 9 clamps to Draw");
 
 		params.setFloat("video_sx", 2.0f);
 		params.setFloat("video_sy", 0.5f);
 		sendFrame(client.fd, 0x1, setFrame("video_aspect", "true"));
-		pump(session, params);
+		pump(web, session, params);
 		check(field(readText(client), "video_sy") == "2" && params.getFloat("video_sy") == 2.0f,
 		      "10. Preserve aspect copies scale x onto scale y");
 
@@ -377,11 +377,9 @@ int main() {
 		                                                        {"no_such_control", "true"}};
 		for (const auto& [name, raw] : readOnly) {
 			sendFrame(client.fd, 0x1, setFrame(name, raw));
-			pump(session, params);
+			pump(web, session, params);
 			std::string reject = readText(client);
-			payload = readText(client);
-			check(reject == "{\"t\":\"reject\",\"name\":\"" + name + "\",\"reason\":\"read-only\"}" &&
-			          isSnapshot(payload),
+			check(reject == "{\"t\":\"reject\",\"name\":\"" + name + "\",\"reason\":\"read-only\"}",
 			      ("11. " + name + " is rejected as read-only").c_str());
 		}
 		check(params.getString("record_path").empty() && params.getFloat("quantum") == 4.0f &&
@@ -393,18 +391,18 @@ int main() {
 		check(field(readText(client), "bpm") == "133.5", "12. a bpm change on the Mac reaches the page");
 
 		sendFrame(client.fd, 0x1, setFrame("bpm", "150"));
-		float linkTempo = pump(session, params);
+		float linkTempo = pump(web, session, params);
 		check(linkTempo == -1.0f && field(readText(client), "bpm") == "150",
 		      "13. with Link off, setting bpm leaves Link alone");
 		params.setBool("link_enabled", true);
 		sendFrame(client.fd, 0x1, setFrame("bpm", "151"));
-		linkTempo = pump(session, params);
+		linkTempo = pump(web, session, params);
 		check(linkTempo == 151.0f && field(readText(client), "bpm") == "151",
 		      "13. with Link on, setting bpm hands 151 to Link");
 		params.setBool("link_enabled", false);
 
 		sendFrame(client.fd, 0x1, setFrame("record_enabled", "true"));
-		pump(session, params);
+		pump(web, session, params);
 		std::string reject = readText(client);
 		payload = readText(client);
 		check(reject == R"({"t":"reject","name":"record_enabled","reason":"no export path"})",
@@ -413,21 +411,21 @@ int main() {
 		      "14. the snapshot says Export is not running");
 		params.setString("record_path", "/tmp/vl-export.mov");
 		sendFrame(client.fd, 0x1, setFrame("record_enabled", "true"));
-		pump(session, params);
+		pump(web, session, params);
 		check(field(readText(client), "record_enabled") == "true",
 		      "14. with a path set, the snapshot says Export is running");
 
 		std::string big = setFrame("gain_mix", "0.25");
 		big.insert(big.size() - 1, std::string(10000, ' '));
 		sendFrame(client.fd, 0x1, big, 100);
-		pump(session, params);
+		pump(web, session, params);
 		check(field(readText(client), "gain_mix") == "0.25", "15. a set larger than one recv still parses");
 
 		sendFrame(client.fd, 0x1, R"({"t":"set","name":"bpm","value":})");
 		sendFrame(client.fd, 0x1, R"({"t":"set","name":"bpm")");
 		sendFrame(client.fd, 0x1, "not json");
 		sendFrame(client.fd, 0x1, setFrame("gain_mix", "0.5"));
-		std::vector<RemoteSet> sets = waitDrain(session);
+		std::vector<Inbound> sets = waitDrain(session);
 		check(sets.size() == 1 && sets[0].name == "gain_mix" && sets[0].raw == "0.5",
 		      "16. bad JSON is dropped, not queued");
 
@@ -487,24 +485,14 @@ int main() {
 		sendFrame(client.fd, 0x1, R"({"t":"release","name":"cue"})");
 		check(waitPads(session, false, false), "21. the other client's release drops its Cue pad");
 
-		params.setBool("cue_active", true);
-		params.setFloat("bpm", 128.0f);
 		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"gate"})");
 		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"cue"})");
 		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"erase"})");
-		check(waitPads(session, true, true, true), "22. the pads are down before panic");
-		sendFrame(client.fd, 0x1, R"({"t":"panic"})");
-		std::vector<RemoteSet> sets = waitDrain(session);
-		for (const RemoteSet& set : sets) {
-			if (set.kind != RemoteKind::Panic) continue;
-			params.setBool("arm_record", false);
-			params.setBool("cue_active", false);
-		}
-		p = session.pads();
-		check(sets.size() == 1 && sets[0].kind == RemoteKind::Panic, "22. panic drains as one Panic item");
-		check(!params.getBool("arm_record") && !params.getBool("cue_active") && !p.gate && !p.cue && !p.erase,
-		      "22. after panic the Latch, the latched Cue, and the pads are clear");
-		check(params.getFloat("bpm") == 128.0f, "22. panic leaves other params alone");
+		check(waitPads(session, true, true, true), "22. gate, Cue, and Erase can be down together");
+		sendFrame(client.fd, 0x1, R"({"t":"release","name":"gate"})");
+		sendFrame(client.fd, 0x1, R"({"t":"release","name":"cue"})");
+		sendFrame(client.fd, 0x1, R"({"t":"release","name":"erase"})");
+		check(waitPads(session, false, false, false), "22. releasing the three pads drops them");
 		sendFrame(client.fd, 0x1, R"({"t":"hold","name":"erase"})");
 		check(waitPads(session, false, false, true), "22. an Erase hold opens Erase and not the gate");
 		sendFrame(client.fd, 0x1, R"({"t":"release","name":"erase"})");
@@ -523,19 +511,10 @@ int main() {
 		publish(session, params);
 		check(field(readText(client), "video") == "\"\"", "23. video is empty when the Source is not a Video");
 
-		const std::vector<std::string> videos = {"/v/a.mov", "/v/b.mov", "/v/c.mov"};
 		params.setInt("source_kind", 1);
 		params.setString("file_path", "/v/a.mov");
-
-		sendFrame(client.fd, 0x1, R"({"t":"next"})");
-		sets = waitDrain(session);
-		check(sets.size() == 1 && sets[0].kind == RemoteKind::Next, "24. next drains as one Next item");
 		publish(session, params);
 		check(field(readText(client), "video") == "\"a.mov\"", "24. the client still reads a.mov while loading");
-
-		sendFrame(client.fd, 0x1, R"({"t":"prev"})");
-		sets = waitDrain(session);
-		check(sets.size() == 1 && sets[0].kind == RemoteKind::Prev, "24. prev drains as one Prev item");
 		params.setString("file_path", "/v/c.mov");
 		publish(session, params);
 		check(field(readText(client), "video") == "\"c.mov\"", "24. the client reads c.mov after the swap");
@@ -544,43 +523,6 @@ int main() {
 		payload = readText(client);
 		check(field(payload, "name") == "\"source\"" && field(payload, "reason") == "\"could not open\"",
 		      "25. the client reads \"reason\":\"could not open\"");
-
-		params.setInt("webcam_index", 2);
-		sendFrame(client.fd, 0x1, R"({"t":"webcam"})");
-		sets = waitDrain(session);
-		check(sets.size() == 1 && sets[0].kind == RemoteKind::Webcam, "26. webcam drains as one Webcam item");
-
-		params.setInt("source_kind", 1);
-		sendFrame(client.fd, 0x1, setFrame("source_kind", "3"));
-		sets = waitDrain(session);
-		FakeSource fake;
-		FolderList listed;
-		Instrument instrument(params, fake, listed, {});
-		std::string webcamReject = sets.size() == 1 ? applyRemote(instrument, sets[0]) : "none drained";
-		check(webcamReject.empty() && fake.webcam == params.getInt("webcam_index") && params.getInt("source_kind") == 1,
-		      "26. a set of source_kind 3 asks for a webcam load and leaves the param alone");
-		instrument.addFolder("/v", videos);
-
-		sendFrame(client.fd, 0x1, R"({"t":"load","name":"b.mov"})");
-		sets = waitDrain(session);
-		check(sets.size() == 1 && sets[0].kind == RemoteKind::Load && sets[0].name == "b.mov",
-		      "29. load drains as one Load item naming b.mov");
-		std::string loadReject = sets.size() == 1 ? applyRemote(instrument, sets[0]) : "none drained";
-		check(loadReject.empty() && fake.loaded == videos[1] && fake.dubbed.empty(),
-		      "29. a tap asks the Source to load b.mov and does not start a Commit");
-		sendFrame(client.fd, 0x1, R"({"t":"load","name":"a.mov"})");
-		sets = waitDrain(session);
-		loadReject = sets.size() == 1 ? applyRemote(instrument, sets[0]) : "none drained";
-		check(loadReject.empty() && fake.loaded == videos[0], "29. a second tap asks the Source to load a.mov");
-
-		sendFrame(client.fd, 0x1, R"({"t":"load","name":"zzz.mov"})");
-		sets = waitDrain(session);
-		loadReject = sets.size() == 1 ? applyRemote(instrument, sets[0]) : "none drained";
-		if (!loadReject.empty()) session.send(loadReject);
-		payload = readText(client);
-		check(loadReject != "none drained" && field(payload, "name") == "\"source\"" &&
-		          field(payload, "reason") == "\"no such video\"" && fake.loaded == videos[0],
-		      "30. a load of an unknown name is rejected as no such video and keeps the Video");
 
 		const std::string jpeg("\xff\xd8\0\r\n\r\nthumb\xff\xd9", 14);
 		session.setThumbs({{"a.mov", jpeg}, {"my clip.mov", "x"}});
@@ -596,25 +538,6 @@ int main() {
 		res = httpGet(port, "/thumb?name=my%20clip.mov&token=" + session.token());
 		check(res.rfind("HTTP/1.1 200", 0) == 0 && res.substr(res.find("\r\n\r\n") + 4) == "x",
 		      "31. a percent-encoded name finds its thumbnail");
-
-		sendFrame(client.fd, 0x1, R"({"t":"dub","name":"b.mov"})");
-		sets = waitDrain(session);
-		check(sets.size() == 1 && sets[0].kind == RemoteKind::Dub && sets[0].name == "b.mov",
-		      "43. dub drains as one Dub item naming b.mov");
-		check(sets.size() == 1 && applyRemote(instrument, sets[0]).empty() && fake.dubbed == videos[1],
-		      "43. a Dub asks the Source to Commit b.mov");
-		sendFrame(client.fd, 0x1, R"({"t":"page","names":["a.mov","b.mov"]})");
-		sets = waitDrain(session);
-		check(sets.size() == 1 && sets[0].kind == RemoteKind::Page && sets[0].names.size() == 2 &&
-		          sets[0].names[0] == "a.mov" && sets[0].names[1] == "b.mov",
-		      "44. page drains as one Page item naming the Videos on it");
-		check(sets.size() == 1 && applyRemote(instrument, sets[0]).empty() &&
-		          fake.page == std::vector<std::string>{videos[0], videos[1]},
-		      "44. a Page asks the Source to open those Videos by full path");
-		sendFrame(client.fd, 0x1, R"({"t":"page","names":[]})");
-		sets = waitDrain(session);
-		check(sets.size() == 1 && sets[0].kind == RemoteKind::Page && sets[0].names.empty(),
-		      "44. an empty page drains as a Page with no Videos");
 
 		close(client.fd);
 	}
@@ -665,51 +588,6 @@ int main() {
 		std::ofstream{a / "late.mov"};
 		check(folders.select(a.string()) && folders.current()->videos == aVideos,
 		      "36. selecting a folder gives the Videos captured at add, without a Video added later");
-
-		RemoteSession session(tokenFile, "127.0.0.1", 0);
-		session.setEnabled(true);
-		Ws client = openClient(session.port(), session.token());
-		ParamBus params;
-		params.setString("file_path", "/tmp/videos/clip.mov");
-		params.setInt("source_kind", 1);
-		params.setString("videos_folder", a.string());
-		FakeSource fake;
-		Instrument instrument(params, fake, folders, {});
-		std::vector<std::string> shown = aVideos;
-		auto onFolder = [&](const RemoteSet& set) {
-			std::string reject = applyRemote(instrument, set);
-			if (!reject.empty()) session.send(reject);
-			shown = folders.current() ? folders.current()->videos : std::vector<std::string>{};
-		};
-		sendFrame(client.fd, 0x1, R"({"t":"folder","name":")" + b.string() + "\"}");
-		std::vector<RemoteSet> sets = waitDrain(session);
-		check(sets.size() == 1 && sets[0].kind == RemoteKind::Folder && sets[0].name == b.string(),
-		      "37. folder drains as one Folder item naming the second path");
-		if (sets.size() == 1) onFolder(sets[0]);
-		check(shown == bVideos && params.getString("videos_folder") == b.string() &&
-		          params.getString("file_path") == "/tmp/videos/clip.mov" && params.getInt("source_kind") == 1,
-		      "37. the switch shows the second folder's Videos and keeps the Source");
-
-		std::vector<std::string> names;
-		for (const std::string& p : shown)
-			names.push_back(std::filesystem::path(p).filename());
-		session.send(remoteSnapshot(params, {}, names, folders.paths()));
-		std::string payload = readText(client);
-		check(payload.find("\"folders\":[\"" + a.string() + "\",\"" + b.string() + "\"]") != std::string::npos,
-		      "38. the snapshot lists both folders by full path");
-		check(payload.find(R"("videos":["y.avi","z.m4v"])") != std::string::npos &&
-		          field(payload, "videos_folder") == "\"" + b.string() + "\"",
-		      "38. the snapshot's Videos and Videos folder are the second folder's");
-
-		sendFrame(client.fd, 0x1, R"({"t":"folder","name":"/nowhere"})");
-		sets = waitDrain(session);
-		if (sets.size() == 1) onFolder(sets[0]);
-		payload = readText(client);
-		check(sets.size() == 1 && field(payload, "name") == "\"folder\"" &&
-		          field(payload, "reason") == "\"no such folder\"" && params.getString("videos_folder") == b.string() &&
-		          folders.current()->path == b.string() && shown == bVideos,
-		      "39. an unknown folder is rejected as no such folder and the Videos folder stays");
-		close(client.fd);
 	}
 	{
 		ParamBus params;
@@ -789,36 +667,10 @@ int main() {
 		check(session.url().find("?token=" + token) != std::string::npos, "42. the URL carries the token again");
 	}
 	{
-		auto log = dir / "web-use.jsonl";
 		RemoteSession session(tokenFile, "127.0.0.1", 0);
-		session.setUsageFile(log);
+		WebInterface web(session, {});
 		session.setEnabled(true);
 		Ws client = openClient(session.port(), session.token());
-		sendFrame(client.fd, 0x1, setFrame("fx_mode", "5"));
-		sendFrame(client.fd, 0x1, "{\"t\":\"use\",\"e\":\"set\",\"name\":\"fx_mode\",\"v\":5}");
-		sendFrame(client.fd, 0x1, "{\"t\":\"use\",\"e\":\"act\",\"name\":\"dub\",\"v\":\"clip.mp4\"}");
-		sendFrame(client.fd, 0x1, "{\"t\":\"use\",\"e\":\"hold\",\"name\":\"gate\"}");
-		sendFrame(client.fd, 0x1, "{\"t\":\"use\",\"e\":\"nope\",\"name\":\"x\"}");
-		sendFrame(client.fd, 0x1, "{\"t\":\"use\",\"name\":\"fx_mode\"}");
-		std::vector<RemoteSet> sets = waitDrain(session);
-		check(sets.size() == 1 && sets[0].kind == RemoteKind::Set && sets[0].name == "fx_mode",
-		      "43. a use does not enter the control queue");
-		std::string data;
-		for (int i = 0; i < 100; ++i) {
-			std::ifstream in(log);
-			data.assign(std::istreambuf_iterator<char>(in), {});
-			if (data.find("\"e\":\"hold\"") != std::string::npos && data.find("clip.mp4") != std::string::npos) break;
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
-		}
-		check(data.find("\"e\":\"set\"") != std::string::npos &&
-		          data.find("\"name\":\"fx_mode\"") != std::string::npos && data.find("\"v\":5") != std::string::npos,
-		      "43. a use gesture is appended to the usage file");
-		check(data.find("\"v\":\"clip.mp4\"") != std::string::npos, "43. a dub name is kept on the gesture");
-		int fxLines = 0;
-		for (size_t at = 0; (at = data.find("fx_mode", at)) != std::string::npos; at += 7)
-			++fxLines;
-		check(fxLines == 1, "43. a control set is not logged unless the page sends use");
-		check(data.find("nope") == std::string::npos, "43. an unknown gesture is not stored");
 
 		auto waitPic = [&](const std::string& want) {
 			std::string got;
@@ -844,7 +696,7 @@ int main() {
 		check(!session.takeDraw(extra), "46. the picture is taken once");
 		ParamBus params;
 		sendFrame(client.fd, 0x1, setFrame("gain_mix", "0.5"));
-		pump(session, params);
+		pump(web, session, params);
 		check(field(readText(client), "gain_mix") == "0.5", "46. a text frame still works after a Draw picture");
 		close(client.fd);
 	}
