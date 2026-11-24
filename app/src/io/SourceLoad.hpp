@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -14,6 +15,19 @@ struct LoadRequest {
 	float loopStart = 0;
 	float loopLength = 1;
 };
+
+// The part of a Video that plays, as fractions of its length.
+struct LoopRange {
+	float start;
+	float end;
+};
+
+// A start and a length as the controls hold them, clamped to the Video and kept at least 0.001 long.
+inline LoopRange loopRange(float start, float length) {
+	start = std::clamp(start, 0.0f, 1.0f);
+	length = std::clamp(length, 0.0f, 1.0f);
+	return {start, std::clamp(start + length, start + 0.001f, 1.0f)};
+}
 
 // One Source load at a time, and the Source it last committed. resolve runs on the loading thread; everything
 // else runs on the main thread.

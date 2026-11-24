@@ -1,14 +1,17 @@
 #pragma once
 
-#include "ui/ParamBus.hpp"
-#include "link/LinkBridge.hpp"
 #include "buffer/RingBuffer.hpp"
+#include "control/Instrument.hpp"
 #include "io/FolderList.hpp"
 #include "io/SourceController.hpp"
+#include "link/LinkBridge.hpp"
 #include "remote/RemoteSession.hpp"
+#include "ui/ParamBus.hpp"
 
+// The Mac controls. Reads values from params and asks the instrument for every change, so a control behaves
+// here as it does on the Web interface.
 class ControlsPanel {
 public:
-	void draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, float dt, float& outBpm, float& outQuantum,
-	          SourceController* source, const RemoteSession& remote, FolderList& folders);
+	void draw(const ParamBus& params, Instrument& instrument, const LinkBridge& link, const RingBuffer& ring, float dt,
+	          const SourceController& source, const RemoteSession& remote, const FolderList& folders);
 };

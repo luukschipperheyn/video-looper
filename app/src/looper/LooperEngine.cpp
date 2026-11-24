@@ -42,25 +42,12 @@ ReadState LooperEngine::advanceRead(float dtSeconds, float readFps) {
 	return {idx0, idx1, mixf, wraps};
 }
 
-void LooperEngine::presentNoFx(int viewportW, int viewportH, ShaderProgram& shaderBlendTwo, FullscreenQuad& quad,
-                               int idx0, int idx1, float mix, float gainMix) {
-	glViewport(0, 0, viewportW, viewportH);
-	shaderBlendTwo.use();
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, ring.textureAt(idx0));
-	shaderBlendTwo.setUniform("uTex0", 0);
-	glActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D, ring.textureAt(idx1));
-	shaderBlendTwo.setUniform("uTex1", 1);
-	shaderBlendTwo.setUniform("uMix", mix * gainMix);
-	shaderBlendTwo.setUniform("uMode", 0);
-	quad.draw();
-}
-
-void LooperEngine::writeAndSwap(int fbw, int fbh, ShaderProgram& shaderBlit, ShaderProgram& shaderBlendTwo,
-                                FullscreenQuad& quad, int idx0, int wraps, bool recordingActive, float writeOpacity,
-                                int recordBlendMode, bool fxCommit, unsigned int fxPrevTexture,
-                                unsigned int previewTexture) {
+void LooperEngine::writeAndSwap(ShaderProgram& shaderBlit, ShaderProgram& shaderBlendTwo, FullscreenQuad& quad,
+                                int idx0, int wraps, const LoopWrite& write) {
+	const int fbw = fbWidth;
+	const int fbh = fbHeight;
+	const bool recordingActive = write.overdub;
+	const bool fxCommit = write.replaceWith != 0;
 	int n = ring.size();
 	if (n <= 0) return;
 
@@ -92,7 +79,7 @@ void LooperEngine::writeAndSwap(int fbw, int fbh, ShaderProgram& shaderBlit, Sha
 		if (fxCommit) {
 			shaderBlit.use();
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, fxPrevTexture);
+			glBindTexture(GL_TEXTURE_2D, write.replaceWith);
 			shaderBlit.setUniform("uTex", 0);
 			quad.draw();
 		} else if (recordingActive) {
@@ -101,10 +88,10 @@ void LooperEngine::writeAndSwap(int fbw, int fbh, ShaderProgram& shaderBlit, Sha
 			glBindTexture(GL_TEXTURE_2D, ring.textureAt(wi));
 			shaderBlendTwo.setUniform("uTex0", 0);
 			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, previewTexture);
+			glBindTexture(GL_TEXTURE_2D, write.image);
 			shaderBlendTwo.setUniform("uTex1", 1);
-			shaderBlendTwo.setUniform("uMix", writeOpacity);
-			shaderBlendTwo.setUniform("uMode", recordBlendMode);
+			shaderBlendTwo.setUniform("uMix", write.opacity);
+			shaderBlendTwo.setUniform("uMode", write.blendMode);
 			quad.draw();
 		} else {
 			shaderBlit.use();

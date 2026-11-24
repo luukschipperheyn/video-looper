@@ -5,8 +5,9 @@
 
 #include <cmath>
 
-FxPipeline::FxPipeline() : w(0), h(0), wholeTex(0), wholeCenterX(0), wholeCenterY(0), wholeHalfX(0), wholeHalfY(0),
-                             wholeRot(0), postFront(0) {
+FxPipeline::FxPipeline()
+	: w(0), h(0), wholeTex(0), wholeCenterX(0), wholeCenterY(0), wholeHalfX(0), wholeHalfY(0), wholeRot(0),
+	  postFront(0) {
 	postTex[0] = 0;
 	postTex[1] = 0;
 	postFbo[0] = 0;
@@ -17,20 +18,17 @@ FxPipeline::~FxPipeline() {
 	destroy();
 }
 
-void FxPipeline::init(int width, int height, const std::string& vertexPath, const std::string& feedbackFrag,
-                      const std::string& feedbackDiffFrag, const std::string& feedbackChromaFrag,
-                      const std::string& feedbackKaleidoFrag, const std::string& blurXFrag,
-                      const std::string& blurYFrag, const std::string& repeatFrag) {
+void FxPipeline::init(int width, int height, const std::string& shaderDir) {
 	w = width;
 	h = height;
-	vsPath = vertexPath;
-	feedbackFragPath = feedbackFrag;
-	feedbackDiffFragPath = feedbackDiffFrag;
-	feedbackChromaFragPath = feedbackChromaFrag;
-	feedbackKaleidoFragPath = feedbackKaleidoFrag;
-	blurXFragPath = blurXFrag;
-	blurYFragPath = blurYFrag;
-	repeatFragPath = repeatFrag;
+	vsPath = shaderDir + "/fullscreen.vert";
+	feedbackFragPath = shaderDir + "/feedback.frag";
+	feedbackDiffFragPath = shaderDir + "/feedback_diff.frag";
+	feedbackChromaFragPath = shaderDir + "/feedback_chroma.frag";
+	feedbackKaleidoFragPath = shaderDir + "/feedback_kaleido.frag";
+	blurXFragPath = shaderDir + "/fx_blur_x.frag";
+	blurYFragPath = shaderDir + "/fx_blur_y.frag";
+	repeatFragPath = shaderDir + "/fx_repeat.frag";
 
 	shaderFeedback.loadFromFiles(vsPath, feedbackFragPath);
 	shaderFeedbackDiff.loadFromFiles(vsPath, feedbackDiffFragPath);
@@ -99,8 +97,14 @@ void FxPipeline::setWholeStamp(GLuint tex, float centerX, float centerY, float h
 	wholeRot = rot;
 }
 
-GLuint FxPipeline::process(int viewportW, int viewportH, GLuint ringTex0, GLuint ringTex1, float baseMix, int fxMode,
-                           float p1, float p2, float p3, int repeatBlend, FullscreenQuad& quad) {
+GLuint FxPipeline::process(GLuint ringTex0, GLuint ringTex1, float baseMix, const FxSettings& fx,
+                           FullscreenQuad& quad) {
+	const int viewportW = w;
+	const int viewportH = h;
+	const int fxMode = fx.mode;
+	const float p1 = fx.p1;
+	const float p2 = fx.p2;
+	const float p3 = fx.p3;
 	int postWrite = 1 - postFront;
 	glBindFramebuffer(GL_FRAMEBUFFER, postFbo[postWrite]);
 	glViewport(0, 0, viewportW, viewportH);
@@ -111,8 +115,7 @@ GLuint FxPipeline::process(int viewportW, int viewportH, GLuint ringTex0, GLuint
 		bool grid = fxMode == kGridFxMode;
 		RepeatStep step = repeatStep(p1, p2, fw, fh);
 		RepeatStep across = grid ? repeatStep(p1, p2 + 0.25f, fw, fh) : RepeatStep{0.0f, 0.0f};
-		int copies = grid ? gridCopies(static_cast<int>(std::lround(p3)))
-		                  : repeatCopies(static_cast<int>(std::lround(p3)));
+		int copies = grid ? gridCopies(fx.count) : repeatCopies(fx.count);
 		shaderRepeat.use();
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, ringTex0);
@@ -124,7 +127,7 @@ GLuint FxPipeline::process(int viewportW, int viewportH, GLuint ringTex0, GLuint
 		shaderRepeat.setUniform("uStep", step.x, step.y);
 		shaderRepeat.setUniform("uStep2", across.x, across.y);
 		shaderRepeat.setUniform("uCount", static_cast<float>(copies));
-		shaderRepeat.setUniform("uBlend", repeatBlend);
+		shaderRepeat.setUniform("uBlend", fx.repeatBlend);
 		shaderRepeat.setUniform("uGrid", grid ? 1 : 0);
 		bool whole = wholeTex != 0;
 		glActiveTexture(GL_TEXTURE2);

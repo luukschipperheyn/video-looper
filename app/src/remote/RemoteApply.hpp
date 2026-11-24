@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+class Instrument;
 class ParamBus;
 
 enum class RemoteKind { Set, Panic, Prev, Next, Webcam, Load, Folder, Dub, Page };
@@ -17,14 +18,6 @@ struct RemoteSet {
 	std::vector<std::string> names;
 };
 
-struct ApplyResult {
-	bool reject;
-	std::string reason;
-	bool tempoChanged;
-	float bpm;
-	bool startWebcam = false;
-};
-
 // This frame's loop position as a fraction of the Loop, the envelope, and the combined holds.
 struct RemoteLive {
 	float loop = 0;
@@ -35,28 +28,11 @@ struct RemoteLive {
 	bool erase = false;
 };
 
-struct GateInputs {
-	bool latch;
-	bool space;
-	bool pad;
-	bool cueLatch;
-	bool cueKey;
-	bool cuePad;
-};
-
-struct GateState {
-	bool gate;
-	bool cue;
-};
-
-// Clamps and writes a writable param. Never calls Link; the caller hands bpm to Link when tempoChanged.
-// source_kind 3 (webcam) is not written; startWebcam asks the caller to load the webcam instead.
-// source_kind 4 (Draw) is written like Shader and Black.
-ApplyResult applyRemoteSet(ParamBus& params, const RemoteSet& set);
-GateState combineHolds(GateInputs in);
-// Black stays latched through an Erase release tail. A Source overdub or Cue takes the image back
-// immediately. envPhase 0, or a disabled envelope, drops the latch once Erase is up.
-bool overdubIsBlack(bool eraseHeld, bool sourceGate, bool cueActive, bool envEnabled, int envPhase, bool& latched);
+// Carries out one message from the Web interface. A Set is refused as "read-only" when the Web interface may
+// not write that control, and as "bad value" when the value does not parse. Returns the reject frame to send
+// back, or empty when the message was carried out. source_kind Draw is written like Shader and Black; Webcam
+// asks for a load and is not written.
+std::string applyRemote(Instrument& instrument, const RemoteSet& set);
 // videos are the filenames of the Videos in the current Videos folder; folders are the Folder list's full paths.
 // catalog false omits those lists, for the per-frame update. A new client still gets them from the stored snapshot.
 std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live = {},

@@ -1,6 +1,7 @@
 #include "remote/RemoteApply.hpp"
 
-#include "remote/ControlSchema.hpp"
+#include "control/ControlTable.hpp"
+#include "control/Instrument.hpp"
 #include "ui/ParamBus.hpp"
 
 #include <algorithm>
@@ -44,57 +45,58 @@ bool parseNumber(const std::string& raw, double& out) {
 	return end == raw.c_str() + raw.size() && std::isfinite(out);
 }
 
-ApplyResult rejected(const char* reason) {
-	return {true, reason, false, 0.0f};
+std::string rejectOf(const Outcome& outcome) {
+	return outcome.ok ? std::string() : rejectFrame(outcome.topic, outcome.reason);
+}
+
+std::string applySet(Instrument& instrument, const RemoteSet& set) {
+	const Control* control = findControl(set.name);
+	if (!control || control->web != Web::Write) return rejectFrame(set.name, "read-only");
+	if (control->type == ControlType::Bool) {
+		if (set.raw != "true" && set.raw != "false") return rejectFrame(set.name, "bad value");
+		return rejectOf(instrument.setSwitch(set.name, set.raw == "true"));
+	}
+	double n;
+	if (!parseNumber(set.raw, n)) return rejectFrame(set.name, "bad value");
+	return rejectOf(instrument.setNumber(set.name, n));
 }
 
 } // namespace
 
-ApplyResult applyRemoteSet(ParamBus& params, const RemoteSet& set) {
-	const Control* control = findControl(set.name);
-	if (!control || !control->writable) return rejected("read-only");
-	if (control->type == ControlType::Bool) {
-		if (set.raw != "true" && set.raw != "false") return rejected("bad value");
-		bool on = set.raw == "true";
-		if (set.name == "record_enabled" && on && params.getString("record_path").empty())
-			return rejected("no export path");
-		params.setBool(set.name, on);
-		if (set.name == "video_aspect" && on) params.setFloat("video_sy", params.getFloat("video_sx", 1.0f));
-		return {};
+std::string applyRemote(Instrument& instrument, const RemoteSet& set) {
+	switch (set.kind) {
+	case RemoteKind::Set:
+		return applySet(instrument, set);
+	case RemoteKind::Panic:
+		instrument.panic();
+		break;
+	case RemoteKind::Prev:
+		instrument.prevVideo();
+		break;
+	case RemoteKind::Next:
+		instrument.nextVideo();
+		break;
+	case RemoteKind::Webcam:
+		instrument.chooseWebcam();
+		break;
+	case RemoteKind::Load:
+		return rejectOf(instrument.loadVideoNamed(set.name));
+	case RemoteKind::Dub:
+		return rejectOf(instrument.dubVideoNamed(set.name));
+	case RemoteKind::Page:
+		instrument.primePage(set.names);
+		break;
+	case RemoteKind::Folder:
+		return rejectOf(instrument.chooseFolder(set.name));
 	}
-	double n;
-	if (!parseNumber(set.raw, n)) return rejected("bad value");
-	n = std::clamp(n, double(control->min), double(control->max));
-	if (control->type == ControlType::Int) {
-		int v = int(std::lround(n));
-		if (set.name == "source_kind" && v == 3) return {false, {}, false, 0.0f, true};
-		params.setInt(set.name, v);
-		return {};
-	}
-	float v = float(n);
-	bool tempoChanged = set.name == "bpm" && v != params.getFloat("bpm", 120.0f);
-	params.setFloat(set.name, v);
-	return {false, {}, tempoChanged, v};
-}
-
-GateState combineHolds(GateInputs in) {
-	return {in.latch || in.space || in.pad, in.cueLatch || in.cueKey || in.cuePad};
-}
-
-bool overdubIsBlack(bool eraseHeld, bool sourceGate, bool cueActive, bool envEnabled, int envPhase, bool& latched) {
-	if (eraseHeld)
-		latched = true;
-	else if (sourceGate || cueActive)
-		latched = false;
-	else if (!envEnabled || envPhase == 0)
-		latched = false;
-	return latched;
+	return {};
 }
 
 std::string remoteSnapshot(const ParamBus& params, const RemoteLive& live, const std::vector<std::string>& videos,
                            const std::vector<std::string>& folders, bool catalog, const std::string& sourceError) {
 	std::string out = "{\"t\":\"snapshot\"";
 	for (const Control& c : kControls) {
+		if (c.web == Web::Hidden) continue;
 		out += ",\"";
 		out += c.name;
 		out += "\":";

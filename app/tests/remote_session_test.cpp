@@ -1,6 +1,7 @@
 #include "io/FolderList.hpp"
 #include "io/SourceLoad.hpp"
-#include "remote/ControlSchema.hpp"
+#include "control/ControlTable.hpp"
+#include "control/Instrument.hpp"
 #include "remote/RemoteApply.hpp"
 #include "remote/RemoteSession.hpp"
 #include "ui/ParamBus.hpp"
@@ -178,14 +179,35 @@ static void publish(RemoteSession& session, const ParamBus& params, const Remote
 	session.send(snapshot);
 }
 
-// One App frame: apply what the page sent, send rejects and the snapshot. Returns the tempo App would hand
-// to Link, or -1 when it would not touch Link.
-static float pump(RemoteSession& session, ParamBus& params, bool linkOn = false) {
+// Stands in for SourceController: remembers what the instrument asked of the Source.
+struct FakeSource : SourcePort {
+	std::vector<std::string> list;
+	std::string loaded;
+	std::string dubbed;
+	std::vector<std::string> page;
+	int webcam = -1;
+	void loadVideo(const std::string& path, float, float) override { loaded = path; }
+	void queueDub(const std::string& path, float, float) override { dubbed = path; }
+	void primePage(const std::vector<std::string>& paths, float, float) override { page = paths; }
+	void loadWebcam(int index) override { webcam = index; }
+	void showFolder(const std::string& path, const std::vector<std::string>& videos, ParamBus& params) override {
+		list = videos;
+		params.setString("videos_folder", path);
+		params.setInt("videos_count", int(videos.size()));
+	}
+	std::vector<std::string> videos() const override { return list; }
+};
+
+// One App frame: carry out what the page sent the way App does, send rejects and the snapshot. Returns the
+// tempo handed to Link, or -1 when Link was not touched.
+static float pump(RemoteSession& session, ParamBus& params) {
 	float linkTempo = -1.0f;
+	FakeSource source;
+	FolderList folders;
+	Instrument instrument(params, source, folders, [&](float bpm) { linkTempo = bpm; });
 	for (const RemoteSet& set : waitDrain(session)) {
-		ApplyResult result = applyRemoteSet(params, set);
-		if (result.reject) session.send(rejectFrame(set.name, result.reason));
-		if (result.tempoChanged && linkOn) linkTempo = result.bpm;
+		std::string reject = applyRemote(instrument, set);
+		if (!reject.empty()) session.send(reject);
 	}
 	publish(session, params);
 	return linkTempo;
@@ -250,7 +272,7 @@ int main() {
 		res = httpGet(port, "/?token=" + token);
 		check(res.rfind("HTTP/1.1 200", 0) == 0, "3. GET /?token returns 200");
 		check(res.find("id=\"two-hands\"") != std::string::npos, "3. page body contains id=\"two-hands\"");
-		const std::string bpmSchema = R"("bpm":{"type":"float","min":40,"max":240,"writable":true})";
+		const std::string bpmSchema = R"("bpm":{"type":"float","min":40,"max":240,"def":120,"writable":true})";
 		check(res.find("/*CONTROL_SCHEMA*/") == std::string::npos && res.find(bpmSchema) != std::string::npos,
 		      "3. page carries the control schema");
 		check(res.find("relativeDrag") != std::string::npos, "3. page carries the gesture module");
@@ -293,9 +315,8 @@ int main() {
 		payload = readText(client);
 		check(got && isSnapshot(payload) && field(payload, "bpm") == "120",
 		      "8. a new client first reads the published snapshot");
-		check(field(payload, "commit_active").empty() && field(payload, "commit_random").empty() &&
-		          field(payload, "commit_current_file").empty(),
-		      "8. Commit keys are absent from the snapshot");
+		check(field(payload, "ipad_token").empty() && field(payload, "silence_ms").empty(),
+		      "8. controls hidden from the Web interface are absent from the snapshot");
 
 		sendFrame(client.fd, 0x9, "hi");
 		got = readFrame(client, opcode, payload);
@@ -303,7 +324,7 @@ int main() {
 
 		for (const Control& c : kControls) {
 			std::string name = c.name;
-			if (!c.writable || name == "record_enabled") continue;
+			if (c.web != Web::Write || name == "record_enabled" || name == "source_kind") continue;
 			double mid = c.min + 0.63 * (c.max - c.min);
 			std::string sent;
 			if (c.type == ControlType::Bool) {
@@ -353,7 +374,8 @@ int main() {
 		const std::pair<std::string, std::string> readOnly[] = {{"record_path", "\"/tmp/evil.mov\""},
 		                                                        {"quantum", "8"},
 		                                                        {"link_enabled", "true"},
-		                                                        {"commit_active", "true"}};
+		                                                        {"ipad_token", "false"},
+		                                                        {"no_such_control", "true"}};
 		for (const auto& [name, raw] : readOnly) {
 			sendFrame(client.fd, 0x1, setFrame(name, raw));
 			pump(session, params);
@@ -364,18 +386,23 @@ int main() {
 			      ("11. " + name + " is rejected as read-only").c_str());
 		}
 		check(params.getString("record_path").empty() && params.getFloat("quantum") == 4.0f &&
-		          !params.getBool("link_enabled") && !params.getBool("commit_active"),
+		          !params.getBool("link_enabled") && params.getBool("ipad_token"),
 		      "11. read-only sets leave ParamBus unchanged");
-		check(field(payload, "commit_active").empty(), "11. commit_active stays absent from the snapshot");
 
 		params.setFloat("bpm", 133.5f);
 		publish(session, params);
 		check(field(readText(client), "bpm") == "133.5", "12. a bpm change on the Mac reaches the page");
 
 		sendFrame(client.fd, 0x1, setFrame("bpm", "150"));
-		float linkTempo = pump(session, params, true);
-		check(linkTempo == 150.0f && field(readText(client), "bpm") == "150",
-		      "13. with Link on, setting bpm hands 150 to Link");
+		float linkTempo = pump(session, params);
+		check(linkTempo == -1.0f && field(readText(client), "bpm") == "150",
+		      "13. with Link off, setting bpm leaves Link alone");
+		params.setBool("link_enabled", true);
+		sendFrame(client.fd, 0x1, setFrame("bpm", "151"));
+		linkTempo = pump(session, params);
+		check(linkTempo == 151.0f && field(readText(client), "bpm") == "151",
+		      "13. with Link on, setting bpm hands 151 to Link");
+		params.setBool("link_enabled", false);
 
 		sendFrame(client.fd, 0x1, setFrame("record_enabled", "true"));
 		pump(session, params);
@@ -413,29 +440,6 @@ int main() {
 		close(client.fd);
 	}
 
-	check(combineHolds({false, false, true, false, false, false}).gate, "18. a pad alone opens the gate");
-	check(combineHolds({false, true, true, false, false, false}).gate &&
-	          combineHolds({false, true, false, false, false, false}).gate,
-	      "18. Space plus a pad stays open when the pad releases");
-	check(!combineHolds({false, false, false, false, false, false}).gate, "18. both released closes the gate");
-	check(combineHolds({true, false, false, false, false, false}).gate, "18. Latch keeps the gate open with no pad");
-	check(combineHolds({false, false, false, false, false, true}).cue &&
-	          !combineHolds({false, false, false, false, false, true}).gate,
-	      "18. a Cue pad opens Cue and not the gate");
-	{
-		bool latched = false;
-		check(overdubIsBlack(true, false, false, true, 1, latched) && latched, "18. Erase writes black");
-		check(overdubIsBlack(false, false, false, true, 4, latched), "18. the release tail stays black");
-		check(!overdubIsBlack(false, false, false, true, 0, latched) && !latched, "18. idle drops the black image");
-		check(overdubIsBlack(true, true, false, true, 3, latched), "18. Erase wins over a Source overdub");
-		check(!overdubIsBlack(false, true, false, true, 3, latched) && !latched,
-		      "18. a Source overdub takes the image back");
-		latched = true;
-		check(!overdubIsBlack(false, false, true, true, 4, latched) && !latched, "18. Cue takes the image back");
-		latched = true;
-		check(!overdubIsBlack(false, false, false, false, 4, latched) && !latched,
-		      "18. a disabled envelope has no black tail");
-	}
 	{
 		RemoteSession session(tokenFile, "127.0.0.1", 0);
 		session.setClock(fakeClock);
@@ -593,18 +597,23 @@ int main() {
 		params.setInt("source_kind", 1);
 		sendFrame(client.fd, 0x1, setFrame("source_kind", "3"));
 		sets = waitDrain(session);
-		ApplyResult result = sets.size() == 1 ? applyRemoteSet(params, sets[0]) : ApplyResult{true, {}, false, 0.0f};
-		check(!result.reject && result.startWebcam && params.getInt("source_kind") == 1,
+		FakeSource fake;
+		fake.list = videos;
+		FolderList noFolders;
+		Instrument instrument(params, fake, noFolders, {});
+		std::string webcamReject = sets.size() == 1 ? applyRemote(instrument, sets[0]) : "none drained";
+		check(webcamReject.empty() && fake.webcam == params.getInt("webcam_index") && params.getInt("source_kind") == 1,
 		      "26. a set of source_kind 3 asks for a webcam load and leaves the param alone");
 
-		// App's handling of a Load: look the name up in the folder, reject an unknown one, otherwise start a load.
+		// A Load goes through the instrument; the loader then starts what the instrument asked the Source for.
 		auto onLoad = [&](const RemoteSet& set) {
-			std::string hit = videoByName(videos, set.name);
-			if (hit.empty()) {
-				session.send(rejectFrame("source", "no such video"));
+			fake.loaded.clear();
+			std::string reject = applyRemote(instrument, set);
+			if (!reject.empty()) {
+				session.send(reject);
 				return LoadRequest{0, false, {}, 0};
 			}
-			return load.requestVideo(hit);
+			return load.requestVideo(fake.loaded);
 		};
 		const std::string committed = load.committedPath();
 		sendFrame(client.fd, 0x1, R"({"t":"load","name":"b.mov"})");
@@ -613,7 +622,7 @@ int main() {
 		      "29. load drains as one Load item naming b.mov");
 		LoadRequest toB = sets.size() == 1 ? onLoad(sets[0]) : LoadRequest{0, false, {}, 0};
 		check(toB.path == videos[1] && load.inflight() == toB.id && load.committedPath() == committed &&
-		          load.committedWebcam() && !params.getBool("commit_active"),
+		          load.committedWebcam() && fake.dubbed.empty(),
 		      "29. a tap starts a load of b.mov, keeps the committed Source, and does not start a Commit");
 		sendFrame(client.fd, 0x1, R"({"t":"load","name":"a.mov"})");
 		sets = waitDrain(session);
@@ -623,8 +632,7 @@ int main() {
 		check(!swapIn() && load.busy() && load.committedPath() == committed,
 		      "29. resolving the first tap swaps nothing");
 		load.resolve(toA.id, true, {});
-		check(swapIn() && !isWebcam && path == videos[0] && load.committedPath() == videos[0] &&
-		          !params.getBool("commit_active"),
+		check(swapIn() && !isWebcam && path == videos[0] && load.committedPath() == videos[0] && fake.dubbed.empty(),
 		      "29. resolving the second tap swaps a.mov in");
 
 		sendFrame(client.fd, 0x1, R"({"t":"load","name":"zzz.mov"})");
@@ -654,11 +662,16 @@ int main() {
 		sets = waitDrain(session);
 		check(sets.size() == 1 && sets[0].kind == RemoteKind::Dub && sets[0].name == "b.mov",
 		      "43. dub drains as one Dub item naming b.mov");
+		check(sets.size() == 1 && applyRemote(instrument, sets[0]).empty() && fake.dubbed == videos[1],
+		      "43. a Dub asks the Source to Commit b.mov");
 		sendFrame(client.fd, 0x1, R"({"t":"page","names":["a.mov","b.mov"]})");
 		sets = waitDrain(session);
 		check(sets.size() == 1 && sets[0].kind == RemoteKind::Page && sets[0].names.size() == 2 &&
 		          sets[0].names[0] == "a.mov" && sets[0].names[1] == "b.mov",
 		      "44. page drains as one Page item naming the Videos on it");
+		check(sets.size() == 1 && applyRemote(instrument, sets[0]).empty() &&
+		          fake.page == std::vector<std::string>{videos[0], videos[1]},
+		      "44. a Page asks the Source to open those Videos by full path");
 		sendFrame(client.fd, 0x1, R"({"t":"page","names":[]})");
 		sets = waitDrain(session);
 		check(sets.size() == 1 && sets[0].kind == RemoteKind::Page && sets[0].names.empty(),
@@ -740,17 +753,14 @@ int main() {
 		params.setString("file_path", "/tmp/videos/clip.mov");
 		params.setInt("source_kind", 1);
 		params.setString("videos_folder", a.string());
-		// Stands in for SourceController::videos(). App's handling of a Folder: show a listed folder's stored
-		// Videos the way SourceController::showFolder does, or reject an unknown path.
+		FakeSource fake;
+		fake.list = aVideos;
+		Instrument instrument(params, fake, folders, {});
 		std::vector<std::string> shown = aVideos;
 		auto onFolder = [&](const RemoteSet& set) {
-			if (!folders.select(set.name)) {
-				session.send(rejectFrame("folder", "no such folder"));
-				return;
-			}
-			shown = folders.current()->videos;
-			params.setString("videos_folder", set.name);
-			params.setInt("videos_count", int(shown.size()));
+			std::string reject = applyRemote(instrument, set);
+			if (!reject.empty()) session.send(reject);
+			shown = fake.list;
 		};
 		sendFrame(client.fd, 0x1, R"({"t":"folder","name":")" + b.string() + "\"}");
 		std::vector<RemoteSet> sets = waitDrain(session);
