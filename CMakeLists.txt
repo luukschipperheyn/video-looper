@@ -124,6 +124,16 @@ add_executable(instrument_test
 )
 target_include_directories(instrument_test PRIVATE app/src)
 
+add_executable(source_controller_test
+  app/tests/source_controller_test.cpp
+  app/src/io/SourceController.cpp
+  app/src/io/PageCache.cpp
+  app/src/io/SourceLoad.cpp
+  app/src/io/FolderList.cpp
+  app/src/ui/ParamBus.cpp
+)
+target_include_directories(source_controller_test PRIVATE app/src)
+
 add_custom_target(gestures_test
   COMMAND node ${CMAKE_SOURCE_DIR}/app/tests/gestures_test.js
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}

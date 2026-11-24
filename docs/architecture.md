@@ -45,12 +45,12 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/looper/OverdubGate.*` | Decides per frame whether the Loop is written, with which image, blend mode and opacity: holds, ADSR, release tail, Erase, Cue, Commit bypass. Pure |
 | `app/src/buffer/RingBuffer.*` | Dual-bank GPU textures/FBOs (`frameCount` frames × 2 banks); front = read, back = write |
 | `app/src/looper/LooperEngine.*` | Read-head advance, multi-slot write/copy to back bank, bank swap on wrap, playhead overlay |
-| `app/src/gl/Compositor.*` | Draws the framed Source, the Loop as read, and the Audition; owns the Audition targets and the export readback |
-| `app/src/io/SourceController.*` | The `SourcePort` adapter: Source kind routing, preview tex/FBO, folder scan, loads, **Commit** state |
+| `app/src/gl/Compositor.*` | Draws the framed Source, the Loop as read, and the Audition; owns the Source and Audition targets, the picture texture (`PicturePort`), and the export readback |
+| `app/src/io/SourceController.*` | The life of the Source: ask for a Video or webcam, open it off the main thread, swap it in with its first frame, **Commit** a Video until it ends. No GL or AVFoundation; decoders come from a `DecoderFactory` and pictures go to a `PicturePort`. Tested with fake decoders in `app/tests/source_controller_test.cpp` |
 | `app/src/io/PageCache.*` | Opens the Videos on the Web interface's current page ahead of a tap |
-| `app/src/io/AVFFileSource.*` / `AVFWebcamSource.*` | File decode / camera → GL texture |
+| `app/src/io/AVFFileSource.*` / `AVFWebcamSource.*` | The AVFoundation `VideoDecoder` / `CameraDecoder`: file decode / camera → GL texture. `AVFDecoders.hpp` is their factory |
 | `app/src/io/AVFRecorder.*` | BGRA frames → `.mov` |
-| `app/src/io/VideoSource.hpp` | `SourceKind { Shader, File, Black, Webcam }`, `IVideoSource` |
+| `app/src/io/VideoSource.hpp` | `SourceKind { Shader, File, Black, Webcam }`; the ports `VideoDecoder`, `CameraDecoder`, `DecoderFactory`, and `PicturePort` |
 | `app/src/gl/FxPipeline.*` | Feedback / Diff / Chroma / Kaleido / Blur / Repeat / Grid; one pipeline on the Program, one on the Source; ping-pong targets; hot-reload |
 | `app/src/gl/Shader.*`, `FullscreenQuad.*`, `util/GlUtils.hpp` | GL helpers |
 | `app/src/remote/RemoteSession.*` | HTTP + WebSocket server for the Web interface, holds, thumbnails |
@@ -75,7 +75,7 @@ Order inside `App::run`’s `while`, each frame:
 4. **Resize** — if framebuffer size changes: rebuild ring (120 frames), source, FX, looper, compositor targets; **stop** disk recorder if active  
 5. **Hot-reload** shaders / FX  
 6. **Disk record edge** — start/stop `AVFRecorder` from `record_enabled` + `record_path`  
-7. **`source.tickAndGrab`** — webcam/file upload; the `Compositor` draws Shader, Black, or the placed picture into the Source's preview FBO  
+7. **`source.tick`** — webcam/file upload into the Compositor's picture texture; the `Compositor` then draws Shader, Black, or the placed picture as the framed Source  
 8. **Clock / Link** — tempo → `readFps` (optionally coupled to BPM)  
 9. **`looper.advanceRead`** — fractional read head → `idx0/idx1/mix/wraps`  
 10. **Web interface messages, then the Overdub gate** — each drained message goes through `applyRemote` to the `Instrument`; `OverdubGate::step` takes the holds and returns this frame's write: overdub or not, opacity, image, blend mode, Cue  

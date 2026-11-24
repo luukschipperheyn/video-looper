@@ -1,35 +1,19 @@
 #include "io/SourceController.hpp"
+
 #include "io/FolderList.hpp"
 
-#include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <utility>
 
-#include "util/GlUtils.hpp"
-
-SourceController::SourceController()
-	: w(0), h(0), previewTex(0), previewFbo(0), frameTex(0), frameW(0), frameH(0), webcamActive(false),
-	  fileActive(false), seenKind(-1), seenWebcamIndex(-1), spareW(0), spareH(0), job{0, false, {}, 0}, retire(false),
-	  quit(false) {
+SourceController::SourceController(PicturePort& picturePort, DecoderFactory factory)
+	: picture(picturePort), decoders(std::move(factory)), webcam(decoders.camera()), fileSrc(decoders.video()),
+	  spareWebcam(decoders.camera()), spareFile(decoders.video()), pages(decoders.video) {
 	worker = std::thread(&SourceController::runLoads, this);
 }
 
 SourceController::~SourceController() {
 	shutdown();
-}
-
-void SourceController::init(int width, int height) {
-	w = width;
-	h = height;
-	allocatePreview(w, h);
-}
-
-void SourceController::resize(int width, int height) {
-	if (width == w && height == h) return;
-	w = width;
-	h = height;
-	destroyPreview();
-	allocatePreview(w, h);
 }
 
 void SourceController::shutdown() {
@@ -43,26 +27,22 @@ void SourceController::shutdown() {
 		worker.join();
 	}
 	if (webcamActive) {
-		webcam.stop();
+		webcam->stop();
 		webcamActive = false;
 	}
 	if (fileActive) {
-		fileSrc.stop();
+		fileSrc->stop();
 		fileActive = false;
-	}
-	destroyPreview();
-	if (frameTex) {
-		glDeleteTextures(1, &frameTex);
-		frameTex = 0;
 	}
 	frameW = 0;
 	frameH = 0;
 }
 
-bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus& params) {
+bool SourceController::tick(double dtSeconds, ParamBus& params) {
 	bool presented = applyRequest(params);
 	int srcKind = params.getInt("source_kind");
-	bool justChoseStill = stillSourceCancelsLoad(srcKind, seenKind);
+	// The first tick has no earlier Source kind, so it is not a choice.
+	bool justChoseStill = seenKind >= 0 && stillSourceCancelsLoad(srcKind, seenKind);
 	if (justChoseStill && load.busy()) load.cancel();
 	swappedLoad = presented || (!justChoseStill && swapInLoaded(params));
 	if (!presented && swappedLoad && !dubOnSwap.empty()) {
@@ -70,58 +50,54 @@ bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus
 			beginCommit(params, dubOnSwap);
 		dubOnSwap.clear();
 	}
-	bool updatedPreviewTex = swappedLoad;
+	bool newPicture = swappedLoad;
 	ensureSource(params);
 
 	if (srcKind == (int)SourceKind::Webcam) {
-		ensureFrameTexture();
 		int sw = 0, sh = 0;
-		if (webcam.grab(frameTex, sw, sh)) {
+		if (webcam->grab(picture.pictureTexture(), sw, sh)) {
 			frameW = sw;
 			frameH = sh;
-			updatedPreviewTex = true;
+			newPicture = true;
 		}
 	} else if (srcKind == (int)SourceKind::File) {
-		fileSrc.setLoop(params.getBool("file_loop"));
-		fileSrc.setPaused(params.getBool("file_paused"));
+		fileSrc->setLoop(params.getBool("file_loop"));
+		fileSrc->setPaused(params.getBool("file_paused"));
 		LoopRange range = loopRange(params.getFloat("file_loop_start"), params.getFloat("file_loop_length"));
-		fileSrc.setLoopRange(range.start, range.end);
-		fileSrc.tick(dtSeconds);
-		ensureFrameTexture();
+		fileSrc->setLoopRange(range.start, range.end);
+		fileSrc->tick(dtSeconds);
 		int sw = 0, sh = 0;
-		if (fileSrc.grab(frameTex, sw, sh)) {
+		if (fileSrc->grab(picture.pictureTexture(), sw, sh)) {
 			frameW = sw;
 			frameH = sh;
-			updatedPreviewTex = true;
+			newPicture = true;
 		}
 	}
 
 	maybeRescanFolder(params);
-	updateCommitProgress(updatedPreviewTex, params);
 
-	return updatedPreviewTex;
+	// A Commit ends on a tick with no new picture once the Video is not looping and its reader has run out.
+	if (commitOn && !newPicture) {
+		bool readerEnded = !fileActive || fileSrc->ended();
+		if (commitReachedEnd(false, params.getBool("file_loop"), readerEnded)) cancelCommit(params);
+	}
+	return newPicture;
 }
 
 void SourceController::restartFileAtLoopStart() {
-	if (fileActive) {
-		fileSrc.restartAtLoopStart();
-	}
+	if (fileActive) fileSrc->restartAtLoopStart();
 }
 
 void SourceController::loadVideo(const std::string& path, float loopStart, float loopLength) {
-	queueVideo(path, loopStart, loopLength, false);
+	pendingVideo = {true, false, path, loopStart, loopLength};
 }
 
 void SourceController::queueDub(const std::string& path, float loopStart, float loopLength) {
-	queueVideo(path, loopStart, loopLength, true);
+	pendingVideo = {true, true, path, loopStart, loopLength};
 }
 
 void SourceController::primePage(const std::vector<std::string>& paths, float loopStart, float loopLength) {
 	pages.setPage(paths, loopStart, loopLength);
-}
-
-void SourceController::queueVideo(const std::string& path, float loopStart, float loopLength, bool dub) {
-	pendingVideo = {true, dub, path, loopStart, loopLength};
 }
 
 std::string SourceController::takeLoadFailure() {
@@ -148,8 +124,8 @@ bool SourceController::swapInLoaded(ParamBus& params) {
 	std::string path;
 	int index = 0;
 	if (!load.pollSwap(isWebcam, path, index)) return false;
-	webcam.swap(spareWebcam);
-	fileSrc.swap(spareFile);
+	std::swap(webcam, spareWebcam);
+	std::swap(fileSrc, spareFile);
 	webcamActive = isWebcam;
 	fileActive = !isWebcam;
 	params.setInt("source_kind", (int)(isWebcam ? SourceKind::Webcam : SourceKind::File));
@@ -179,14 +155,14 @@ void SourceController::runLoads() {
 			retire = false;
 			request = job;
 		}
-		spareWebcam.stop();
-		spareFile.stop();
+		spareWebcam->stop();
+		spareFile->stop();
 		if (request.id == done) continue;
 		done = request.id;
 		std::string reason = openSpare(request);
 		if (!reason.empty() || load.inflight() != request.id) {
-			spareWebcam.stop();
-			spareFile.stop();
+			spareWebcam->stop();
+			spareFile->stop();
 		}
 		load.resolve(request.id, reason.empty(), reason);
 	}
@@ -196,51 +172,23 @@ void SourceController::runLoads() {
 std::string SourceController::openSpare(const LoadRequest& request) {
 	if (!request.webcam) {
 		std::string name = std::filesystem::path(request.path).filename().string();
-		if (!spareFile.startFile(request.path)) return "could not open " + name;
+		if (!spareFile->startFile(request.path)) return "could not open " + name;
 		LoopRange range = loopRange(request.loopStart, request.loopLength);
-		spareFile.setLoopRange(range.start, range.end);
-		if (!spareFile.copyFrame(spareFrame, spareW, spareH)) return "no frame in " + name;
+		spareFile->setLoopRange(range.start, range.end);
+		if (!spareFile->copyFrame(spareFrame, spareW, spareH)) return "no frame in " + name;
 		return {};
 	}
-	if (!spareWebcam.start(request.webcamIndex)) return "could not open webcam";
+	if (!spareWebcam->start(request.webcamIndex)) return "could not open webcam";
 	for (int i = 0; i < 300; ++i) {
-		if (spareWebcam.copyFrame(spareFrame, spareW, spareH)) return {};
+		if (spareWebcam->copyFrame(spareFrame, spareW, spareH)) return {};
 		if (quit || load.inflight() != request.id) return "cancelled";
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 	return "no frame from webcam";
 }
 
-void SourceController::ensureFrameTexture() {
-	if (frameTex) return;
-	glGenTextures(1, &frameTex);
-	glBindTexture(GL_TEXTURE_2D, frameTex);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glBindTexture(GL_TEXTURE_2D, 0);
-}
-
-void SourceController::allocatePreview(int width, int height) {
-	previewTex = createTexture2D(width, height);
-	previewFbo = createFbo(previewTex);
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-}
-
-void SourceController::destroyPreview() {
-	if (previewFbo) {
-		glDeleteFramebuffers(1, &previewFbo);
-		previewFbo = 0;
-	}
-	if (previewTex) {
-		glDeleteTextures(1, &previewTex);
-		previewTex = 0;
-	}
-}
-
-// The live sources change only in swapInLoaded. A param edge that names a Source that is not live starts a load;
-// reacting to edges only keeps a failed load from retrying every frame.
+// The live sources change only when a load swaps in. A param edge that names a Source that is not live starts a
+// load; reacting to edges only keeps a failed load from retrying every frame.
 void SourceController::ensureSource(ParamBus& params) {
 	int kind = params.getInt("source_kind");
 	int index = params.getInt("webcam_index");
@@ -250,11 +198,11 @@ void SourceController::ensureSource(ParamBus& params) {
 	seenWebcamIndex = index;
 	if (kindChanged && kind != (int)SourceKind::File && kind != (int)SourceKind::Webcam) {
 		if (webcamActive) {
-			webcam.stop();
+			webcam->stop();
 			webcamActive = false;
 		}
 		if (fileActive) {
-			fileSrc.stop();
+			fileSrc->stop();
 			fileActive = false;
 		}
 	} else if (indexChanged && webcamActive) {
@@ -277,12 +225,6 @@ void SourceController::showFolder(const std::string& path, const std::vector<std
 	params.setInt("videos_count", (int)videoFiles.size());
 }
 
-void SourceController::updateCommitProgress(bool updatedPreviewTex, ParamBus& params) {
-	if (!commitOn || updatedPreviewTex) return;
-	bool readerEnded = !fileActive || fileSrc.ended();
-	if (commitReachedEnd(false, params.getBool("file_loop"), readerEnded)) cancelCommit(params);
-}
-
 bool SourceController::applyRequest(ParamBus& params) {
 	if (!pendingVideo.on) return false;
 	PendingVideo req = pendingVideo;
@@ -300,20 +242,21 @@ bool SourceController::applyRequest(ParamBus& params) {
 	return true;
 }
 
+// Makes a Video the page opened ahead the live Source, with no load.
 bool SourceController::installReady(const std::string& path, float loopStart, float loopLength, ParamBus& params) {
-	AVFFileSource ready;
 	std::vector<unsigned char> frame;
 	int width = 0;
 	int height = 0;
-	if (!pages.take(path, loopStart, loopLength, ready, frame, width, height)) return false;
+	std::unique_ptr<VideoDecoder> ready = pages.take(path, loopStart, loopLength, frame, width, height);
+	if (!ready) return false;
 	load.cancel();
 	cancelCommit(params);
 	if (webcamActive) {
-		webcam.stop();
+		webcam->stop();
 		webcamActive = false;
 	}
-	if (fileActive) pages.retire(fileSrc);
-	fileSrc.swap(ready);
+	if (fileActive) pages.retire(std::move(fileSrc));
+	fileSrc = std::move(ready);
 	fileActive = true;
 	seenKind = (int)SourceKind::File;
 	params.setInt("source_kind", (int)SourceKind::File);
@@ -329,8 +272,8 @@ void SourceController::beginCommit(ParamBus& params, const std::string& path) {
 	params.setBool("file_loop", false);
 	params.setBool("file_paused", false);
 	if (fileActive) {
-		fileSrc.setLoop(false);
-		fileSrc.setPaused(false);
+		fileSrc->setLoop(false);
+		fileSrc->setPaused(false);
 	}
 }
 
@@ -343,10 +286,7 @@ void SourceController::cancelCommit(ParamBus& params) {
 
 void SourceController::presentFrame(const std::vector<unsigned char>& bgra, int width, int height) {
 	if (width <= 0 || height <= 0 || bgra.empty()) return;
-	ensureFrameTexture();
-	glBindTexture(GL_TEXTURE_2D, frameTex);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, bgra.data());
-	glBindTexture(GL_TEXTURE_2D, 0);
+	picture.uploadPicture(bgra, width, height);
 	frameW = width;
 	frameH = height;
 }

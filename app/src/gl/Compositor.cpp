@@ -8,6 +8,7 @@
 Compositor::~Compositor() {
 	destroy();
 	if (blackTex) glDeleteTextures(1, &blackTex);
+	if (pictureTex) glDeleteTextures(1, &pictureTex);
 }
 
 void Compositor::init(int width, int height, const std::string& shaderDir) {
@@ -28,7 +29,21 @@ void Compositor::init(int width, int height, const std::string& shaderDir) {
 	glBindTexture(GL_TEXTURE_2D, blackTex);
 	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, blackPx);
 	glBindTexture(GL_TEXTURE_2D, 0);
+
+	glGenTextures(1, &pictureTex);
+	glBindTexture(GL_TEXTURE_2D, pictureTex);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glBindTexture(GL_TEXTURE_2D, 0);
 	allocate();
+}
+
+void Compositor::uploadPicture(const std::vector<unsigned char>& bgra, int width, int height) {
+	glBindTexture(GL_TEXTURE_2D, pictureTex);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, bgra.data());
+	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void Compositor::resize(int width, int height) {
@@ -40,6 +55,8 @@ void Compositor::resize(int width, int height) {
 }
 
 void Compositor::allocate() {
+	sourceTex = createTexture2D(w, h);
+	sourceFbo = createFbo(sourceTex);
 	for (int i = 0; i < 2; ++i) {
 		auditionTex[i] = createTexture2D(w, h);
 		auditionFbo[i] = createFbo(auditionTex[i]);
@@ -48,6 +65,10 @@ void Compositor::allocate() {
 }
 
 void Compositor::destroy() {
+	if (sourceFbo) glDeleteFramebuffers(1, &sourceFbo);
+	if (sourceTex) glDeleteTextures(1, &sourceTex);
+	sourceFbo = 0;
+	sourceTex = 0;
 	for (int i = 0; i < 2; ++i) {
 		if (auditionFbo[i]) glDeleteFramebuffers(1, &auditionFbo[i]);
 		if (auditionTex[i]) glDeleteTextures(1, &auditionTex[i]);
@@ -73,8 +94,8 @@ void Compositor::hotReload(HotReload& hot) {
 	if (hot.changed(blendPath) || vertex) shaderBlend.loadFromFiles(vsPath, blendPath);
 }
 
-void Compositor::drawTestPattern(GLuint fbo, float timeSeconds) {
-	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+void Compositor::drawTestPattern(float timeSeconds) {
+	glBindFramebuffer(GL_FRAMEBUFFER, sourceFbo);
 	glViewport(0, 0, w, h);
 	shaderTest.use();
 	shaderTest.setUniform("uTime", timeSeconds);
@@ -83,20 +104,20 @@ void Compositor::drawTestPattern(GLuint fbo, float timeSeconds) {
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void Compositor::drawBlack(GLuint fbo) {
-	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+void Compositor::drawBlack() {
+	glBindFramebuffer(GL_FRAMEBUFFER, sourceFbo);
 	glViewport(0, 0, w, h);
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void Compositor::drawPlaced(GLuint fbo, GLuint picture, const SourcePlacement& placed, bool bars) {
-	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+void Compositor::drawPlacedPicture(const SourcePlacement& placed, bool bars) {
+	glBindFramebuffer(GL_FRAMEBUFFER, sourceFbo);
 	glViewport(0, 0, w, h);
 	shaderFit.use();
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, picture);
+	glBindTexture(GL_TEXTURE_2D, pictureTex);
 	shaderFit.setUniform("uTex", 0);
 	shaderFit.setUniform("uFrame", static_cast<float>(w), static_cast<float>(h));
 	shaderFit.setUniform("uCenter", placed.centerX, placed.centerY);

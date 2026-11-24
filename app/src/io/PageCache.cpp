@@ -18,7 +18,7 @@ bool contains(const std::vector<std::string>& paths, const std::string& path) {
 
 } // namespace
 
-PageCache::PageCache() {
+PageCache::PageCache(std::function<std::unique_ptr<VideoDecoder>()> make) : makeDecoder(std::move(make)) {
 	worker = std::thread(&PageCache::run, this);
 }
 
@@ -62,31 +62,28 @@ void PageCache::setPage(std::vector<std::string> paths, float start, float lengt
 	cv.notify_one();
 }
 
-bool PageCache::take(const std::string& path, float start, float length, AVFFileSource& out,
-                     std::vector<unsigned char>& frame, int& w, int& h) {
-	{
-		std::lock_guard<std::mutex> lock(mu);
-		if (!same(start, loopStart) || !same(length, loopLength)) return false;
-		auto it = std::find_if(slots.begin(), slots.end(),
-		                       [&](const Slot& slot) { return slot.ready && slot.path == path && slot.source; });
-		if (it == slots.end()) return false;
-		out.swap(*it->source);
-		frame = std::move(it->frame);
-		w = it->w;
-		h = it->h;
-		slots.erase(it);
-		// The caller now owns this decoder. Leave it out of the page so it is not opened again beside the live one.
-		wanted.erase(std::remove(wanted.begin(), wanted.end(), path), wanted.end());
-	}
-	return true;
+std::unique_ptr<VideoDecoder> PageCache::take(const std::string& path, float start, float length,
+                                              std::vector<unsigned char>& frame, int& w, int& h) {
+	std::lock_guard<std::mutex> lock(mu);
+	if (!same(start, loopStart) || !same(length, loopLength)) return nullptr;
+	auto it = std::find_if(slots.begin(), slots.end(),
+	                       [&](const Slot& slot) { return slot.ready && slot.path == path && slot.source; });
+	if (it == slots.end()) return nullptr;
+	std::unique_ptr<VideoDecoder> out = std::move(it->source);
+	frame = std::move(it->frame);
+	w = it->w;
+	h = it->h;
+	slots.erase(it);
+	// The caller now owns this decoder. Leave it out of the page so it is not opened again beside the live one.
+	wanted.erase(std::remove(wanted.begin(), wanted.end(), path), wanted.end());
+	return out;
 }
 
-void PageCache::retire(AVFFileSource& src) {
-	auto held = std::make_unique<AVFFileSource>();
-	held->swap(src);
+void PageCache::retire(std::unique_ptr<VideoDecoder> src) {
+	if (!src) return;
 	{
 		std::lock_guard<std::mutex> lock(mu);
-		retired.push_back(std::move(held));
+		retired.push_back(std::move(src));
 	}
 	cv.notify_one();
 }
@@ -116,7 +113,7 @@ void PageCache::run() {
 		std::string path;
 		float start = 0;
 		float length = 1;
-		std::vector<std::unique_ptr<AVFFileSource>> trash;
+		std::vector<std::unique_ptr<VideoDecoder>> trash;
 		{
 			std::unique_lock<std::mutex> lock(mu);
 			cv.wait(lock, [&] { return quit || !retired.empty() || missing(); });
@@ -139,7 +136,7 @@ void PageCache::run() {
 		if (quit) return;
 		if (path.empty()) continue;
 
-		auto src = std::make_unique<AVFFileSource>();
+		std::unique_ptr<VideoDecoder> src = makeDecoder();
 		std::vector<unsigned char> frame;
 		int w = 0;
 		int h = 0;

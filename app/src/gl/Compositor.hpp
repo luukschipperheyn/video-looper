@@ -6,6 +6,7 @@
 
 #include "gl/FullscreenQuad.hpp"
 #include "gl/Shader.hpp"
+#include "io/VideoSource.hpp"
 #include "util/HotReload.hpp"
 
 // Where a Video or webcam picture sits in the frame. center and half are in frame pixels; video_fit.frag
@@ -25,12 +26,12 @@ struct LoopRead {
 	float mix;
 };
 
-// Draws the images the instrument is made of: the framed Source, the Loop as read, and the Audition.
-// Everything is drawn at the frame size given to init or resize.
-class Compositor {
+// Draws the images the instrument is made of: the framed Source, the Loop as read, and the Audition, and owns
+// their targets. Everything is drawn at the frame size given to init or resize.
+class Compositor : public PicturePort {
 public:
 	Compositor() = default;
-	~Compositor();
+	~Compositor() override;
 	Compositor(const Compositor&) = delete;
 	Compositor& operator=(const Compositor&) = delete;
 
@@ -39,11 +40,17 @@ public:
 	void registerWatches(HotReload& hot);
 	void hotReload(HotReload& hot);
 
-	// The Source, drawn into fbo, which is frame-sized.
-	void drawTestPattern(GLuint fbo, float timeSeconds);
-	void drawBlack(GLuint fbo);
+	// The latest Video or webcam picture at its own pixel size. SourceController uploads into it.
+	unsigned int pictureTexture() override { return pictureTex; }
+	void uploadPicture(const std::vector<unsigned char>& bgra, int width, int height) override;
+
+	// Draws the framed Source: a test pattern, black, or the picture placed in the frame.
+	void drawTestPattern(float timeSeconds);
+	void drawBlack();
 	// bars paints the frame outside the picture black; off leaves it transparent.
-	void drawPlaced(GLuint fbo, GLuint picture, const SourcePlacement& placed, bool bars);
+	void drawPlacedPicture(const SourcePlacement& placed, bool bars);
+	// The framed Source as last drawn.
+	GLuint sourceTexture() const { return sourceTex; }
 
 	// The Audition: the Loop with overlay laid over it. Returns its texture, which holds until the next call.
 	GLuint audition(const LoopRead& loop, GLuint overlay, float opacity, int blendMode);
@@ -69,6 +76,9 @@ private:
 
 	int w = 0;
 	int h = 0;
+	GLuint sourceTex = 0;
+	GLuint sourceFbo = 0;
+	GLuint pictureTex = 0;
 	GLuint auditionTex[2] = {0, 0};
 	GLuint auditionFbo[2] = {0, 0};
 	GLuint blackTex = 0;

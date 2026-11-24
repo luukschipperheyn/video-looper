@@ -22,6 +22,7 @@
 #include "clock/Clock.hpp"
 #include "io/VideoSource.hpp"
 #include "io/FolderList.hpp"
+#include "io/AVFDecoders.hpp"
 #include "io/SourceController.hpp"
 #include "io/VideoThumbs.hpp"
 #include "link/LinkBridge.hpp"
@@ -110,11 +111,10 @@ int App::run() {
 	ring.setup(fbw, fbh, 120);
 	LooperEngine looper(ring);
 	looper.init(fbw, fbh);
-	SourceController source;
-	source.init(fbw, fbh);
 	const std::string shaderDir = SHADER_DIR;
 	Compositor compositor;
 	compositor.init(fbw, fbh, shaderDir);
+	SourceController source(compositor, avfDecoders());
 	FxPipeline fx;
 	FxPipeline sourceFx;
 	fx.init(fbw, fbh, shaderDir);
@@ -264,7 +264,6 @@ int App::run() {
 			fbw = w;
 			fbh = h;
 			ring.setup(fbw, fbh, 120);
-			source.resize(fbw, fbh);
 			fx.resize(fbw, fbh);
 			sourceFx.resize(fbw, fbh);
 			looper.resize(fbw, fbh);
@@ -308,19 +307,19 @@ int App::run() {
 		}
 		prevRecEnabled = recEnabled;
 
-		source.tickAndGrab(now, dt, params);
+		source.tick(dt, params);
 		int srcKind = params.getInt("source_kind");
 		// A Video or webcam picture at its own size, ready to be placed in the frame.
 		bool picture = (srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
-		               source.frameTexture() != 0 && source.frameWidth() > 0 && source.frameHeight() > 0;
+		               source.frameWidth() > 0 && source.frameHeight() > 0;
 		SourcePlacement placed{};
 		if (picture) placed = sourcePlacement(fbw, fbh, source.frameWidth(), source.frameHeight(), params);
 		if (srcKind == (int)SourceKind::Shader)
-			compositor.drawTestPattern(source.getPreviewFbo(), t);
+			compositor.drawTestPattern(t);
 		else if (srcKind == (int)SourceKind::Black)
-			compositor.drawBlack(source.getPreviewFbo());
+			compositor.drawBlack();
 		else if (picture)
-			compositor.drawPlaced(source.getPreviewFbo(), source.frameTexture(), placed, params.getBool("video_bars"));
+			compositor.drawPlacedPicture(placed, params.getBool("video_bars"));
 
 		float bpm = params.getFloat("bpm");
 		float quantum = params.getFloat("quantum");
@@ -397,12 +396,12 @@ int App::run() {
 		    params.getInt("source_kind") == (int)SourceKind::File)
 			source.restartFileAtLoopStart();
 
-		GLuint liveSource = source.getPreviewTexture();
+		GLuint liveSource = compositor.sourceTexture();
 		if (params.getBool("source_fx_enabled") && liveSource != 0) {
 			FxSettings settings = fxSettings(params, "source_fx_");
 			// Repeat and Grid stamp the whole picture, so one that runs past the frame is not cropped first.
 			if (fxStampsCopies(settings.mode) && picture)
-				sourceFx.setWholeStamp(source.frameTexture(), placed.centerX, placed.centerY, placed.halfX,
+				sourceFx.setWholeStamp(compositor.pictureTexture(), placed.centerX, placed.centerY, placed.halfX,
 				                       placed.halfY, placed.rot);
 			else
 				sourceFx.setWholeStamp(0, 0, 0, 0, 0, 0);
