@@ -176,6 +176,51 @@ int main() {
 	          params.getString("videos_folder") == "/w",
 	      "11. an unlisted folder is refused and the Videos folder stays");
 
+	params.setInt("source_kind", 0);
+	int cams = int(source.webcams.size());
+	instrument.stepSourceKind(+1);
+	check(params.getInt("source_kind") == 1, "12. plus from Shader lands on File");
+	instrument.stepSourceKind(+1);
+	check(params.getInt("source_kind") == 2, "12. plus from File lands on Black");
+	instrument.stepSourceKind(+1);
+	check(params.getInt("source_kind") == 2 && int(source.webcams.size()) == cams + 1,
+	      "12. plus from Black asks for a webcam and leaves the kind at Black");
+	params.setInt("source_kind", 3);
+	cams = int(source.webcams.size());
+	instrument.stepSourceKind(+1);
+	check(params.getInt("source_kind") == 3 && int(source.webcams.size()) == cams,
+	      "12. plus from Webcam leaves Webcam and does not ask for another");
+	params.setInt("source_kind", 4);
+	instrument.stepSourceKind(+1);
+	check(params.getInt("source_kind") == 4 && int(source.webcams.size()) == cams,
+	      "12. plus from Draw leaves Draw");
+
+	instrument.stepSourceKind(-1);
+	check(params.getInt("source_kind") == 2 && int(source.webcams.size()) == cams,
+	      "13. minus from Draw lands on Black and does not ask for a webcam");
+	params.setInt("source_kind", 0);
+	instrument.stepSourceKind(-1);
+	check(params.getInt("source_kind") == 0, "13. minus from Shader stays Shader");
+	params.setInt("source_kind", 3);
+	instrument.stepSourceKind(-1);
+	check(params.getInt("source_kind") == 2 && int(source.webcams.size()) == cams,
+	      "13. minus from Webcam lands on Black");
+
+	params.setInt("record_blend_mode", 11);
+	check(instrument.nudge("record_blend_mode", 1).ok && params.getInt("record_blend_mode") == 11,
+	      "14. nudge stops at the end of the range");
+	params.setInt("source_kind", 0);
+	Outcome kindNudge = instrument.nudge("source_kind", 1);
+	check(!kindNudge.ok && kindNudge.reason == "bad value" && params.getInt("source_kind") == 0 &&
+	          int(source.webcams.size()) == cams,
+	      "14. nudge of source_kind is refused and the kind stays");
+	bool shown = params.getBool("show_ui");
+	check(instrument.toggle("show_ui").ok && params.getBool("show_ui") == !shown, "14. toggle flips show_ui");
+	float bpm = params.getFloat("bpm");
+	Outcome toggled = instrument.toggle("bpm");
+	check(!toggled.ok && toggled.reason == "bad value" && params.getFloat("bpm") == bpm,
+	      "14. toggle of a number is refused");
+
 	std::printf("%s (%d failures)\n", failures ? "FAILED" : "ALL PASSED", failures);
 	return failures ? 1 : 0;
 }

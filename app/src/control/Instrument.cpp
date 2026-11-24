@@ -62,6 +62,32 @@ Outcome Instrument::setText(const std::string& name, const std::string& text) {
 	return {};
 }
 
+Outcome Instrument::nudge(const std::string& name, double delta) {
+	if (name == "source_kind") return refused(name, "bad value");
+	const Control* control = findControl(name);
+	if (!control || (control->type != ControlType::Int && control->type != ControlType::Float))
+		return refused(name, "bad value");
+	double current = control->type == ControlType::Int ? double(params.getInt(name)) : double(params.getFloat(name));
+	return setNumber(name, current + delta);
+}
+
+Outcome Instrument::toggle(const std::string& name) {
+	if (!controlOf(name, ControlType::Bool)) return refused(name, "bad value");
+	return setSwitch(name, !params.getBool(name));
+}
+
+void Instrument::stepSourceKind(int delta) {
+	if (delta == 0) return;
+	int kind = params.getInt("source_kind");
+	if (delta > 0) {
+		if (kind == int(SourceKind::Webcam) || kind == int(SourceKind::Draw)) return;
+		setNumber("source_kind", kind + 1);
+		return;
+	}
+	if (kind == int(SourceKind::Draw)) setNumber("source_kind", int(SourceKind::Black));
+	else setNumber("source_kind", kind - 1);
+}
+
 void Instrument::panic() {
 	params.setBool("arm_record", false);
 	params.setBool("cue_active", false);

@@ -36,6 +36,7 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/gl/FxPipeline.cpp
   app/src/gl/Compositor.cpp
   app/src/control/Instrument.cpp
+  app/src/control/Hotkeys.cpp
   app/src/buffer/RingBuffer.cpp
   app/src/looper/LooperEngine.cpp
   app/src/looper/LoopPlan.cpp
@@ -136,6 +137,17 @@ add_executable(instrument_test
 )
 target_include_directories(instrument_test PRIVATE app/src)
 
+add_executable(hotkey_test
+  app/tests/hotkey_test.cpp
+  app/src/control/Hotkeys.cpp
+  app/src/control/Instrument.cpp
+  app/src/ui/ParamBus.cpp
+  app/src/io/FolderList.cpp
+  app/src/io/SourceLoad.cpp
+  app/src/setup/SetupStore.cpp
+)
+target_include_directories(hotkey_test PRIVATE app/src)
+
 add_executable(source_controller_test
   app/tests/source_controller_test.cpp
   app/src/io/SourceController.cpp
@@ -216,6 +228,7 @@ set(cpp_tests
   overdub_gate_test
   loop_plan_test
   instrument_test
+  hotkey_test
   source_controller_test
 )
 foreach(test_name IN LISTS cpp_tests)
