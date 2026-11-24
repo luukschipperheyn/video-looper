@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Video Looper</title>
 <style>
-:root{--bg:#0d0f10;--panel:#15181a;--panel2:#1c2023;--line:#252a2e;--line2:#333a3f;--text:#e7e9eb;--dim:#8b9297;--faint:#5c646a;
+:root{--loop:16/9;--bg:#0d0f10;--panel:#15181a;--panel2:#1c2023;--line:#252a2e;--line2:#333a3f;--text:#e7e9eb;--dim:#8b9297;--faint:#5c646a;
 	--rec:#ff5b4f;--cue:#45d3c8;--amber:#f3a93c;--amberd:#33250f;--ok:#93d46d;
 	--fl:#f2c46b;--fd:#6b8cf2;--fc:#c77df2;--fx:#6bf2a8;--fn:#9aa3a9}
 *{box-sizing:border-box;touch-action:none}
@@ -146,7 +146,7 @@ button:disabled{opacity:.35}
 .fchip.on{border-color:var(--cue);color:var(--text)}
 .vgrid{position:relative;flex:1;min-height:0;display:grid;gap:6px;align-content:start;touch-action:none;grid-template-columns:repeat(5,1fr)}
 .vc{position:relative;display:flex;flex-direction:column;gap:3px;min-width:0}
-.vc .th{position:relative;aspect-ratio:16/9;border-radius:6px;overflow:hidden;background:#000;border:2px solid transparent;transition:transform .08s}
+.vc .th{position:relative;aspect-ratio:var(--loop);border-radius:6px;overflow:hidden;background:#000;border:2px solid transparent;transition:transform .08s}
 .vc img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;-webkit-user-drag:none}
 .vc .nm{font-size:10.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;height:13px}
 .vc.cur .th{border-color:var(--cue)}
@@ -726,7 +726,7 @@ function measureGrid() {
 	if (!width || !height) return;
 	const cols = 5;
 	const cellW = (width - 6 * (cols - 1)) / cols;
-	const cellH = cellW * 9 / 16 + 4 + 16;
+	const cellH = cellW / loopAspect() + 4 + 16;
 	const ps = Math.max(cols, Math.floor((height + 6) / (cellH + 6)) * cols);
 	if (ps === state.pageSize) return;
 	state.pageSize = ps;
@@ -1060,11 +1060,18 @@ document.addEventListener("gestureend", (event) => {
 	}
 });
 
+function loopAspect() {
+	const w = Number(state.remote.loop_w);
+	const h = Number(state.remote.loop_h);
+	return w > 0 && h > 0 ? w / h : 16 / 9;
+}
+
 function layoutFrame() {
 	const W = pad.clientWidth, H = pad.clientHeight;
 	if (!W || !H) return;
-	const fw = Math.min(W * 0.64, H * 0.64 * 16 / 9);
-	const fh = fw * 9 / 16;
+	const aspect = loopAspect();
+	const fw = Math.min(W * 0.64, H * 0.64 * aspect);
+	const fh = fw / aspect;
 	const fl = (W - fw) / 2, ft = (H - fh) / 2;
 	frame.style.left = fl + "px";
 	frame.style.top = ft + "px";
@@ -1083,10 +1090,10 @@ function layoutFrame() {
 	if (framed && fine) note.title = "Alt-sleep schaalt: omhoog groter, en zonder Preserve aspect schaalt opzij de breedte. Shift-sleep of de rechterknop draait: een framebreedte is een halve slag, naar rechts met de klok mee. Knijpen op het trackpad schaalt en draait.";
 	else note.removeAttribute("title");
 	const t = currentTransform();
-	const ar = state.imageAspect || 16 / 9;
+	const ar = state.imageAspect || aspect;
 	let bw = fw, bh = fh;
 	if (state.local.video_aspect) {
-		if (ar > 16 / 9) { bw = fw; bh = fw / ar; }
+		if (ar > aspect) { bw = fw; bh = fw / ar; }
 		else { bh = fh; bw = fh * ar; }
 	}
 	const w = bw * t.sx;
@@ -1113,7 +1120,7 @@ function layoutFrame() {
 function setFrameImage(name) {
 	if (name === shownFrame) return;
 	shownFrame = name;
-	state.imageAspect = 16 / 9;
+	state.imageAspect = 0;
 	frameTries = 0;
 	frameImg.onload = null;
 	frameImg.onerror = null;
@@ -1587,6 +1594,9 @@ function paintFps() {
 }
 
 function paint() {
+	const loopW = Number(state.remote.loop_w);
+	const loopH = Number(state.remote.loop_h);
+	if (loopW > 0 && loopH > 0) document.documentElement.style.setProperty("--loop", loopW + " / " + loopH);
 	conn.classList.toggle("lost", state.link !== "up");
 	connText.textContent = state.link === "up" ? "Verbonden" : "Verbinding weg · kijk op de Mac";
 	const loop = Number(state.remote.loop) || 0;

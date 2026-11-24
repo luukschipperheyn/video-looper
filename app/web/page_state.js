@@ -33,7 +33,7 @@
 			relFrom: 1,
 			relStage: 0,
 			taps: {},
-			imageAspect: 16 / 9,
+			imageAspect: 0,
 		};
 
 		function socketOpen() {

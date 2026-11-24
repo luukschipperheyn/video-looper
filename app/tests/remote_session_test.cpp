@@ -547,6 +547,8 @@ int main() {
 		std::string snapshot = remoteSnapshot(params, {}, {"a.mov", "b.mov"});
 		check(snapshot.find(R"("videos":["a.mov","b.mov"])") != std::string::npos,
 		      "32. the snapshot lists the folder's Videos by filename");
+		check(snapshot.find(R"("loop_w":1280,"loop_h":720)") != std::string::npos,
+		      "32. the snapshot carries the Loop resolution");
 		check(remoteSnapshot(params).find(R"("videos":[])") != std::string::npos,
 		      "32. with no Videos the snapshot lists none");
 	}
@@ -595,6 +597,8 @@ int main() {
 		check(hot.find("\"videos\"") == std::string::npos && hot.find("\"folders\"") == std::string::npos &&
 		          hot.rfind("{\"t\":\"snapshot\"", 0) == 0,
 		      "40. a per-frame snapshot omits the Videos and the Folder list");
+		check(hot.find(R"("loop_w":1280,"loop_h":720)") != std::string::npos,
+		      "40. a per-frame snapshot still carries the Loop resolution");
 	}
 	{
 		RemoteSession session(tokenFile, "127.0.0.1", 0);
