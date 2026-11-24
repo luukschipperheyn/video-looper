@@ -9,6 +9,7 @@
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 
+#include "control/Hotkeys.hpp"
 #include "control/Instrument.hpp"
 #include "gl/Compositor.hpp"
 #include "gl/FxPipeline.hpp"
@@ -184,59 +185,28 @@ int App::run() {
 	float readFps = 60.0f;
 	double lastTime = glfwGetTime();
 
-	// Hotkey state (for edge-triggered actions)
-	bool prevU = false;
-	bool prevMinus = false, prevEqual = false;
-	bool prevLBracket = false, prevRBracket = false;
-	bool prevApostrophe = false, prevBackslash = false;
-	bool prevV = false;
-	bool prevNumber[10] = {};
+	Hotkeys hotkeys;
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
 
-		// Global hotkeys (skip when ImGui wants keyboard to avoid interfering with text inputs)
-		{
-			ImGuiIO& iof = ImGui::GetIO();
-			// bool wantKb = iof.WantCaptureKeyboard;
-			bool wantKb = false;
-			auto keyDown = [&](int key) { return glfwGetKey(window, key) == GLFW_PRESS; };
-			auto edgePressed = [&](int key, bool& prev) {
-				bool d = keyDown(key);
-				bool jp = d && !prev;
-				prev = d;
-				return jp;
-			};
-			if (!wantKb) {
-				if (edgePressed(GLFW_KEY_U, prevU)) instrument.setSwitch("show_ui", !params.getBool("show_ui"));
-				// Opacity on the number keys (1..9 => 0.1..0.9, 0 => 1.0)
-				const int numberKeys[] = {GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4, GLFW_KEY_5,
-				                          GLFW_KEY_6, GLFW_KEY_7, GLFW_KEY_8, GLFW_KEY_9, GLFW_KEY_0};
-				for (int k = 0; k < 10; ++k)
-					if (edgePressed(numberKeys[k], prevNumber[k]))
-						instrument.setNumber("record_blend_opacity", (k + 1) / 10.0);
-				// Prev/Next Source kind (- / =)
-				if (edgePressed(GLFW_KEY_MINUS, prevMinus)) {
-					int s = params.getInt("source_kind");
-					if (s == (int)SourceKind::Draw) instrument.setNumber("source_kind", (int)SourceKind::Black);
-					else if (s > (int)SourceKind::Shader) instrument.setNumber("source_kind", s - 1);
-				}
-				if (edgePressed(GLFW_KEY_EQUAL, prevEqual)) {
-					int s = params.getInt("source_kind");
-					if (s < (int)SourceKind::Black) instrument.setNumber("source_kind", s + 1);
-				}
-				// Prev/Next blend mode ([ / ]) and Program FX mode (' / \); the instrument stops at either end
-				if (edgePressed(GLFW_KEY_LEFT_BRACKET, prevLBracket))
-					instrument.setNumber("record_blend_mode", params.getInt("record_blend_mode") - 1);
-				if (edgePressed(GLFW_KEY_RIGHT_BRACKET, prevRBracket))
-					instrument.setNumber("record_blend_mode", params.getInt("record_blend_mode") + 1);
-				if (edgePressed(GLFW_KEY_APOSTROPHE, prevApostrophe))
-					instrument.setNumber("fx_mode", params.getInt("fx_mode") - 1);
-				if (edgePressed(GLFW_KEY_BACKSLASH, prevBackslash))
-					instrument.setNumber("fx_mode", params.getInt("fx_mode") + 1);
-				if (edgePressed(GLFW_KEY_V, prevV)) instrument.randomVideo();
-			}
-		}
+		KeysDown down;
+		HotkeyHolds levels;
+		auto keyDown = [&](int key) { return glfwGetKey(window, key) == GLFW_PRESS; };
+		down.showUi = keyDown(GLFW_KEY_U);
+		const int digitKey[] = {GLFW_KEY_0, GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4,
+		                        GLFW_KEY_5, GLFW_KEY_6, GLFW_KEY_7, GLFW_KEY_8, GLFW_KEY_9};
+		for (int d = 0; d < 10; ++d) down.digit[d] = keyDown(digitKey[d]);
+		down.sourcePrev = keyDown(GLFW_KEY_MINUS);
+		down.sourceNext = keyDown(GLFW_KEY_EQUAL);
+		down.blendPrev = keyDown(GLFW_KEY_LEFT_BRACKET);
+		down.blendNext = keyDown(GLFW_KEY_RIGHT_BRACKET);
+		down.fxPrev = keyDown(GLFW_KEY_APOSTROPHE);
+		down.fxNext = keyDown(GLFW_KEY_BACKSLASH);
+		down.randomVideo = keyDown(GLFW_KEY_V);
+		levels.overdub = keyDown(GLFW_KEY_SPACE);
+		levels.cue = keyDown(GLFW_KEY_C);
+		HotkeyHolds hotkeyHolds = hotkeys.frame(instrument, down, levels, ImGui::GetIO().WantCaptureKeyboard);
 		if (params.getBool("preview_window")) {
 			if (!previewWindow) {
 				previewWindow = glfwCreateWindow(640, 360, "Preview", nullptr, window);
@@ -393,11 +363,11 @@ int App::run() {
 
 		GateHolds holds;
 		holds.latch = params.getBool("arm_record");
-		holds.space = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+		holds.space = hotkeyHolds.overdub;
 		holds.pad = pads.gate;
 		holds.erase = pads.erase;
 		holds.cueLatch = params.getBool("cue_active");
-		holds.cueKey = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS;
+		holds.cueKey = hotkeyHolds.cue;
 		holds.cuePad = pads.cue;
 		GateFrame dub = gate.step(holds, gateSettings(params), source.committing(), dt);
 		if (dub.restartVideo && params.getInt("file_run_mode") == 1 &&

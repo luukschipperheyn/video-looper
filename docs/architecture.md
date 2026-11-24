@@ -38,9 +38,10 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 
 | Path | Role |
 |------|------|
-| `app/src/App.cpp` | GLFW/ImGui lifecycle, hotkeys, main loop orchestration, export capture |
+| `app/src/App.cpp` | GLFW/ImGui lifecycle, main loop orchestration, export capture |
 | `app/src/control/ControlTable.hpp` | Every control once: name, type, default, range, whether the Web interface sees or sets it, whether it is saved |
 | `app/src/control/Instrument.*` | Carries out what a performer asks for from any surface: set a control (clamped), Panic, Prev/Next/random Video, load, Dub, choose a folder or the webcam. `SourcePort` is what it asks of the Source |
+| `app/src/control/Hotkeys.*` | One frame of the keys that are down, and whether a text field has focus. A rising key asks the Instrument for a change. Returns the Overdub hold and the Cue hold |
 | `app/src/ui/ParamBus.*` | The current value of every control; a fresh bus holds the table's defaults |
 | `app/src/looper/OverdubGate.*` | Decides per frame whether the Loop is written, with which image, blend mode and opacity: holds, ADSR, release tail, Erase, Cue, Commit bypass. Pure |
 | `app/src/buffer/RingBuffer.*` | Dual-bank GPU textures/FBOs (`frameCount` frames × 2 banks); front = read, back = write |
@@ -72,7 +73,7 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 Order inside `App::run`’s `while`, each frame:
 
 1. **Poll** GLFW events  
-2. **Hotkeys** (edge-triggered; see UI + hotkeys) — `WantCaptureKeyboard` is forced `false`, so keys always apply  
+2. **Hotkeys** (see UI + hotkeys). They run from the keys that are down. ImGui `WantCaptureKeyboard` means a text field has focus, and then no hotkey fires and Space and C do not open the Overdub gate or Cue  
 3. **Preview window** create/destroy from `preview_window`  
 4. **Resize** — if framebuffer size changes: rebuild ring (120 frames), source, FX, looper, compositor targets; **stop** disk recorder if active  
 5. **Hot-reload** shaders / FX  
@@ -198,20 +199,18 @@ Separate from looper “record into ring”:
 
 **Settings:** UI/preview options; Ableton Link + peers; BPM/quantum/tempo couple/read speed; debug bank letters + Link SDK compiled-in flag.
 
-### Hotkeys (`App.cpp`)
+### Hotkeys
 
 | Key | Action |
 |-----|--------|
 | `U` | Toggle `show_ui` |
 | `1`–`9`, `0` | `record_blend_opacity` = 0.1…0.9, 1.0 |
-| `-` / `=` | Prev/next `source_kind` — **only through Black** (`=` stops at Black; Webcam and Draw are not in the cycle). Minus while Draw is the Source returns to Black. |
+| `-` / `=` | Equal cycles Shader, File, Black, Webcam and stops there. Draw stays out of that cycle. Minus steps back through that cycle, and while Draw is the Source it returns to Black. Both stops are `Instrument::stepSourceKind`. |
 | `[` / `]` | Prev/next `record_blend_mode` (0–11) |
 | `'` / `\` | Prev/next `fx_mode` (0–6) |
-| `V` | Random file commit trigger |
-| Space | Hold = record gate |
-| `C` | Hold = cue (monitor only) |
-
-Hotkeys ignore ImGui keyboard capture (`wantKb` hardcoded false).
+| `V` | random Video. It does not Commit. |
+| Space | Hold opens the Overdub gate |
+| `C` | Hold opens Cue |
 
 ---
 
@@ -248,8 +247,6 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 
 | Bug | Where |
 |-----|-------|
-| `-`/`=` source cycle stops at Black; Webcam and Draw are not in it. Minus from Draw returns to Black | `App.cpp` `=` capped at `SourceKind::Black` |
-| Hotkeys fire while typing in ImGui text fields | `App.cpp` `wantKb = false` |
 | Preview ignores the ADSR envelope (always full record opacity) | `App.cpp` preview audition call |
 | Disk recording captures the audition composite, not the presented main view (FX missing) | `App.cpp` capture reads `Compositor::readAudition` |
 | Editing `file_path` while a file is playing does not reload it | `SourceController::ensureSource` only starts when `!fileActive` |
