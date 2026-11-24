@@ -47,7 +47,7 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/buffer/RingBuffer.*` | Dual-bank GPU textures/FBOs (`frameCount` frames × 2 banks); front = read, back = write |
 | `app/src/looper/LoopPlan.*` | Pure frame of the Loop: read head, which back-bank slots are filled (Overdub, copy forward, or Bake FX), and when the banks swap |
 | `app/src/looper/LooperEngine.*` | Runs that plan against the banks, then the playhead overlay. The picture path draws each slot |
-| `app/src/gl/Compositor.*`, `Frame.cpp` | The picture path. Draws the framed Source, the Loop as read, and the Audition. Owns the blit and blend shaders, the quad, the frame size, the Source and Audition targets, the picture texture (`PicturePort`), the Draw texture, and the export readback. `initFrame` and `resizeFrame` set that size on the Loop and both FX pipelines. `reloadShaders` polls the watches once. `drawSource` returns the Source FX stamp |
+| `app/src/gl/Compositor.*`, `Frame.cpp`, `PictureChoice.*` | The picture path. Keeps the framed Source, the Audition, and the Program as named images. Owns the blit and blend shaders, the quad, the frame size, those images, the picture texture (`PicturePort`), the Draw texture, and the export readback. `choosePictures` names the image the window, the preview, and Export ask for, and the opacity of the Audition. Tested in `app/tests/picture_choice_test.cpp`. `initFrame` and `resizeFrame` set that size on the Loop and both FX pipelines. `reloadShaders` polls the watches once. `drawSource` returns the Source FX stamp |
 | `app/src/io/SourceController.*` | The life of the Source. Requests come from the Instrument. It opens a Video or webcam off the main thread, swaps it in with its first frame, and **Commit**s a Video until it ends. It writes no controls. No GL or AVFoundation; decoders come from a `DecoderFactory` and pictures go to a `PicturePort`. Tested with fake decoders in `app/tests/source_controller_test.cpp` |
 | `app/src/io/FolderList.*` | The Folder list. Videos folders in order, one of them current, each with the Videos captured when it was added. Selecting one does not read the disk |
 | `app/src/io/PageCache.*` | Opens the Videos on the Web interface's current page ahead of a tap |
@@ -83,10 +83,10 @@ Order inside `App::run`’s `while`, each frame:
 8. **Clock / Link** — tempo → `readFps` (optionally coupled to BPM)  
 9. **Web interface messages, then the Overdub gate** — each drained message goes through `applyRemote` to the `Instrument`; `OverdubGate::step` takes the holds and returns this frame's write: overdub or not, opacity, image, blend mode, Cue  
 10. **`looper.step`** — one call advances the read head, plans every back-bank fill and any swap, then does the texture work. Cue is decided here: the plan writes nothing and does not swap. The picture's textures are the front bank from before a swap  
-11. **Present** — the Audition (`Compositor::audition`) while cueing or overdubbing, else Program FX or the plain loop  
-12. **Preview audition** — the same `Compositor::audition` call at full opacity when the preview is visible and idle, or Export is on  
-13. **Disk capture** — if recording: `Compositor::readAudition` (BGRA, top row first) → `appendBGRAFrame` at `record_fps`  
-14. **Inset / separate preview** blit of the Audition texture (or back-bank debug)  
+11. **Pictures** — `choosePictures` names the window, the preview, and Export. The picture path keeps the Program (Program FX when it is on, otherwise the Loop) and the Audition at the opacity an Overdub would write  
+12. **Present** — the window asks for the Audition while cueing or overdubbing, including Bake FX, and for the Program otherwise  
+13. **Export** — while Export is on, `Compositor::read` of the Program (BGRA, top row first) goes to `appendBGRAFrame` at `record_fps`  
+14. **Inset and second window** — each asks for the Audition. The debug toggle shows the back-bank slot in the inset instead  
 15. **ImGui** ControlsPanel + optional playhead overlay  
 16. **Swap** buffers (+ ImGui viewports)
 
@@ -154,7 +154,7 @@ On the frame the head crosses the loop point, the plan fills every slot of that 
 
 ## FX
 
-Two chains, each an `FxPipeline`. **Program FX** (`fx_enabled`) runs on the present path when not cueing or overdubbing. **Source FX** (`source_fx_enabled`) runs on the framed Source; Cue, the Audition, an Overdub, and the inset preview all use that image. Source FX Repeat and Grid are the exception: they stamp the whole Video or webcam picture at its placement, so a picture that runs past the frame is not cropped before it is repeated. The frame still clips whatever falls outside it. Source FX does not change the Loop until an Overdub writes it. Each chain keeps its own previous frame, so feedback on one does not leak into the other. Source FX adds two full-frame targets, not ring frames.
+Two chains, each an `FxPipeline`. **Program FX** (`fx_enabled`) is drawn into the Program image each frame. The window shows that image when it is not cueing or overdubbing. **Source FX** (`source_fx_enabled`) runs on the framed Source; Cue, the Audition, an Overdub, and the inset preview all use that image. Source FX Repeat and Grid are the exception: they stamp the whole Video or webcam picture at its placement, so a picture that runs past the frame is not cropped before it is repeated. The frame still clips whatever falls outside it. Source FX does not change the Loop until an Overdub writes it. Each chain keeps its own previous frame, so feedback on one does not leak into the other. Source FX adds two full-frame targets, not ring frames.
 
 | Mode | Name | Notes |
 |------|------|--------|
@@ -186,9 +186,9 @@ Separate from looper “record into ring”:
 
 - UI: Enable Recording + path (or Save As…) + Record FPS  
 - Rising edge starts `AVFRecorder` at framebuffer size; empty path refuses start  
-- Each period: read `auditionFboB` as BGRA, flip Y, append  
+- Each period, `Compositor::read` of the Program (BGRA, top row first) goes to `appendBGRAFrame`  
 - Resize while recording stops recorder and clears `record_enabled`  
-- Captured image is the **audition composite** (loop + live overlay at record opacity/mode), not necessarily the on-screen FX view
+- Export records the Program, with Program FX, not the Audition
 
 ---
 
@@ -248,8 +248,6 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 
 | Bug | Where |
 |-----|-------|
-| Preview ignores the ADSR envelope (always full record opacity) | `App.cpp` preview audition call |
-| Disk recording captures the audition composite, not the presented main view (FX missing) | `App.cpp` capture reads `Compositor::readAudition` |
 | `[rec]` printf on every captured frame | `App.cpp` capture loop |
 | Placeholder bundle id `com.example.video-looper` | `Info.plist` |
 
@@ -262,8 +260,8 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 3. **Commit** forces recording-active writes at opacity 1 and bypasses ADSR. The Video plays once for that Commit, and `file_loop` and `file_paused` stay the performer's. It ends when the reader is exhausted. A tick that holds the current frame does not end it.  
 4. **Resize invalidates** ring contents (full `setup` destroy/recreate) and aborts disk recording. Accepted for now by the owner; don't change it as a side effect.  
 5. **Read interpolation** — present mixes `idx0`/`idx1` with `gain_mix`; write path uses integer slot indices.  
-6. **FX present vs commit** — Program FX is a present-path effect unless `fx_commit` bakes the last Program FX texture into the loop. Source FX is on the framed Source before the Audition and an Overdub.  
-7. **Preview vs main** — inset/separate preview shows `auditionTexB` (loop + live overlay); debug toggle shows the back-bank slot instead.
+6. **FX present vs commit** — Program FX is kept in the Program image each frame. The window shows the Program when not cueing or overdubbing. Bake FX writes the previous Program image into the loop. Source FX is on the framed Source before the Audition and an Overdub.  
+7. **Preview vs main** — the window asks for the Audition while cueing or overdubbing, and for the Program otherwise. The inset and the second window ask for the Audition at the opacity an Overdub would write. The debug toggle shows the back-bank slot in the inset instead.
 
 ---
 
@@ -276,7 +274,7 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 | What setting a control or pressing a button does | `app/src/control/Instrument.cpp` |
 | When the Loop is written and with what | `app/src/looper/OverdubGate.cpp` |
 | Which slots a frame fills, and when the banks swap | `app/src/looper/LoopPlan.cpp` |
-| Source, Audition, export readback | `app/src/gl/Compositor.cpp` |
+| Source, Audition, Program, and which image is asked for | `app/src/gl/Compositor.cpp`, `app/src/gl/PictureChoice.cpp` |
 | Applying that plan to the banks | `app/src/looper/LooperEngine.cpp` |
 | Dual-bank storage | `app/src/buffer/RingBuffer.cpp` |
 | Live UI | `app/src/ui/ControlsPanel.cpp` |

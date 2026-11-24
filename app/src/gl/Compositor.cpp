@@ -84,6 +84,8 @@ void Compositor::allocate() {
 		auditionTex[i] = createTexture2D(w, h);
 		auditionFbo[i] = createFbo(auditionTex[i]);
 	}
+	programTex = createTexture2D(w, h);
+	programFbo = createFbo(programTex);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -98,6 +100,10 @@ void Compositor::destroy() {
 		auditionFbo[i] = 0;
 		auditionTex[i] = 0;
 	}
+	if (programFbo) glDeleteFramebuffers(1, &programFbo);
+	if (programTex) glDeleteTextures(1, &programTex);
+	programFbo = 0;
+	programTex = 0;
 }
 
 void Compositor::registerWatches(HotReload& hot) {
@@ -211,7 +217,19 @@ void Compositor::blend(GLuint tex0, GLuint tex1, float mix, int mode) {
 	fullscreen.draw();
 }
 
-GLuint Compositor::audition(const LoopRead& loop, GLuint overlay, float opacity, int blendMode) {
+GLuint Compositor::image(Picture picture) const {
+	switch (picture) {
+	case Picture::Source:
+		return sourceTex;
+	case Picture::Audition:
+		return auditionTex[1];
+	case Picture::Program:
+		return programTex;
+	}
+	return 0;
+}
+
+void Compositor::audition(const LoopRead& loop, GLuint overlay, float opacity, int blendMode) {
 	glBindFramebuffer(GL_FRAMEBUFFER, auditionFbo[0]);
 	glViewport(0, 0, w, h);
 	blend(loop.tex0, loop.tex1, loop.mix, 0);
@@ -219,15 +237,36 @@ GLuint Compositor::audition(const LoopRead& loop, GLuint overlay, float opacity,
 	glViewport(0, 0, w, h);
 	blend(auditionTex[0], overlay, opacity, blendMode);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	return auditionTex[1];
 }
 
-const std::vector<unsigned char>& Compositor::readAudition() {
+void Compositor::program(const LoopRead& loop, GLuint fxOutput) {
+	glBindFramebuffer(GL_FRAMEBUFFER, programFbo);
+	glViewport(0, 0, w, h);
+	if (fxOutput)
+		blit(fxOutput);
+	else
+		blend(loop.tex0, loop.tex1, loop.mix, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+const std::vector<unsigned char>& Compositor::read(Picture picture) {
+	GLuint fbo = 0;
+	switch (picture) {
+	case Picture::Source:
+		fbo = sourceFbo;
+		break;
+	case Picture::Audition:
+		fbo = auditionFbo[1];
+		break;
+	case Picture::Program:
+		fbo = programFbo;
+		break;
+	}
 	const size_t stride = static_cast<size_t>(w) * 4u;
 	const size_t size = stride * static_cast<size_t>(h);
 	if (readBuf.size() != size) readBuf.assign(size, 0);
 	if (flipBuf.size() != size) flipBuf.assign(size, 0);
-	glBindFramebuffer(GL_FRAMEBUFFER, auditionFbo[1]);
+	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 	glPixelStorei(GL_PACK_ALIGNMENT, 1);
 	glReadPixels(0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE, readBuf.data());
 	GLenum err = glGetError();
@@ -235,11 +274,6 @@ const std::vector<unsigned char>& Compositor::readAudition() {
 	for (int y = 0; y < h; ++y)
 		std::memcpy(flipBuf.data() + static_cast<size_t>(h - 1 - y) * stride, readBuf.data() + y * stride, stride);
 	return flipBuf;
-}
-
-void Compositor::showLoop(const LoopRead& loop, int x, int y, int width, int height) {
-	glViewport(x, y, width, height);
-	blend(loop.tex0, loop.tex1, loop.mix, 0);
 }
 
 void Compositor::show(GLuint tex, int x, int y, int width, int height) {
