@@ -51,6 +51,7 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/io/AVFWebcamSource.mm
   app/src/io/AVFFileSource.mm
   app/src/io/AVFRecorder.mm
+  app/src/io/Export.cpp
   app/src/io/SourceController.cpp
   app/src/io/DrawImage.mm
   app/src/io/PageCache.cpp

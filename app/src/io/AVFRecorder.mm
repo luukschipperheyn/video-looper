@@ -45,13 +45,9 @@ bool AVFRecorder::start(const std::string& outputPath, int width, int height, do
 
 	NSError* error = nil;
 	NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:outputPath.c_str()]];
-	NSLog(@"[rec] url %@", url);
 	[[NSFileManager defaultManager] removeItemAtURL:url error:nil];
 	impl->writer = [[AVAssetWriter alloc] initWithURL:url fileType:AVFileTypeQuickTimeMovie error:&error];
-	if (error || !impl->writer) {
-		NSLog(@"[rec] writer init failed: %@", error);
-		return false;
-	}
+	if (error || !impl->writer) return false;
 
 	NSDictionary* outputSettings = @{
 		AVVideoCodecKey : AVVideoCodecTypeH264,
@@ -63,10 +59,7 @@ bool AVFRecorder::start(const std::string& outputPath, int width, int height, do
 
 	impl->input = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo outputSettings:outputSettings];
 	impl->input.expectsMediaDataInRealTime = YES;
-	if (!impl->input) {
-		NSLog(@"[rec] input create failed");
-		return false;
-	}
+	if (!impl->input) return false;
 
 	NSDictionary* srcAttrs = @{
 		(NSString*)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA),
@@ -75,22 +68,14 @@ bool AVFRecorder::start(const std::string& outputPath, int width, int height, do
 	};
 	impl->adaptor = [[AVAssetWriterInputPixelBufferAdaptor alloc] initWithAssetWriterInput:impl->input
 															   sourcePixelBufferAttributes:srcAttrs];
-	if (![impl->adaptor isKindOfClass:[AVAssetWriterInputPixelBufferAdaptor class]]) {
-		NSLog(@"[rec] adaptor create failed");
-		return false;
-	}
+	if (![impl->adaptor isKindOfClass:[AVAssetWriterInputPixelBufferAdaptor class]]) return false;
 	if ([impl->writer canAddInput:impl->input]) {
 		[impl->writer addInput:impl->input];
 	} else {
-		NSLog(@"[rec] cannot add input");
 		return false;
 	}
-	if (![impl->writer startWriting]) {
-		NSLog(@"[rec] startWriting failed: %@", impl->writer.error);
-		return false;
-	}
+	if (![impl->writer startWriting]) return false;
 	[impl->writer startSessionAtSourceTime:kCMTimeZero];
-	NSLog(@"[rec] writer started");
 	impl->running = true;
 	impl->encodeQueue = dispatch_queue_create("video_looper.rec.encode", DISPATCH_QUEUE_SERIAL);
 	AVAssetWriterInput* inputRef = impl->input;

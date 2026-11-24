@@ -4,7 +4,6 @@
 
 #include "gl/PictureChoice.hpp"
 
-// The picture path, asked for one named image. The Compositor is the real one.
 class PictureRead {
 public:
 	virtual ~PictureRead() = default;

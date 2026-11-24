@@ -2,7 +2,6 @@
 
 #include <string>
 
-// What Export asks of the writer. AVFRecorder is the real one.
 class Recorder {
 public:
 	virtual ~Recorder() = default;

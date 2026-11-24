@@ -7,6 +7,7 @@
 #include "gl/FullscreenQuad.hpp"
 #include "gl/FxPipeline.hpp"
 #include "gl/PictureChoice.hpp"
+#include "gl/PictureRead.hpp"
 #include "gl/Shader.hpp"
 #include "io/VideoSource.hpp"
 #include "util/HotReload.hpp"
@@ -30,7 +31,7 @@ struct LoopRead {
 	float mix;
 };
 
-class Compositor : public PicturePort {
+class Compositor : public PicturePort, public PictureRead {
 public:
 	Compositor();
 	~Compositor() override;
@@ -48,13 +49,14 @@ public:
 
 	// Replaces the Draw picture. Straight-alpha BGRA, bottom row first, stretched over the loop frame.
 	void uploadDraw(const std::vector<unsigned char>& bgra, int width, int height);
-	WholeStamp drawSource(SourceKind kind, float timeSeconds, const SourcePlacement& placed, bool bars, bool hasPicture);
+	WholeStamp drawSource(SourceKind kind, float timeSeconds, const SourcePlacement& placed, bool bars,
+	                      bool hasPicture);
 
 	GLuint image(Picture picture) const;
 	void audition(const LoopRead& loop, GLuint overlay, float opacity, int blendMode);
 	void program(const LoopRead& loop, GLuint fxOutput);
 	// BGRA rows, top row first. The stride is width * 4.
-	const std::vector<unsigned char>& read(Picture picture);
+	const std::vector<unsigned char>& read(Picture picture) override;
 
 	// Draws into a rectangle of the bound framebuffer.
 	void show(GLuint tex, int x, int y, int width, int height);

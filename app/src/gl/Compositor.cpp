@@ -3,7 +3,6 @@
 #include "util/GlUtils.hpp"
 
 #include <OpenGL/OpenGL.h>
-#include <cstdio>
 #include <cstring>
 
 Compositor::Compositor() {
@@ -269,8 +268,6 @@ const std::vector<unsigned char>& Compositor::read(Picture picture) {
 	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 	glPixelStorei(GL_PACK_ALIGNMENT, 1);
 	glReadPixels(0, 0, w, h, GL_BGRA, GL_UNSIGNED_BYTE, readBuf.data());
-	GLenum err = glGetError();
-	if (err != GL_NO_ERROR) std::fprintf(stderr, "[rec] glReadPixels error: 0x%04x\n", err);
 	for (int y = 0; y < h; ++y)
 		std::memcpy(flipBuf.data() + static_cast<size_t>(h - 1 - y) * stride, readBuf.data() + y * stride, stride);
 	return flipBuf;
