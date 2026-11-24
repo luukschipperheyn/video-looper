@@ -38,6 +38,7 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/control/Instrument.cpp
   app/src/buffer/RingBuffer.cpp
   app/src/looper/LooperEngine.cpp
+  app/src/looper/LoopPlan.cpp
   app/src/looper/OverdubGate.cpp
   app/src/util/HotReload.cpp
   app/src/link/LinkBridge.cpp
@@ -121,6 +122,9 @@ target_include_directories(setup_test PRIVATE app/src)
 
 add_executable(overdub_gate_test app/tests/overdub_gate_test.cpp app/src/looper/OverdubGate.cpp)
 target_include_directories(overdub_gate_test PRIVATE app/src)
+
+add_executable(loop_plan_test app/tests/loop_plan_test.cpp app/src/looper/LoopPlan.cpp)
+target_include_directories(loop_plan_test PRIVATE app/src)
 
 add_executable(instrument_test
   app/tests/instrument_test.cpp
@@ -210,6 +214,7 @@ set(cpp_tests
   repeat_test
   setup_test
   overdub_gate_test
+  loop_plan_test
   instrument_test
   source_controller_test
 )
