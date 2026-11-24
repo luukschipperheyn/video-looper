@@ -318,6 +318,61 @@ check("trackpad twist the other way", g.gestureRotate({ rot: 0, degrees: -90, mi
 check("trackpad twist of zero keeps rotation", g.gestureRotate({ rot: 0.2, degrees: 0, minR: -100, maxR: 100 }) === 0.2);
 check("trackpad twist clamps", g.gestureRotate({ rot: 0, degrees: -100000, minR: -1, maxR: 1 }) === 1);
 
+const trackpad = g.gesturePinch(
+	Object.assign(
+		{
+			tx: 0.2,
+			ty: -0.1,
+			sx: 2,
+			sy: 3,
+			rot: 0,
+			x0: 10,
+			y0: 20,
+			x1: 110,
+			y1: 70,
+			frameWidth: 200,
+			frameHeight: 100,
+			scale: 2,
+			degrees: 90,
+			preserveAspect: false,
+		},
+		wide,
+	),
+);
+check(
+	"trackpad pinch moves by the center and scales and rotates",
+	trackpad.tx === 0.7 &&
+		trackpad.ty === -0.6 &&
+		trackpad.sx === 4 &&
+		trackpad.sy === 6 &&
+		trackpad.rot === -Math.PI / 2,
+);
+const trackpadStill = g.gesturePinch(
+	Object.assign(
+		{
+			tx: 0.2,
+			ty: -0.1,
+			sx: 2,
+			sy: 9,
+			rot: 0.2,
+			x0: 10,
+			y0: 20,
+			x1: 10,
+			y1: 20,
+			frameWidth: 200,
+			frameHeight: 100,
+			scale: 1,
+			degrees: 0,
+			preserveAspect: true,
+		},
+		wide,
+	),
+);
+check(
+	"trackpad pinch with a still center keeps the position",
+	trackpadStill.tx === 0.2 && trackpadStill.ty === -0.1 && trackpadStill.sx === 2 && trackpadStill.sy === 9 && trackpadStill.rot === 0.2,
+);
+
 const attack = g.adsrDrag({
 	handle: "attack",
 	attack: 0,

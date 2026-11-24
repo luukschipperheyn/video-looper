@@ -1026,27 +1026,27 @@ document.addEventListener("gesturestart", (event) => {
 	if (!gestureOnPad(event) || !openSocket()) return;
 	if (gestures.sourceIgnoresTransform(Number(state.local.source_kind))) return;
 	pinchOrigin = currentTransform();
+	pinchOrigin.x = event.clientX;
+	pinchOrigin.y = event.clientY;
 	model.fingerDown(transformNames);
 	pad.classList.add("touch", "scale");
 });
 document.addEventListener("gesturechange", (event) => {
 	event.preventDefault();
 	if (!pinchOrigin) return;
-	const scaled = gestures.scaleByFactor({
-		sx: pinchOrigin.sx, sy: pinchOrigin.sy,
-		factor: event.scale,
+	const fr = frame.getBoundingClientRect();
+	commitTransform(gestures.gesturePinch({
+		tx: pinchOrigin.tx, ty: pinchOrigin.ty, sx: pinchOrigin.sx, sy: pinchOrigin.sy, rot: pinchOrigin.rot,
+		x0: pinchOrigin.x, y0: pinchOrigin.y, x1: event.clientX, y1: event.clientY,
+		frameWidth: fr.width, frameHeight: fr.height,
+		scale: event.scale,
+		degrees: event.rotation,
 		preserveAspect: !!state.local.video_aspect,
+		minX: schema.video_tx.min, maxX: schema.video_tx.max,
+		minY: schema.video_ty.min, maxY: schema.video_ty.max,
 		minS: schema.video_sx.min, maxS: schema.video_sx.max,
-	});
-	commitTransform({
-		tx: pinchOrigin.tx, ty: pinchOrigin.ty,
-		sx: scaled.sx, sy: scaled.sy,
-		rot: gestures.gestureRotate({
-			rot: pinchOrigin.rot,
-			degrees: event.rotation,
-			minR: schema.video_rot.min, maxR: schema.video_rot.max,
-		}),
-	});
+		minR: schema.video_rot.min, maxR: schema.video_rot.max,
+	}));
 });
 document.addEventListener("gestureend", (event) => {
 	if (!pinchOrigin) return;
@@ -1087,7 +1087,7 @@ function layoutFrame() {
 	const fillName = kind === 4 ? "Draw" : kind === 0 ? "Shader" : "Zwart";
 	const fine = window.matchMedia("(pointer: fine)").matches;
 	note.textContent = framed ? (fine ? "alt schaalt · shift of rechts draait" : "") : fillName + " vult de Loop en negeert de transform";
-	if (framed && fine) note.title = "Alt-sleep schaalt: omhoog groter, en zonder Preserve aspect schaalt opzij de breedte. Shift-sleep of de rechterknop draait: een framebreedte is een halve slag, naar rechts met de klok mee. Knijpen op het trackpad schaalt en draait.";
+	if (framed && fine) note.title = "Alt-sleep schaalt: omhoog groter, en zonder Preserve aspect schaalt opzij de breedte. Shift-sleep of de rechterknop draait: een framebreedte is een halve slag, naar rechts met de klok mee. Knijpen op het trackpad schuift, schaalt en draait.";
 	else note.removeAttribute("title");
 	const t = currentTransform();
 	const ar = state.imageAspect || aspect;
@@ -1958,7 +1958,7 @@ const main = h("main", null,
 		midError),
 	h("div.col.rcol", null,
 		h("div.panel.xf", null,
-			h("div.ph", null, h("span.pt", null, "Transform"), h("span.hint.clip", { title: "Sleep of één vinger schuift. Knijpen schaalt en draait, ook op een trackpad. Alt-sleep schaalt. Shift-sleep of de rechterknop draait." }, "sleep schuift · knijp schaalt en draait"), h("div.sp"), aspectTog.el, barsTog.el),
+			h("div.ph", null, h("span.pt", null, "Transform"), h("span.hint.clip", { title: "Sleep of één vinger schuift. Knijpen schuift, schaalt en draait, ook op een trackpad. Alt-sleep schaalt. Shift-sleep of de rechterknop draait." }, "sleep schuift · knijp schuift, schaalt en draait"), h("div.sp"), aspectTog.el, barsTog.el),
 			pad,
 			h("div.xfread", null, h("span", null, "X", readX), h("span", null, "Y", readY), h("span", null, "Schaal", readS), h("span", null, "Draai", readR), h("div.sp"), resetBtn)),
 		fxPanel),

@@ -481,4 +481,48 @@ function named(sent, type, name) {
 	);
 }
 
+{
+	const host = {};
+	const base = fakeTimers();
+	const timers = {
+		host: host,
+		now: base.now,
+		advance: base.advance,
+		setInterval(fn, ms) {
+			if (this !== host) throw new TypeError("Can only call setInterval on a Window");
+			return base.setInterval(fn, ms);
+		},
+		clearInterval(id) {
+			if (this !== host) throw new TypeError("Can only call clearInterval on a Window");
+			return base.clearInterval(id);
+		},
+	};
+	const sent = [];
+	const socket = { readyState: 1, send(text) { sent.push(JSON.parse(text)); } };
+	const model = pageState.create(controlSchema, socket, timers);
+	model.linkUp();
+	let threw = null;
+	try {
+		model.holdDown("gate");
+		timers.advance(500);
+	} catch (err) {
+		threw = err;
+	}
+	const holds = named(sent, "hold", "gate").length;
+	check(
+		"a hold keeps the Overdub gate down past the silence window",
+		threw == null && holds === 6,
+	);
+	try {
+		model.holdUp("gate");
+		timers.advance(500);
+	} catch (err) {
+		threw = err;
+	}
+	check(
+		"finger up still releases that hold",
+		threw == null && named(sent, "release", "gate").length === 1 && named(sent, "hold", "gate").length === holds,
+	);
+}
+
 process.exit(failed === 0 ? 0 : 1);

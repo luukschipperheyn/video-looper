@@ -87,7 +87,7 @@ int main() {
 		rig.recorder.failStart = true;
 		check(rig.instrument.setSwitch("record_enabled", true).ok && rig.params.getBool("record_enabled"),
 		      "1. Export turns on through the Instrument");
-		Picture name = choosePictures(PictureMoment::Idle, 0).exported;
+		Picture name = choosePictures(PictureMoment::Idle, 0, 1).exported;
 		rig.exp.frame(1.0 / 60.0, name, 16, 16);
 		std::string snap = remoteSnapshot(rig.params, {}, {}, {}, false, "", rig.exp.failure());
 		check(!rig.params.getBool("record_enabled") &&
@@ -98,7 +98,7 @@ int main() {
 	{
 		Rig rig;
 		arm(rig, 24);
-		Picture name = choosePictures(PictureMoment::Overdub, 0.25f).exported;
+		Picture name = choosePictures(PictureMoment::Overdub, 0.25f, 1).exported;
 		for (int i = 0; i < 60; ++i)
 			rig.exp.frame(1.0 / 60.0, name, 8, 8);
 		check(rig.recorder.written == 24, "2. 24 fps against a 60 Hz frame loop writes 24 frames in one second");
@@ -114,7 +114,7 @@ int main() {
 	{
 		Rig rig;
 		arm(rig, 24);
-		Picture name = choosePictures(PictureMoment::Idle, 0).exported;
+		Picture name = choosePictures(PictureMoment::Idle, 0, 1).exported;
 		rig.recorder.ready = false;
 		rig.exp.frame(1.0 / 24.0, name, 8, 8);
 		check(rig.recorder.written == 0 && rig.recorder.appends == 1 && rig.params.getBool("record_enabled"),
@@ -127,7 +127,7 @@ int main() {
 	{
 		Rig rig;
 		arm(rig, 24);
-		Picture name = choosePictures(PictureMoment::Idle, 0).exported;
+		Picture name = choosePictures(PictureMoment::Idle, 0, 1).exported;
 		rig.exp.frame(0, name, 16, 16);
 		check(rig.recorder.on, "4. Export is on");
 		rig.exp.resized();

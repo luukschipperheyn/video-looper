@@ -150,6 +150,37 @@
 		return clamp(o.rot - (Number(o.degrees) || 0) * (Math.PI / 180), o.minR, o.maxR);
 	}
 
+	// Safari's trackpad pinch: the center moves the Source, and the scale and rotation are from the gesture start.
+	function gesturePinch(o) {
+		var moved = oneFingerMove({
+			tx: o.tx,
+			ty: o.ty,
+			dx: o.x1 - o.x0,
+			dy: o.y1 - o.y0,
+			frameWidth: o.frameWidth,
+			frameHeight: o.frameHeight,
+			minX: o.minX,
+			maxX: o.maxX,
+			minY: o.minY,
+			maxY: o.maxY,
+		});
+		var scaled = scaleByFactor({
+			sx: o.sx,
+			sy: o.sy,
+			factor: o.scale,
+			preserveAspect: o.preserveAspect,
+			minS: o.minS,
+			maxS: o.maxS,
+		});
+		return {
+			tx: moved.tx,
+			ty: moved.ty,
+			sx: scaled.sx,
+			sy: scaled.sy,
+			rot: gestureRotate({ rot: o.rot, degrees: o.degrees, minR: o.minR, maxR: o.maxR }),
+		};
+	}
+
 	function timeFromPx(px, seg, maxTime) {
 		var u = clamp(px / seg, 0, 1);
 		return maxTime * u * u;
@@ -243,6 +274,7 @@
 		scaleByFactor: scaleByFactor,
 		pinchScale: pinchScale,
 		gestureRotate: gestureRotate,
+		gesturePinch: gesturePinch,
 		adsrDrag: adsrDrag,
 		blendCells: blendCells,
 		blendAtPoint: blendAtPoint,

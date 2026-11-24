@@ -36,6 +36,10 @@
 			imageAspect: 0,
 		};
 
+		function timerHost() {
+			return timers.host || (typeof globalThis === "object" ? globalThis : undefined);
+		}
+
 		function socketOpen() {
 			return socket.readyState === 1;
 		}
@@ -66,7 +70,7 @@
 
 		function stopHold(name, notify) {
 			if (!state.holds[name]) return false;
-			timers.clearInterval(state.holds[name]);
+			timers.clearInterval.call(timerHost(), state.holds[name]);
 			state.holds[name] = 0;
 			state.fingers[name] = false;
 			if (notify) {
@@ -112,7 +116,7 @@
 			var sendHold = function () { send({ t: "hold", name: name }); };
 			sendHold();
 			use("hold", name);
-			state.holds[name] = timers.setInterval(sendHold, HOLD_MS);
+			state.holds[name] = timers.setInterval.call(timerHost(), sendHold, HOLD_MS);
 			return true;
 		}
 

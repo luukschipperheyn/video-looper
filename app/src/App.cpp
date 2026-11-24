@@ -337,7 +337,7 @@ int App::run() {
 			moment = PictureMoment::Cue;
 		else if (dub.overdub)
 			moment = PictureMoment::Overdub;
-		PictureChoice pictures = choosePictures(moment, dub.opacity);
+		PictureChoice pictures = choosePictures(moment, dub.opacity, params.getFloat("record_blend_opacity"));
 
 		GLuint fxOutput = 0;
 		if (params.getBool("fx_enabled"))

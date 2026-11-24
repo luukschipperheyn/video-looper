@@ -11,4 +11,4 @@ struct PictureChoice {
 	float previewOpacity;
 };
 
-PictureChoice choosePictures(PictureMoment moment, float writeOpacity);
+PictureChoice choosePictures(PictureMoment moment, float writeOpacity, float recordOpacity);
