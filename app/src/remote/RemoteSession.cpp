@@ -353,6 +353,15 @@ std::vector<RemoteSet> RemoteSession::drain() {
 	return std::exchange(inbox, {});
 }
 
+bool RemoteSession::takeDraw(std::string& png) {
+	std::lock_guard<std::mutex> lock(queueMutex);
+	if (!drawFresh) return false;
+	drawFresh = false;
+	png = std::move(drawBytes);
+	drawBytes.clear();
+	return !png.empty();
+}
+
 std::string RemoteSession::url() const {
 	std::string host = bindHost;
 	if (host == "0.0.0.0") {
@@ -472,15 +481,33 @@ void RemoteSession::serve() {
 }
 
 // Consumes every complete frame buffered for client. Returns false when the client should be closed.
+// A binary frame is a Draw PNG. Text frames stay at 64 KB; a Draw picture may be up to 4 MB.
 bool RemoteSession::readFrames(Client& client) {
-	constexpr uint64_t maxPayload = 65536;
-	char buf[4096];
-	ssize_t n = recv(client.fd, buf, sizeof buf, 0);
-	if (n < 0) return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
-	if (n == 0) return false;
+	constexpr uint64_t textLimit = 65536;
+	constexpr uint64_t drawLimit = 4ull * 1024ull * 1024ull;
 	std::string& in = client.in;
-	in.append(buf, size_t(n));
+	bool closed = false;
+	for (;;) {
+		char buf[65536];
+		ssize_t n = recv(client.fd, buf, sizeof buf, 0);
+		if (n < 0) {
+			if (errno == EINTR) continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+			return false;
+		}
+		if (n == 0) {
+			closed = true;
+			break;
+		}
+		in.append(buf, size_t(n));
+	}
 	auto byte = [&](size_t i) { return static_cast<unsigned char>(in[i]); };
+	auto storeDraw = [&](std::string png) {
+		if (png.empty()) return;
+		std::lock_guard<std::mutex> lock(queueMutex);
+		drawBytes = std::move(png);
+		drawFresh = true;
+	};
 	while (in.size() >= 2) {
 		bool fin = byte(0) & 0x80;
 		int opcode = byte(0) & 0x0f;
@@ -489,14 +516,15 @@ bool RemoteSession::readFrames(Client& client) {
 		size_t head = 2;
 		if (len >= 126) {
 			size_t extra = len == 126 ? 2 : 8;
-			if (in.size() < head + extra) return true;
+			if (in.size() < head + extra) return !closed;
 			len = 0;
 			for (size_t i = 0; i < extra; ++i)
 				len = (len << 8) | byte(head + i);
 			head += extra;
 		}
-		if (len > maxPayload || (opcode >= 0x8 && len > 125)) return false;
-		if (in.size() < head + 4 + len) return true;
+		uint64_t limit = (opcode == 0x2 || opcode == 0x0) ? drawLimit : textLimit;
+		if (len > limit || (opcode >= 0x8 && len > 125)) return false;
+		if (in.size() < head + 4 + len) return !closed;
 		std::string payload = in.substr(head + 4, size_t(len));
 		for (size_t i = 0; i < payload.size(); ++i)
 			payload[i] ^= in[head + i % 4];
@@ -506,6 +534,27 @@ bool RemoteSession::readFrames(Client& client) {
 			return false;
 		}
 		if (opcode == 0x9) sendAll(client.fd, serverFrame(0xA, payload));
+		if (opcode == 0x0) {
+			if (client.fragOp != 0x2) continue;
+			if (client.frag.size() + payload.size() > drawLimit) return false;
+			client.frag += payload;
+			if (!fin) continue;
+			storeDraw(std::move(client.frag));
+			client.frag.clear();
+			client.fragOp = -1;
+			continue;
+		}
+		if (opcode == 0x2) {
+			if (!fin) {
+				client.frag = std::move(payload);
+				client.fragOp = 0x2;
+				continue;
+			}
+			client.frag.clear();
+			client.fragOp = -1;
+			storeDraw(std::move(payload));
+			continue;
+		}
 		Message msg;
 		if (opcode != 0x1 || !fin || !parseMessage(payload, msg)) continue;
 		RemoteSet set;
@@ -548,7 +597,7 @@ bool RemoteSession::readFrames(Client& client) {
 			inbox.push_back(std::move(set));
 		}
 	}
-	return true;
+	return !closed;
 }
 
 namespace {

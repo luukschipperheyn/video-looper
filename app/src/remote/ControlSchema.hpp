@@ -20,7 +20,7 @@ inline constexpr Control kControls[] = {
 	{"record_fps", ControlType::Float, 1, 240, true},
 	{"arm_record", ControlType::Bool, 0, 0, true},
 	{"cue_active", ControlType::Bool, 0, 0, true},
-	{"source_kind", ControlType::Int, 0, 3, true},
+	{"source_kind", ControlType::Int, 0, 4, true},
 	{"video_bars", ControlType::Bool, 0, 0, true},
 	{"video_aspect", ControlType::Bool, 0, 0, true},
 	{"video_tx", ControlType::Float, -4, 4, true},

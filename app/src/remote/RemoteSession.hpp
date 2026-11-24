@@ -46,6 +46,8 @@ public:
 	// Replaces the JPEGs served at /thumb?name=, keyed by Video filename.
 	void setThumbs(std::vector<std::pair<std::string, std::string>> nameAndBytes);
 	std::vector<RemoteSet> drain();
+	// The newest Draw PNG from a binary frame, once. A later frame replaces one that has not been taken.
+	bool takeDraw(std::string& png);
 	// A pad is down while any client's latest hold on it is younger than the silence window.
 	PadState pads() const;
 	void setSilenceWindow(int ms) { silenceMs = ms; }
@@ -63,6 +65,8 @@ private:
 		int fd;
 		std::string in;
 		std::string out;
+		std::string frag;
+		int fragOp = -1;
 	};
 	struct Holds {
 		TimePoint gate = TimePoint::min();
@@ -94,6 +98,8 @@ private:
 	std::map<std::string, std::string> thumbs;
 	std::mutex queueMutex;
 	std::vector<RemoteSet> inbox;
+	std::string drawBytes;
+	bool drawFresh = false;
 	std::vector<std::string> outbox;
 	mutable std::mutex holdMutex;
 	std::map<int, Holds> holds; // keyed by client fd

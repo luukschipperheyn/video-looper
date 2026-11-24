@@ -48,6 +48,10 @@ _Avoid_: Preview, input
 A video file that can be a Source.
 _Avoid_: Clip, file
 
+**Draw**:
+A Source made of strokes on a black or transparent ground.
+_Avoid_: sketch, paint, doodle
+
 **Videos folder**:
 The folder whose Videos Prev, Next, and random Commit choose from.
 _Avoid_: Clip folder, video bank, bank

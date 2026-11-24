@@ -45,7 +45,8 @@ Build/run commands: see `README.md`. Bundle camera privacy: `NSCameraUsageDescri
 | `app/src/io/PageCache.*` | Opens the Videos on the Web interface's current page ahead of a tap |
 | `app/src/io/AVFFileSource.*` / `AVFWebcamSource.*` | File decode / camera → GL texture |
 | `app/src/io/AVFRecorder.*` | BGRA frames → `.mov` |
-| `app/src/io/VideoSource.hpp` | `SourceKind { Shader, File, Black, Webcam }`, `IVideoSource` |
+| `app/src/io/VideoSource.hpp` | `SourceKind { Shader, File, Black, Webcam, Draw }`, `IVideoSource` |
+| `app/src/io/DrawImage.mm` | Draw PNG → straight-alpha BGRA, bottom row first |
 | `app/src/gl/FxPipeline.*` | Feedback / Diff / Chroma / Kaleido / Blur / Repeat / Grid; one pipeline on the Program, one on the Source; ping-pong targets; hot-reload |
 | `app/src/gl/Shader.*`, `FullscreenQuad.*`, `util/GlUtils.hpp` | GL helpers |
 | `app/src/ui/ParamBus.*` | String-keyed bool/float/int/string bag (no schema validation) |
@@ -95,8 +96,9 @@ Ring size is fixed at **120** frames at current framebuffer resolution (`ring.se
 | File (1) | `AVFFileSource` — loop, pause, normalized loop start/length, Free vs Trigger run mode |
 | Black (2) | Clear preview FBO to black |
 | Webcam (3) | `AVFWebcamSource` by `webcam_index` |
+| Draw (4) | The picture from the Web interface canvas, stretched over the loop frame |
 
-File and webcam frames are drawn into the Source, then that image is what an Overdub writes. **Preserve aspect** (`video_aspect`, default on) fits them with contain: the image fills the loop's width or its height. Off stretches them to the loop frame first. **Black bars** (`video_bars`, default on) paints the unused side black; off leaves it transparent, so the Loop shows through and an Overdub does not paint it. The Web interface Source trackpad drags with one finger to translate. A pinch moves by the midpoint and scales and rotates (`video_tx`, `video_ty`, `video_sx`, `video_sy`, `video_rot`, identity at 0, 0, 1, 1, 0). With Preserve aspect on, a pinch scales both axes together. Shader and Black ignore the transform and fill the loop frame. The switches are on the Mac Source section and the Web interface Source section.
+File and webcam frames are drawn into the Source, then that image is what an Overdub writes. **Preserve aspect** (`video_aspect`, default on) fits them with contain: the image fills the loop's width or its height. Off stretches them to the loop frame first. **Black bars** (`video_bars`, default on) paints the unused side black; off leaves it transparent, so the Loop shows through and an Overdub does not paint it. The Web interface Source trackpad drags with one finger to translate. A pinch moves by the midpoint and scales and rotates (`video_tx`, `video_ty`, `video_sx`, `video_sy`, `video_rot`, identity at 0, 0, 1, 1, 0). With Preserve aspect on, a pinch scales both axes together. Shader, Black, and Draw ignore the transform and fill the loop frame. The switches are on the Mac Source section and the Web interface Source section.
 
 **Folder / random Video** (`SourceController`):
 
@@ -105,6 +107,8 @@ File and webcam frames are drawn into the Source, then that image is what an Ove
 - Prev/Next cycle folder list and load immediately (clears commit state)
 
 **Web interface grid** (`app/web/index.html`): Select loads the tapped Video as the Source. Dub does that and Commits it, so the Video is written into the Loop at full opacity from its start to its end and stays the Source. The page sends the filenames on screen; `PageCache` opens those Videos on a background thread so a tap swaps a ready one in. A Video that is not ready yet still loads, and a Dub Commits when that load swaps in.
+
+**Draw** replaces that grid with a canvas. Pen, eraser, six colors, two brush sizes, and clear. The ground is transparent or black. Strokes stay in the page when the Source changes away and back, until the page reloads; they are not in the setup file. While Draw is the Source the page sends the picture as a PNG on a binary WebSocket frame, throttled while the finger moves and once when it lifts. A newer picture replaces one still waiting. The app stretches it over the loop frame. Transparent pixels do not paint the Loop; a black ground does. An empty Draw, before the first picture, is transparent.
 
 **File Trigger mode** (`file_run_mode == 1`): on rising edge of the Source overdub gate or Cue, `restartFileAtLoopStart()` if source is File. Erase does not restart it.
 
@@ -191,7 +195,7 @@ Separate from looper “record into ring”:
 |-----|--------|
 | `U` | Toggle `show_ui` |
 | `1`–`9`, `0` | `record_blend_opacity` = 0.1…0.9, 1.0 |
-| `-` / `=` | Prev/next `source_kind` — **only through Black** (`=` stops at Black; Webcam not reachable via hotkey) |
+| `-` / `=` | Prev/next `source_kind` — **only through Black** (`=` stops at Black; Webcam and Draw are not in the cycle). Minus while Draw is the Source returns to Black. |
 | `[` / `]` | Prev/next `record_blend_mode` (0–11) |
 | `'` / `\` | Prev/next `fx_mode` (0–6) |
 | `V` | Random file commit trigger |
@@ -235,7 +239,7 @@ Confirmed unintentional by the owner. Fix rather than preserve.
 
 | Bug | Where |
 |-----|-------|
-| `-`/`=` source cycle stops at Black; Webcam unreachable by hotkey | `App.cpp` `=` capped at `SourceKind::Black` |
+| `-`/`=` source cycle stops at Black; Webcam and Draw are not in it. Minus from Draw returns to Black | `App.cpp` `=` capped at `SourceKind::Black` |
 | Hotkeys fire while typing in ImGui text fields | `App.cpp` `wantKb = false` |
 | Preview ignores the ADSR envelope (always full record opacity) | `App.cpp` preview audition pass |
 | Disk recording captures the audition composite, not the presented main view (FX missing) | `App.cpp` capture reads `auditionFboB` |

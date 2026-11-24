@@ -60,6 +60,9 @@ public:
 	GLuint getPreviewFbo() const { return previewFbo; }
 	// Latest file or webcam frame at its own pixel size, before it is fitted into the loop frame.
 	GLuint frameTexture() const { return frameTex; }
+	// Replaces the Draw picture. The PNG is straight-alpha and stretched over the loop frame.
+	bool presentDraw(const std::string& png);
+	GLuint drawTexture() const { return drawTex; }
 	int frameWidth() const { return frameW; }
 	int frameHeight() const { return frameH; }
 	float getFileNominalFps() const { return fileSrc.nominalFps(); }
@@ -91,6 +94,9 @@ private:
 	GLuint frameTex;
 	int frameW;
 	int frameH;
+	GLuint drawTex = 0;
+	int drawW = 0;
+	int drawH = 0;
 
 	AVFWebcamSource webcam;
 	bool webcamActive;

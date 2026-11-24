@@ -157,6 +157,20 @@ button:disabled{opacity:.35}
 .vover{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);background:#0d0f10ee;border:1px solid var(--line2);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;align-items:center;font-size:12px;color:var(--dim);z-index:2;text-align:center;max-width:90%}
 .vover b{color:var(--text)}
 .vfoot{display:flex;align-items:center;gap:6px}
+.seg.kindseg{flex:1;min-width:0}
+.seg.kindseg button{padding:0 5px;font-size:12px}
+.draw{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
+.dtools{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.dtools .seg{flex:none}
+.dtools .seg button{flex:none;padding:0 10px;font-size:12px;height:32px}
+.dtools .btn{height:34px;font-size:12px}
+.swatches{display:flex;gap:4px}
+.swatch{width:26px;height:26px;border-radius:50%;border:2px solid transparent;box-shadow:inset 0 0 0 1px #ffffff40}
+.swatch.on{border-color:#fff}
+.dstage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;border-radius:8px;overflow:hidden;border:1px solid var(--line2);
+	background:repeating-conic-gradient(#0000 0% 25%,#ffffff14 0% 50%) 50%/18px 18px,#0b0d0e}
+.draw.black .dstage{background:#000}
+.dstage canvas{width:100%;height:auto;max-height:100%;touch-action:none;display:block}
 .plabel{font-size:12px;color:var(--dim);min-width:84px;text-align:center}
 .xf{flex:1}
 .tpad{position:relative;flex:1;min-height:0;border-radius:8px;background-color:#0b0d0e;border:1px solid var(--line2);overflow:hidden;touch-action:none;
@@ -440,6 +454,7 @@ function sourceName() {
 	if (kind === 0) return "Shader";
 	if (kind === 2) return "Zwart";
 	if (kind === 3) return "Webcam " + Math.round(valueOf("webcam_index", 0));
+	if (kind === 4) return "Draw";
 	return state.remote.video ? gestures.shortName(state.remote.video) : "";
 }
 
@@ -642,8 +657,9 @@ panicBtn.addEventListener("click", () => {
 const opacity = makeFader({ name: "record_blend_opacity", label: "Opacity", def: 1, big: true, ticks: true, text: pct });
 
 const kindSeg = makeSeg(
-	[{ value: 1, label: "Video" }, { value: 3, label: "Webcam" }, { value: 0, label: "Shader" }, { value: 2, label: "Zwart" }],
+	[{ value: 1, label: "Video" }, { value: 3, label: "Webcam" }, { value: 0, label: "Shader" }, { value: 2, label: "Zwart" }, { value: 4, label: "Draw" }],
 	(value) => pickInt("source_kind", value));
+kindSeg.el.classList.add("kindseg");
 const tapSeg = makeSeg(
 	[{ value: "select", label: "Select" }, { value: "dub", label: "Dub" }],
 	(value) => {
@@ -1024,7 +1040,8 @@ function layoutFrame() {
 	frame.classList.toggle("bars", !!state.local.video_bars && framed);
 	frame.classList.toggle("fillsrc", !framed);
 	outline.hidden = !framed;
-	note.textContent = framed ? "" : (kind === 0 ? "Shader" : "Zwart") + " vult de Loop en negeert de transform";
+	const fillName = kind === 4 ? "Draw" : kind === 0 ? "Shader" : "Zwart";
+	note.textContent = framed ? "" : fillName + " vult de Loop en negeert de transform";
 	const t = currentTransform();
 	const ar = state.imageAspect || 16 / 9;
 	let bw = fw, bh = fh;
@@ -1600,6 +1617,7 @@ function paint() {
 	paintBlendPick(sfxBlend, valueOf("source_fx_repeat_blend", 6));
 	paintSeg(kindSeg, state.local.source_kind);
 	paintTap();
+	paintDraw();
 	paintFolders();
 	paintVideos();
 	const blendMode = Number(state.local.record_blend_mode) || 0;
@@ -1675,14 +1693,208 @@ exportBtn.addEventListener("click", () => {
 	paint();
 });
 
+const DRAW_W = 1280;
+const DRAW_H = 720;
+const drawColors = ["#ffffff", "#000000", "#ff5b4f", "#f2c14e", "#93d46d", "#6b8cf2"];
+let drawTool = "pen";
+let drawColor = drawColors[0];
+let drawSize = 14;
+let drawGround = "transparent";
+let drawLive = false;
+let drawGen = 0;
+let drawWait = 0;
+let drawPid = null;
+let drawX = 0;
+let drawY = 0;
+const ink = h("canvas", { width: String(DRAW_W), height: String(DRAW_H) });
+const flat = h("canvas", { width: String(DRAW_W), height: String(DRAW_H) });
+const drawStage = h("div.dstage", null, ink);
+const drawHint = h("span.hint");
+const toolSeg = makeSeg(
+	[{ value: "pen", label: "Pen" }, { value: "eraser", label: "Eraser" }],
+	(value) => { drawTool = value; paintDrawTools(); });
+const sizeSeg = makeSeg(
+	[{ value: 14, label: "Thin" }, { value: 42, label: "Thick" }],
+	(value) => { drawSize = value; paintDrawTools(); });
+const groundSeg = makeSeg(
+	[{ value: "transparent", label: "Transparent" }, { value: "black", label: "Black" }],
+	(value) => { drawGround = value; paintDrawTools(); flushDraw(); });
+const swatchButtons = drawColors.map((hex) => {
+	const button = h("button.swatch", { type: "button" });
+	button.style.background = hex;
+	button.dataset.color = hex;
+	button.addEventListener("click", () => {
+		drawColor = hex;
+		drawTool = "pen";
+		paintDrawTools();
+	});
+	return button;
+});
+const clearBtn = h("button.btn", { type: "button" }, "Clear");
+clearBtn.addEventListener("click", () => {
+	ink.getContext("2d").clearRect(0, 0, DRAW_W, DRAW_H);
+	flushDraw();
+});
+const videoFoot = h("div.vfoot", null, pagePrev, pageLabel, pageNext, h("div.sp"),
+	h("span.hint", null, "Video"), videoPrev, videoNext);
+const drawView = h("div.draw", { hidden: true },
+	drawStage,
+	h("div.dtools", null, toolSeg.el, h("div.swatches", null, swatchButtons), sizeSeg.el, groundSeg.el, drawHint, h("div.sp"), clearBtn));
+
+function brushWidth() {
+	const rect = ink.getBoundingClientRect();
+	if (!(rect.width > 0)) return drawSize;
+	return drawSize * (DRAW_W / rect.width);
+}
+
+function prepDraw(ctx) {
+	ctx.lineCap = "round";
+	ctx.lineJoin = "round";
+	ctx.lineWidth = brushWidth();
+	if (drawTool === "eraser") {
+		ctx.globalCompositeOperation = "destination-out";
+		ctx.strokeStyle = "#000";
+		ctx.fillStyle = "#000";
+	} else {
+		ctx.globalCompositeOperation = "source-over";
+		ctx.strokeStyle = drawColor;
+		ctx.fillStyle = drawColor;
+	}
+}
+
+function drawDot(x, y) {
+	const ctx = ink.getContext("2d");
+	prepDraw(ctx);
+	ctx.beginPath();
+	ctx.arc(x, y, ctx.lineWidth / 2, 0, Math.PI * 2);
+	ctx.fill();
+}
+
+function drawSegment(x, y) {
+	const ctx = ink.getContext("2d");
+	prepDraw(ctx);
+	ctx.beginPath();
+	ctx.moveTo(drawX, drawY);
+	ctx.lineTo(x, y);
+	ctx.stroke();
+	drawX = x;
+	drawY = y;
+}
+
+function drawPoint(event) {
+	const rect = ink.getBoundingClientRect();
+	const x = rect.width > 0 ? ((event.clientX - rect.left) / rect.width) * DRAW_W : 0;
+	const y = rect.height > 0 ? ((event.clientY - rect.top) / rect.height) * DRAW_H : 0;
+	return {
+		x: Math.min(DRAW_W, Math.max(0, x)),
+		y: Math.min(DRAW_H, Math.max(0, y)),
+	};
+}
+
+function sendDraw() {
+	if (Number(state.local.source_kind) !== 4) return;
+	if (!openSocket()) {
+		drawLive = false;
+		return;
+	}
+	const gen = ++drawGen;
+	const ctx = flat.getContext("2d");
+	ctx.clearRect(0, 0, DRAW_W, DRAW_H);
+	if (drawGround === "black") {
+		ctx.globalCompositeOperation = "source-over";
+		ctx.fillStyle = "#000";
+		ctx.fillRect(0, 0, DRAW_W, DRAW_H);
+	}
+	ctx.drawImage(ink, 0, 0);
+	flat.toBlob((blob) => {
+		if (!blob || gen !== drawGen || !openSocket() || Number(state.local.source_kind) !== 4) return;
+		socket.send(blob);
+	}, "image/png");
+}
+
+function pokeDraw() {
+	if (drawWait) return;
+	drawWait = setTimeout(() => {
+		drawWait = 0;
+		sendDraw();
+	}, 80);
+}
+
+function flushDraw() {
+	if (drawWait) {
+		clearTimeout(drawWait);
+		drawWait = 0;
+	}
+	sendDraw();
+}
+
+function paintDrawTools() {
+	paintChoice(toolSeg, drawTool);
+	paintChoice(sizeSeg, String(drawSize));
+	paintChoice(groundSeg, drawGround);
+	for (const button of swatchButtons) button.classList.toggle("on", drawTool === "pen" && button.dataset.color === drawColor);
+	drawView.classList.toggle("black", drawGround === "black");
+	drawHint.textContent = drawGround === "black" ? "covers the Loop" : "strokes only";
+}
+
+function fitDrawCanvas() {
+	if (drawView.hidden) return;
+	const bw = drawStage.clientWidth;
+	const bh = drawStage.clientHeight;
+	if (!bw || !bh) return;
+	const scale = Math.min(bw / DRAW_W, bh / DRAW_H);
+	ink.style.width = Math.max(1, Math.round(DRAW_W * scale)) + "px";
+	ink.style.height = Math.max(1, Math.round(DRAW_H * scale)) + "px";
+}
+
+function paintDraw() {
+	const on = Number(state.local.source_kind) === 4;
+	drawView.hidden = !on;
+	folderRow.hidden = on;
+	grid.hidden = on;
+	videoFoot.hidden = on;
+	tapSeg.el.hidden = on;
+	paintDrawTools();
+	fitDrawCanvas();
+	if (on && !drawLive) {
+		drawLive = true;
+		sendDraw();
+		requestAnimationFrame(fitDrawCanvas);
+	}
+	if (!on) drawLive = false;
+}
+
+ink.addEventListener("pointerdown", (event) => {
+	if (drawPid != null) return;
+	drawPid = event.pointerId;
+	capture(ink, event);
+	const point = drawPoint(event);
+	drawX = point.x;
+	drawY = point.y;
+	drawDot(point.x, point.y);
+	pokeDraw();
+});
+ink.addEventListener("pointermove", (event) => {
+	if (event.pointerId !== drawPid) return;
+	const point = drawPoint(event);
+	drawSegment(point.x, point.y);
+	pokeDraw();
+});
+const drawUp = (event) => {
+	if (event.pointerId !== drawPid) return;
+	drawPid = null;
+	flushDraw();
+};
+ink.addEventListener("pointerup", drawUp);
+ink.addEventListener("pointercancel", drawUp);
+paintDrawTools();
+
 const main = h("main", null,
 	h("div.pcol", null, h("div.odub", null, overdub, erase), latchBtn, cuePad, cueVastBtn, panicBtn),
 	h("div.col", null,
 		h("div.panel.videos", null,
 			h("div.ph", null, kindSeg.el, h("div.sp"), tapSeg.el),
-			folderRow, grid,
-			h("div.vfoot", null, pagePrev, pageLabel, pageNext, h("div.sp"),
-				h("span.hint", null, "Video"), videoPrev, videoNext)),
+			folderRow, grid, videoFoot, drawView),
 		h("div.panel.blend", null,
 			h("div.ph", null, h("span.pt", null, "Blend"), blendLabel, h("div.sp"),
 				h("div.fams", null, famSwatch("fl", "licht"), famSwatch("fd", "donker"), famSwatch("fc", "contrast"), famSwatch("fx", "verschil")),
@@ -1707,6 +1919,7 @@ function fit() {
 	stage.style.transform = "scale(" + k + ")";
 	document.getElementById("holder").style.width = (w * k) + "px";
 	document.getElementById("holder").style.height = (hgt * k) + "px";
+	fitDrawCanvas();
 }
 
 function applySnapshot(msg) {

@@ -3,7 +3,7 @@
 #include <OpenGL/gl3.h>
 #include <string>
 
-enum class SourceKind { Shader = 0, File = 1, Black = 2, Webcam = 3 };
+enum class SourceKind { Shader = 0, File = 1, Black = 2, Webcam = 3, Draw = 4 };
 
 class IVideoSource {
 public:

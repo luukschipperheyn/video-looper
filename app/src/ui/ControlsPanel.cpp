@@ -51,9 +51,9 @@ void ControlsPanel::draw(ParamBus& params, LinkBridge& link, RingBuffer& ring, f
 			ImGui::TextUnformatted("Source");
 			ImGui::Separator();
 			int kind = params.getInt("source_kind", (int)SourceKind::Shader);
-			const char* kinds[] = {"Shader", "File", "Black", "Webcam"};
+			const char* kinds[] = {"Shader", "File", "Black", "Webcam", "Draw"};
 			int camIndex = params.getInt("webcam_index", 0);
-			if (ImGui::Combo("Source", &kind, kinds, 4)) {
+			if (ImGui::Combo("Source", &kind, kinds, 5)) {
 				if (kind == (int)SourceKind::Webcam && source)
 					source->loadWebcam(camIndex);
 				else

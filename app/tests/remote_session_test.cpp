@@ -121,9 +121,9 @@ static std::string readText(Ws& ws) {
 }
 
 // Sends one masked client frame. A nonzero split sends the first split bytes, pauses, then the rest.
-static void sendFrame(int fd, int opcode, const std::string& payload, size_t split = 0) {
+static void sendFrame(int fd, int opcode, const std::string& payload, size_t split = 0, bool fin = true) {
 	const unsigned char mask[4] = {0x12, 0x34, 0x56, 0x78};
-	std::string frame(1, char(0x80 | opcode));
+	std::string frame(1, char((fin ? 0x80 : 0) | opcode));
 	uint64_t n = payload.size();
 	if (n < 126) {
 		frame += char(0x80 | n);
@@ -309,7 +309,10 @@ int main() {
 			if (c.type == ControlType::Bool) {
 				sent = params.getBool(name) ? "false" : "true";
 			} else if (c.type == ControlType::Int) {
-				sent = std::to_string(std::lround(mid));
+				long rounded = std::lround(mid);
+				// 3 asks for a webcam load and does not write source_kind.
+				if (name == "source_kind" && rounded == 3) rounded = long(c.max);
+				sent = std::to_string(rounded);
 			} else {
 				char buf[32];
 				std::snprintf(buf, sizeof buf, "%g", mid);
@@ -331,6 +334,13 @@ int main() {
 		sendFrame(client.fd, 0x1, setFrame("webcam_index", "-3"));
 		pump(session, params);
 		check(field(readText(client), "webcam_index") == "0", "10. webcam_index -3 comes back clamped to 0");
+		sendFrame(client.fd, 0x1, setFrame("source_kind", "4"));
+		pump(session, params);
+		check(field(readText(client), "source_kind") == "4" && params.getInt("source_kind") == 4,
+		      "10. source_kind 4 is Draw and is written");
+		sendFrame(client.fd, 0x1, setFrame("source_kind", "9"));
+		pump(session, params);
+		check(field(readText(client), "source_kind") == "4", "10. source_kind 9 clamps to Draw");
 
 		params.setFloat("video_sx", 2.0f);
 		params.setFloat("video_sy", 0.5f);
@@ -679,7 +689,8 @@ int main() {
 	const std::vector<std::string> abc = {"a", "b", "c"};
 	check(!stillSourceCancelsLoad(0, 0) && !stillSourceCancelsLoad(2, 2),
 	      "34. staying on Shader or Black does not cancel a load");
-	check(stillSourceCancelsLoad(0, 1) && stillSourceCancelsLoad(2, 3), "34. choosing Shader or Black cancels a load");
+	check(stillSourceCancelsLoad(0, 1) && stillSourceCancelsLoad(2, 3) && stillSourceCancelsLoad(4, 1),
+	      "34. choosing Shader, Black, or Draw cancels a load");
 	check(!stillSourceCancelsLoad(1, 0) && !stillSourceCancelsLoad(3, 0),
 	      "34. choosing a Video or the webcam does not cancel a load");
 	check(stepVideo(abc, "a", 1) == "b" && stepVideo(abc, "b", -1) == "a", "27. next and prev step one Video");
@@ -879,6 +890,33 @@ int main() {
 			++fxLines;
 		check(fxLines == 1, "43. a control set is not logged unless the page sends use");
 		check(data.find("nope") == std::string::npos, "43. an unknown gesture is not stored");
+
+		auto waitPic = [&](const std::string& want) {
+			std::string got;
+			for (int i = 0; i < 100; ++i) {
+				std::string next;
+				if (session.takeDraw(next)) got = std::move(next);
+				if (got == want) return true;
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			}
+			return false;
+		};
+		sendFrame(client.fd, 0x2, "png-one");
+		check(waitPic("png-one"), "46. a binary frame is the Draw picture");
+		sendFrame(client.fd, 0x2, "hel", 0, false);
+		sendFrame(client.fd, 0x0, "lo");
+		check(waitPic("hello"), "46. a split Draw picture is joined");
+		sendFrame(client.fd, 0x2, std::string(70000, 'Q'));
+		check(waitPic(std::string(70000, 'Q')), "46. a Draw picture may be larger than a text frame");
+		sendFrame(client.fd, 0x2, "newer");
+		sendFrame(client.fd, 0x2, "newest");
+		check(waitPic("newest"), "46. a newer Draw picture replaces one still waiting");
+		std::string extra;
+		check(!session.takeDraw(extra), "46. the picture is taken once");
+		ParamBus params;
+		sendFrame(client.fd, 0x1, setFrame("gain_mix", "0.5"));
+		pump(session, params);
+		check(field(readText(client), "gain_mix") == "0.5", "46. a text frame still works after a Draw picture");
 		close(client.fd);
 	}
 	std::filesystem::remove_all(dir);

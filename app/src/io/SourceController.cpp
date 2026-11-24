@@ -1,4 +1,5 @@
 #include "io/SourceController.hpp"
+#include "io/DrawImage.hpp"
 #include "io/FolderList.hpp"
 
 #include <algorithm>
@@ -58,6 +59,12 @@ void SourceController::shutdown() {
 	}
 	frameW = 0;
 	frameH = 0;
+	if (drawTex) {
+		glDeleteTextures(1, &drawTex);
+		drawTex = 0;
+	}
+	drawW = 0;
+	drawH = 0;
 }
 
 bool SourceController::tickAndGrab(double nowSeconds, double dtSeconds, ParamBus& params) {
@@ -412,6 +419,29 @@ void SourceController::cancelCommit(ParamBus& params) {
 	params.setString("commit_current_file", "");
 	params.setBool("file_loop", savedLoopSetting);
 	committing = false;
+}
+
+bool SourceController::presentDraw(const std::string& png) {
+	std::vector<unsigned char> bgra;
+	int width = 0;
+	int height = 0;
+	if (!decodeDrawImage(png, bgra, width, height)) return false;
+	if (!drawTex) {
+		glGenTextures(1, &drawTex);
+		glBindTexture(GL_TEXTURE_2D, drawTex);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	} else {
+		glBindTexture(GL_TEXTURE_2D, drawTex);
+	}
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, bgra.data());
+	glBindTexture(GL_TEXTURE_2D, 0);
+	drawW = width;
+	drawH = height;
+	return true;
 }
 
 void SourceController::presentFrame(const std::vector<unsigned char>& bgra, int width, int height) {

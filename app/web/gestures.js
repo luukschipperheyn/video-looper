@@ -39,7 +39,7 @@
 	}
 
 	function sourceIgnoresTransform(kind) {
-		return kind === 0 || kind === 2;
+		return kind === 0 || kind === 2 || kind === 4;
 	}
 
 	function applyTransform(kind, current, next) {

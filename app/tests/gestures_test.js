@@ -83,6 +83,7 @@ check("black keeps the current transform", g.applyTransform(2, current, next) ==
 check("video takes the next transform", g.applyTransform(1, current, next) === next);
 check("webcam takes the next transform", g.applyTransform(3, current, next) === next);
 check("shader ignores transform", g.sourceIgnoresTransform(0) === true && g.sourceIgnoresTransform(2) === true);
+check("draw ignores transform", g.sourceIgnoresTransform(4) === true);
 check("video and webcam transform", g.sourceIgnoresTransform(1) === false && g.sourceIgnoresTransform(3) === false);
 
 const aspect = g.pinch(

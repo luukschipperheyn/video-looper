@@ -329,7 +329,8 @@ int App::run() {
 				// Prev/Next input source (- / =)
 				if (edgePressed(GLFW_KEY_MINUS, prevMinus)) {
 					int s = params.getInt("source_kind", (int)SourceKind::Shader);
-					if (s > (int)SourceKind::Shader) params.setInt("source_kind", s - 1);
+					if (s == (int)SourceKind::Draw) params.setInt("source_kind", (int)SourceKind::Black);
+					else if (s > (int)SourceKind::Shader) params.setInt("source_kind", s - 1);
 				}
 				if (edgePressed(GLFW_KEY_EQUAL, prevEqual)) {
 					int s = params.getInt("source_kind", (int)SourceKind::Shader);
@@ -447,6 +448,8 @@ int App::run() {
 		prevRecEnabled = recEnabled;
 
 		source.tickAndGrab(now, dt, params);
+		std::string drawPng;
+		if (remote.takeDraw(drawPng)) source.presentDraw(drawPng);
 		int srcKind = params.getInt("source_kind", (int)SourceKind::Shader);
 		if (srcKind == (int)SourceKind::Shader) {
 			glBindFramebuffer(GL_FRAMEBUFFER, source.getPreviewFbo());
@@ -461,6 +464,23 @@ int App::run() {
 			glViewport(0, 0, fbw, fbh);
 			glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		} else if (srcKind == (int)SourceKind::Draw) {
+			glBindFramebuffer(GL_FRAMEBUFFER, source.getPreviewFbo());
+			glViewport(0, 0, fbw, fbh);
+			GLboolean wasBlend = glIsEnabled(GL_BLEND);
+			glDisable(GL_BLEND);
+			if (source.drawTexture() != 0) {
+				shaderBlit.use();
+				glActiveTexture(GL_TEXTURE0);
+				glBindTexture(GL_TEXTURE_2D, source.drawTexture());
+				shaderBlit.setUniform("uTex", 0);
+				quad.draw();
+			} else {
+				glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+				glClear(GL_COLOR_BUFFER_BIT);
+			}
+			if (wasBlend) glEnable(GL_BLEND);
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		} else if ((srcKind == (int)SourceKind::File || srcKind == (int)SourceKind::Webcam) &&
 		           source.frameTexture() != 0 && source.frameWidth() > 0 && source.frameHeight() > 0) {

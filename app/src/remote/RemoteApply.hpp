@@ -51,6 +51,7 @@ struct GateState {
 
 // Clamps and writes a writable param. Never calls Link; the caller hands bpm to Link when tempoChanged.
 // source_kind 3 (webcam) is not written; startWebcam asks the caller to load the webcam instead.
+// source_kind 4 (Draw) is written like Shader and Black.
 ApplyResult applyRemoteSet(ParamBus& params, const RemoteSet& set);
 GateState combineHolds(GateInputs in);
 // Black stays latched through an Erase release tail. A Source overdub or Cue takes the image back

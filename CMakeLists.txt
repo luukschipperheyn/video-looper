@@ -45,6 +45,7 @@ add_executable(video_looper MACOSX_BUNDLE
   app/src/io/AVFFileSource.mm
   app/src/io/AVFRecorder.mm
   app/src/io/SourceController.cpp
+  app/src/io/DrawImage.mm
   app/src/io/PageCache.cpp
   app/src/io/SourceLoad.cpp
   app/src/io/FolderList.cpp
@@ -90,6 +91,13 @@ add_executable(usage_log_test
 )
 target_include_directories(usage_log_test PRIVATE app/src)
 
+add_executable(draw_image_test
+  app/tests/draw_image_test.cpp
+  app/src/io/DrawImage.mm
+)
+target_include_directories(draw_image_test PRIVATE app/src)
+target_compile_definitions(draw_image_test PRIVATE DRAW_PNG="${CMAKE_SOURCE_DIR}/app/tests/draw.png")
+
 add_executable(contain_rect_test app/tests/contain_rect_test.cpp)
 target_include_directories(contain_rect_test PRIVATE app/src)
 
@@ -127,6 +135,8 @@ if(APPLE)
   find_library(AVFOUNDATION_FRAMEWORK AVFoundation)
   find_library(COREMEDIA_FRAMEWORK CoreMedia)
   find_library(OPENGL_FRAMEWORK OpenGL)
+  find_library(IMAGEIO_FRAMEWORK ImageIO)
+  find_library(COREGRAPHICS_FRAMEWORK CoreGraphics)
   target_link_libraries(video_looper PRIVATE
     ${COCOA_FRAMEWORK}
     ${APPKIT_FRAMEWORK}
@@ -136,6 +146,13 @@ if(APPLE)
     ${AVFOUNDATION_FRAMEWORK}
     ${COREMEDIA_FRAMEWORK}
     ${OPENGL_FRAMEWORK}
+    ${IMAGEIO_FRAMEWORK}
+    ${COREGRAPHICS_FRAMEWORK}
+  )
+  target_link_libraries(draw_image_test PRIVATE
+    ${IMAGEIO_FRAMEWORK}
+    ${COREGRAPHICS_FRAMEWORK}
+    ${COREFOUNDATION_FRAMEWORK}
   )
 endif()
 
